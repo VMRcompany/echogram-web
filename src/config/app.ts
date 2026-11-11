@@ -38,9 +38,9 @@ const App = {
   interclientBroadcastChannel: 'tgweb'
 };
 
-// * "Echogram WebK 2.2 (681)" - how the app names itself, in the main menu and under Settings
+// How the app names itself, in the main menu and under Settings.
 export function getAppVersionText() {
-  return `Echogram Web${App.suffix} ${App.version} (${App.build})`;
+  return `Echogram Web ${App.version}`;
 }
 
 // Official WebK credentials, only on web.telegram.org / webk.telegram.org and only

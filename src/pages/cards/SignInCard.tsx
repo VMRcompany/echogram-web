@@ -245,9 +245,7 @@ export default function SignInCard(_props: {spec: Spec}) {
             class={styles.logoContainer}
             size={120}
             element={
-              <svg class={styles.logo} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160">
-                <use href="#logo"/>
-              </svg>
+              <img class={styles.logo} src="assets/img/logo_512.png" alt="" />
             }
           />
           <MediaHeader.Title tag="h1">{i18n('Login.Title')}</MediaHeader.Title>

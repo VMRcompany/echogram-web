@@ -25,4 +25,5 @@ for(const name of readdirSync(pub)) {
 
 copyFileSync(join(dist, 'index.html'), join(dist, '404.html'));
 writeFileSync(join(dist, '.nojekyll'), '');
+writeFileSync(join(dist, 'CNAME'), 'web-echogram.mineholde.pro\n');
 mkdirSync(dist, {recursive: true});
