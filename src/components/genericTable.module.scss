@@ -1,0 +1,78 @@
+@use "../scss/variables.scss" as *;
+@use "../scss/mixins.scss" as *;
+
+// The same shades wherever a table is shown — the composer, a page, a bubble ($message-shade-color)
+$table-shade-color: $message-shade-color;
+$table-border-color: color-mix(in srgb, var(--message-status-color) 32%, var(--message-background-color));
+
+.wrapper {
+  overflow-x: auto;
+}
+
+// Over the cells: a header cell is positioned and comes later, so its fill would cover the top edge.
+.border {
+  position: absolute;
+  z-index: 1;
+  border: 1px solid $table-border-color;
+  border-radius: var(--table-border-radius, #{$border-radius});
+  inset: 0;
+  pointer-events: none;
+}
+
+.genericTable {
+  border-collapse: collapse;
+  width: calc(100% - var(--padding-horizontal, 0px) * 2);
+  @include rounded-font-size(var(--table-font-size, .8888em));
+  word-break: keep-all;
+  margin-inline: var(--padding-horizontal);
+  border-radius: var(--table-border-radius, #{$border-radius});
+  position: relative;
+  // keeps the border's z-index to the table
+  isolation: isolate;
+  overflow: hidden;
+
+  &.bordered {
+    border: 1px solid transparent;
+    border-style: hidden;
+
+    .genericCell,
+    .genericHeaderCell {
+      border: 1px solid $table-border-color;
+    }
+  }
+}
+
+.genericTable.striped > tbody > .genericRow:nth-child(odd) {
+  background-color: $table-shade-color;
+
+  > .genericHeaderCell {
+    background-color: transparent;
+  }
+}
+
+.genericCell,
+.genericHeaderCell {
+  --padding-horizontal: 0;
+  box-sizing: border-box;
+  // A table-cell `height` participates in row sizing as a minimum; keep an explicit
+  // min-height as well for non-table display modes and clearer component semantics.
+  height: var(--table-cell-min-height, auto);
+  min-height: var(--table-cell-min-height, 0);
+  min-width: var(--table-cell-min-width, 0);
+  padding: var(--table-cell-padding, calc(.5rem * var(--iv-scale, 1)));
+  position: relative;
+  vertical-align: top;
+  // * a cell with no alignment of its own follows the line - the right side in an RTL article -
+  // * while `align_right` is the right, the way HTML's `align="right"` is
+  text-align: start;
+
+  &.cellAlignCenter { text-align: center; }
+  &.cellAlignRight { text-align: right; }
+  &.cellValignMiddle { vertical-align: middle; }
+  &.cellValignBottom { vertical-align: bottom; }
+}
+
+.genericHeaderCell {
+  background-color: $table-shade-color;
+  font-weight: var(--font-weight-bold);
+}

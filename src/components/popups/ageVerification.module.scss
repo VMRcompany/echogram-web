@@ -1,0 +1,18 @@
+.popup {
+  --popup-width: 26.25rem;
+
+  :global {
+    .popup-header {
+      margin-bottom: .5rem;
+    }
+  }
+}
+
+.text {
+  white-space: pre-wrap;
+  text-align: center;
+  text-wrap: balance;
+  font-size: var(--font-size-15);
+  word-break: break-word;
+  padding: 0 1rem;
+}

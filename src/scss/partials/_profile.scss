@@ -1,0 +1,1283 @@
+@use "../shared" as *;
+
+// * the status keeps the anchor of the line as it crossfades and resizes (`crossfadeContent`): its
+// * centre where the line stays centred - the old status and the new, overflowing the resizing
+// * box or not - and its start where the line stays put at its start
+@mixin status-leaving-anchor($centred) {
+  .profile-subtitle-status {
+    @if $centred {
+      justify-content: center;
+
+      .crossfade-leaving {
+        inset-inline-start: auto;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+    } @else {
+      justify-content: flex-start;
+
+      .crossfade-leaving {
+        left: auto;
+        inset-inline-start: 0;
+        transform: none;
+      }
+    }
+  }
+}
+
+.profile {
+  &-avatars {
+    &-container {
+      --secondary-opacity-max: 1;
+      width: 100%;
+      padding-bottom: 100%;
+      //height: 26.25rem;
+      //overflow: hidden;
+      position: relative;
+      cursor: pointer;
+      z-index: 1;
+      min-height: 276px;
+      // * the middle of the circle in the collapsed header, higher over the buttons: the circle's own
+      // * place (`-fake`) and the middle of a collectible status's background
+      --profile-avatar-center-y: 48%;
+
+      .has-actions & {
+        --profile-avatar-center-y: calc(48% - var(--profile-actions-room) / 2);
+      }
+
+      @include animation-level(2) {
+        transition: padding-bottom var(--transition-standard-in);
+      }
+
+      /* &:before, &:after {
+        position: absolute;
+        content: " ";
+        height: 100%;
+        width:
+      } */
+      @include hover() {
+        .profile-avatars-arrow {
+          opacity: .2;
+        }
+      }
+
+      &.is-single {
+        .profile-avatars-arrow,
+        .profile-avatars-tabs {
+          display: none;
+        }
+      }
+
+      &.is-swiping {
+        .profile-avatars-arrow {
+          opacity: 0 !important;
+        }
+      }
+
+      &.has-stories {
+        .profile-avatars-avatar-fake {
+          visibility: visible;
+          margin-top: -6px;
+        }
+      }
+
+      // A topic has no photo carousel — its icon is a single, fixed-size
+      // avatar-120 centered in the (collapsed) header, instead of a full-size
+      // photo that scales down.
+      &.is-topic {
+        .profile-avatars-avatar {
+          position: absolute;
+          inset: 0;
+          min-width: 0;
+          height: auto;
+          padding-bottom: 0;
+          align-items: center;
+          justify-content: center;
+
+          .avatar {
+            position: static !important;
+          }
+        }
+      }
+
+      // While a new profile photo is uploading, the header is locked collapsed
+      // and shows a cancellable progress ring centered on the avatar.
+      &.is-avatar-uploading {
+        cursor: default;
+
+        .profile-avatars-avatar-fake {
+          visibility: visible;
+        }
+
+        // Avoid double avatar (the scaled carousel item) — show only the fake.
+        .profile-avatars-avatar.active {
+          opacity: 0;
+        }
+
+        .profile-avatars-avatar-fake {
+          &:after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            background-color: rgba(0, 0, 0, .45);
+            z-index: 2;
+            pointer-events: none;
+          }
+
+          .preloader-container {
+            position: absolute;
+            inset: 0;
+            margin: auto;
+            width: 2.5rem;
+            height: 2.5rem;
+            z-index: 3;
+            pointer-events: all;
+          }
+        }
+      }
+    }
+
+    &-avatars {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      flex-wrap: nowrap;
+      transform: translate(0, 0);
+      transform-origin: var(--transform-origin-inline-start) top;
+      transition: transform .2s ease-in-out;
+      position: absolute;
+    }
+
+    &-avatar {
+      width: inherit;
+      // height: inherit;
+      height: 0;
+      padding-bottom: 100%;
+      min-width: 100%;
+      // min-height: 100%;
+      display: flex;
+      // background-color: #000;
+      position: relative;
+
+      .avatar-star {
+        --size: 420px;
+        opacity: 0;
+
+        @include animation-level(1) {
+          transition: opacity var(--transition-standard-in);
+        }
+      }
+
+      &.active {
+        @include animation-level(2) {
+          transform: scale(1);
+          border-radius: 0;
+          transition: transform var(--transition-standard-in), border-radius var(--transition-standard-in);
+        }
+      }
+
+      .avatar-full {
+        --multiplier: calc(54 / 420);
+      }
+
+      .avatar {
+        position: absolute !important;
+      }
+
+      .avatar-photo {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover;
+        pointer-events: none;
+      }
+
+      // &-first {
+      //   transform: scale(calc(1 / (120 / 420)));
+      //   transform-origin: left top;
+      // }
+
+      .has-stories &-first {
+        opacity: 1;
+        transition-delay: 0s, 0s;
+        transform: scale(1);
+
+        @include animation-level-transition(opacity .05s, transform var(--transition-standard-in));
+
+        // reduced: no shrink to time its fade by - it fades on a clock of its own
+        @include animation-level-only(1) {
+          transition: opacity var(--transition-standard-out);
+        }
+      }
+
+      &-fake {
+        position: absolute !important;
+        left: 50%;
+        // * with the circle, above the buttons - open as well, where the photo covers it: a place
+        // * of the collapsed header's alone would be let go of at once as it opens, a step down
+        top: var(--profile-avatar-center-y);
+        transform: translate(-50%, -50%);
+        visibility: hidden;
+      }
+    }
+
+    &-gradient {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 100px;
+      background: linear-gradient(360deg, rgba(0, 0, 0, .3) 8.98%, rgba(0, 0, 0, 0) 100%);
+      pointer-events: none;
+
+      // * the name stands higher, over the buttons
+      .has-actions &:not(.profile-avatars-gradient-top) {
+        height: calc(100px + var(--profile-actions-room));
+      }
+
+      @include animation-level(1) {
+        opacity: 1;
+        transition: opacity var(--transition-standard-easing) calc(var(--transition-standard-in-time) / 2);
+        transition-delay: calc(var(--transition-standard-in-time) / 2);
+      }
+
+      &-top {
+        top: 0;
+        bottom: auto;
+        transform: scaleY(-1);
+      }
+    }
+
+    &-info {
+      position: absolute;
+      bottom: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      inset-inline: 1rem;
+      bottom: 0.4375rem;
+      pointer-events: none;
+      transform: translateY(0);
+
+      .has-music & {
+        bottom: 1.9375rem;
+      }
+
+      .has-actions & {
+        bottom: calc(.4375rem + var(--profile-actions-room));
+      }
+
+      .has-actions.has-music & {
+        bottom: calc(1.9375rem + var(--profile-actions-room));
+      }
+
+      @include animation-level-transition(transform var(--transition-standard-in), color var(--profile-recolor), bottom var(--transition-standard-in));
+
+      .profile-name,
+      .profile-subtitle {
+        color: currentColor;
+        margin: 0;
+        text-align: start;
+        inset-inline-start: 0;
+        transform: translateX(0);
+        position: relative;
+        white-space: nowrap;
+
+        // the width follows the place it moves to, so it goes along with it: at once, with reduced animations
+        @include animation-level(1) {
+          transition: color var(--profile-recolor);
+        }
+
+        @include animation-level(2) {
+          transition: inset-inline-start var(--transition-standard-in), transform var(--transition-standard-in), color var(--profile-recolor), max-width var(--transition-standard-in);
+        }
+
+        @include status-leaving-anchor(false);
+      }
+
+      .emoji-status {
+        pointer-events: all;
+        z-index: 1;
+      }
+
+      .profile-subtitle {
+        line-height: 24px;
+        
+        &-text {
+          opacity: var(--secondary-opacity-max);
+          @include animation-level(1) {
+            transition: opacity var(--profile-recolor);
+          }
+        }
+      }
+
+      .verified-icon,
+      .premium-icon,
+      .emoji-status-text-color {
+        opacity: var(--secondary-opacity-max);
+      }
+
+      .stars-rating-icon:not(.stars-rating-icon-warning) {
+        margin-inline-start: -4px;
+      }
+
+      .online {
+        color: inherit !important;
+      }
+
+      .premium-icon {
+        @include animation-level(1) {
+          transition: color var(--profile-recolor), opacity var(--profile-recolor);
+        }
+      }
+    }
+
+    &-tabs {
+      display: flex;
+      position: absolute;
+      top: .5rem;
+      left: .375rem;
+      right: .375rem;
+      height: .125rem;
+      pointer-events: none;
+
+      @include animation-level(1) {
+        opacity: 1;
+        transition: opacity var(--transition-standard-in);
+      }
+    }
+
+    &-tab {
+      flex: 1 1 auto;
+      border-radius: 4px;
+      margin: 0 .125rem;
+      background-color: #fff;
+      opacity: .2;
+      transition: opacity .2s ease-in-out;
+      //min-width: 1.6875rem;
+      height: inherit;
+      position: relative;
+      overflow: hidden;
+
+      &.active {
+        opacity: .6;
+      }
+
+      // While a video avatar plays, the active tab fills like a stories
+      // progress bar (dim base + bright fill driven by --progress).
+      &.is-playing {
+        opacity: 1;
+        background-color: rgba(255, 255, 255, .3);
+
+        &:before {
+          content: " ";
+          position: absolute;
+          inset-block: 0;
+          inset-inline-start: 0;
+          width: var(--progress, 0%);
+          border-radius: inherit;
+          background-color: #fff;
+        }
+      }
+    }
+
+    &-arrow {
+      position: absolute;
+      top: 0;
+      inset-inline-start: 0;
+      bottom: 0;
+      width: calc(100% / 3);
+      opacity: 0;
+
+      @include reveal-on-focus;
+
+      @include animation-level(1) {
+        transition: opacity .2s ease-in-out;
+      }
+
+      &-icon {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 2.1875rem;
+        color: #fff;
+        inset-inline-start: .625rem;
+      }
+
+      .profile-avatars-container:not(.is-swiping) & {
+        @include hover() {
+          opacity: 1;
+        }
+      }
+
+      /* &-icon {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+      } */
+
+      &-next {
+        inset-inline: auto 0;
+
+        .profile-avatars-arrow-icon {
+          inset-inline: auto .625rem;
+        }
+      }
+    }
+
+    &-pattern {
+      position: absolute;
+      top: 49%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      mix-blend-mode: overlay;
+      transition: opacity 100ms ease-in-out, transform 100ms ease-in-out;
+      transform-origin: 50% 25%;
+
+      .profile-container:not(.is-collapsed) & {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(1.2);
+      }
+
+      // * around the circle, above the buttons - open too, where it fades out where it stood
+      .has-actions & {
+        @include respond-to(not-handhelds) {
+          top: calc(49% - var(--profile-actions-room) / 2);
+        }
+      }
+
+      @include respond-to(handhelds) {
+        top: 24px;
+        transform: translateX(-50%) scale(calc(var(--middle-column-width-value) / 420));
+        height: auto;
+
+        .profile-container:not(.is-collapsed) & {
+          transform: translateX(-50%) scale(1.2);
+        }
+      }
+    }
+  }
+
+  &-content {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    width: 100%;
+
+    // * the buttons under the name, and the room the header makes for them
+    &.has-actions {
+      --profile-actions-room: #{$btn-tile-height + .75rem};
+    }
+
+    .stars-rating-icon {
+      display: flex;
+      align-items: center;
+      pointer-events: all;
+      // $thickness: 1.5px;
+      // filter: 
+      //   drop-shadow(#{-$thickness} 0 0 rgba(0, 0, 0, 0.1))
+      //   drop-shadow(#{$thickness} 0 0 rgba(0, 0, 0, 0.1))
+      //   drop-shadow(0 #{-$thickness} 0 rgba(0, 0, 0, 0.1))
+      //   drop-shadow(0 #{$thickness} 0 rgba(0, 0, 0, 0.1))
+      //   drop-shadow(0 0 #{$thickness} rgba(0, 0, 0, 0.1));
+
+      &-warning {
+        margin-inline-end: 0.25rem;
+      }
+
+      @include animation-level(2) {
+        transition: margin-inline-start var(--transition-standard-in);
+      }
+    }
+
+    &-delimiter {
+      margin-bottom: var(--section-padding-bottom);
+    }
+
+    &.search-empty {
+      .gradient-delimiter {
+        display: none;
+      }
+    }
+  }
+
+  &-button {
+    @include respond-to(handhelds) {
+      border-radius: 0;
+    }
+  }
+
+  &-change-avatar {
+    --size: 3.375rem;
+    position: absolute !important;
+    top: calc(var(--size) / -2);
+    inset-inline-end: 1.25rem;
+    transform: none;
+    transition: none !important;
+
+    &-container {
+      position: relative;
+    }
+  }
+
+  &-container {
+    // * the colours that turn white over the photo turn as it covers them, in the second half of its
+    // * growth, and back as it leaves them, in the first half of its shrinking: white over the bare
+    // * header, or a dark name over the photo, would be lost on it
+    --profile-recolor: calc(var(--transition-standard-in-time) / 2) var(--transition-standard-easing);
+
+    &:not(.is-collapsed) {
+      @include animation-level(2) {
+        --profile-recolor: calc(var(--transition-standard-in-time) / 2) var(--transition-standard-easing) calc(var(--transition-standard-in-time) / 2);
+      }
+    }
+
+    &.is-collapsed {
+      // * the least height is the padding's own: the padding is animated, and a min-height that
+      // * held the header up would let go of it at once, the header jumping before it grows
+      .profile-avatars-container {
+        padding-bottom: max(66%, 276px);
+      }
+
+      .profile-avatars-avatar.active {
+        transform: translateY(-3%) scale(calc(120 / 400));
+        border-radius: 50%;
+      }
+
+      // The topic icon is already avatar-120 — don't shrink it like a full photo.
+      .profile-avatars-container.is-topic .profile-avatars-avatar.active {
+        transform: none;
+      }
+
+      .avatar-star {
+        opacity: 1;
+      }
+
+      .profile-avatars-tabs,
+      .profile-avatars-gradient,
+      .profile-avatars-arrow {
+        opacity: 0 !important;
+      }
+
+      :where(.a11y) & .profile-avatars-arrow {
+        visibility: hidden;
+      }
+
+      .profile-avatars-gradient {
+        transition-delay: 0s;
+        transition-duration: 100ms;
+      }
+
+      .profile-avatars-info {
+        transform: translateY(-33%);
+
+        .profile-name,
+        .profile-subtitle {
+          inset-inline-start: 50%;
+          transform: translateX(calc(-50% * var(--reflect)));
+        }
+
+        @include status-leaving-anchor(true);
+
+        .profile-name {
+          max-width: 21.25rem;
+        }
+      }
+
+      .has-music {
+        .profile-avatars-info {
+          transform: translateY(-10%);
+        }
+      }
+
+      // * the header grows by the row of buttons, and what stood in its middle stays where it was
+      .has-actions {
+        .profile-avatars-container {
+          padding-bottom: calc(max(66%, 276px) + var(--profile-actions-room));
+        }
+
+        .profile-avatars-avatar.active {
+          transform: translateY(calc(-3% - var(--profile-actions-room) / 2)) scale(calc(120 / 400));
+        }
+
+        // * a topic's icon is not scaled down, only centred
+        .profile-avatars-container.is-topic .profile-avatars-avatar.active {
+          transform: translateY(calc(var(--profile-actions-room) / -2));
+        }
+      }
+
+      .has-stories .profile-avatars-avatar-first {
+        opacity: 0;
+        transform: scale(.8916666667);
+        transition-delay: calc(var(--transition-standard-in-time) - .05s), 0s;
+
+        // reduced: it fades out where it stands, at once
+        @include animation-level-below(2) {
+          transform: none;
+          transition-delay: 0s;
+        }
+      }
+
+      .profile-subtitle-text,
+      .verified-icon,
+      .premium-icon,
+      .emoji-status-text-color {
+        opacity: var(--secondary-opacity-max);
+      }
+
+      .stars-rating-icon {
+        margin-inline-start: 0;
+      }
+    }
+
+    &.is-collapsed:not(.need-white) {
+      .profile-avatars-info {
+        color: var(--primary-text-color);
+
+        .profile-subtitle {
+          color: var(--secondary-text-color);
+          opacity: 1;
+        }
+
+        .stars-rating-icon-warning {
+          color: var(--danger-color);
+        }
+      }
+    }
+
+    &.need-white {
+      .profile-avatars-container {
+        --secondary-opacity-max: .7;
+      }
+
+      .profile-avatars-info,
+      .profile-subtitle {
+        color: #fff;
+      }
+
+      .show-when {
+        background-color: rgba(255, 255, 255, .2);
+      }
+
+      .topic-name-button {
+        --primary-color: #fff;
+      }
+
+      .peer-typing-container {
+        --color: #fff;
+      }
+
+      .profile-avatars-container {
+        .premium-icon {
+          color: #fff;
+        }
+
+        .verified-icon {
+          &-background {
+            fill: #fff;
+          }
+
+          &-check {
+            visibility: hidden;
+          }
+        }
+      }
+
+      .profile-music {
+        color: #fff;
+      }
+    }
+
+    &:not(.header-filled) {
+      .sidebar-header {
+        background-color: transparent;
+        pointer-events: none;
+
+        &:after {
+          opacity: 0;
+        }
+
+        .btn-icon {
+          pointer-events: all;
+        }
+      }
+
+      &.need-white {
+        .sidebar-header {
+          --light-secondary-text-color: rgba(255, 255, 255, #{$hover-alpha});
+          --ripple-color: var(--light-secondary-text-color);
+
+          .sidebar-header__title,
+          .btn-icon {
+            color: #fff;
+          }
+        }
+      }
+
+      // * the photo comes up under them as it grows
+      &:not(.is-collapsed) .sidebar-header {
+        .sidebar-header__title,
+        .btn-icon {
+          @include animation-level(2) {
+            transition: color var(--profile-recolor);
+          }
+        }
+      }
+    }
+
+    .sidebar-header {
+      --transition: .1s ease-in-out;
+      background-color: var(--surface-color);
+      position: absolute;
+      inset-inline: 0;
+      z-index: 3;
+
+      @include animation-level(1) {
+        transition: background-color var(--transition);
+      }
+
+      &:after {
+        @include animation-level(1) {
+          transition: opacity var(--transition);
+        }
+      }
+
+      .sidebar-header__title,
+      .btn-icon {
+        @include animation-level(1) {
+          transition: color var(--transition);
+        }
+      }
+
+      &.hide-border {
+        box-shadow: var(--section-box-shadow);
+
+        &:after {
+          opacity: 0;
+        }
+      }
+    }
+
+    // .sidebar-content {
+    //   margin-top: -3.5rem;
+    // }
+
+    > .scrollable {
+      display: flex;
+      flex-direction: column;
+      //transform: none;
+    }
+  }
+
+  &-name {
+    text-align: center;
+    font-size: 20px;
+    line-height: 24px;
+    font-weight: var(--font-weight-bold);
+	  min-width: 0;
+    max-width: 21.25rem;
+    margin: 0 auto;
+    color: var(--primary-text-color);
+    display: flex;
+    align-items: flex-end;
+
+    .emoji-native {
+      vertical-align: inherit;
+      min-width: min-content;
+    }
+
+    .peer-title:not(.with-icons) {
+      @include text-overflow(false);
+    }
+
+    // .verified-icon {
+    //   margin-bottom: 3px;
+    // }
+
+    .sidebar-left-section-content > & {
+      justify-content: center;
+    }
+
+    .badge-fake {
+      align-self: center;
+    }
+
+    .profile-avatars-info[data-stories-count="3"] & {
+      max-width: 18rem;
+    }
+
+    .profile-avatars-info[data-stories-count="2"] & {
+      max-width: 19rem;
+    }
+
+    .profile-avatars-info[data-stories-count="1"] & {
+      max-width: 20rem;
+    }
+  }
+
+  &-subtitle {
+    text-align: center;
+    color: var(--secondary-text-color);
+    font-size: 14px;
+    line-height: 20px;
+    margin-bottom: .875rem;
+    margin-top: 1px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    @include respond-to(handhelds) {
+      margin-top: 3px;
+    }
+
+    .online {
+      color: var(--primary-color);
+    }
+
+    // * a box of its own, which what it showed fades out over (`crossfadeContent`) - an inline one
+    // * would leave that a line of another height - and which the new status resizes. What fades
+    // * out is not cut to the new status
+    &-status {
+      display: inline-flex;
+
+      .crossfade-leaving {
+        inset-inline-end: auto;
+        width: max-content;
+        overflow: visible;
+      }
+    }
+
+    @include status-leaving-anchor(true);
+
+    .show-when {
+      margin-inline-start: .25rem;
+      cursor: pointer;
+      pointer-events: all;
+    }
+
+    // the subtitle lives inside the avatars header, which is pointer-events:
+    // none — opt the topic's forum button back in, like .show-when above
+    .topic-name-button {
+      pointer-events: all;
+    }
+  }
+
+  &-avatar {
+    margin: .5rem auto 10px;
+    display: block;
+    //flex: 0 0 auto;
+
+    @include respond-to(handhelds) {
+      margin: 0 auto 10px;
+      --size: 100px;
+      --multiplier: .54;
+    }
+  }
+
+  &-name,
+  &-subtitle,
+  &-avatar {
+    flex: 0 0 auto;
+  }
+
+  &-pinned-gifts {
+    position: absolute;
+    width: 120px;
+    height: 120px;
+    top: 4.5rem;
+    left: 50%;
+    transform: translateX(-50%) scale(1);
+    opacity: 1;
+    transition: opacity 100ms ease-in-out, transform 100ms ease-in-out;
+    transform-origin: center;
+
+    @include respond-to(handhelds) {
+      // костыль из-за того что аватар в мобилке имеет странные размеры
+      top: calc(2.5rem + 5vw);
+      width: 28.5%;
+      height: auto;
+      aspect-ratio: 1/1;
+    }
+
+    .profile-container:not(.is-collapsed) & {
+      opacity: 0;
+      transform: translateX(-50%) scale(1.2);
+      // The gifts layer paints on top of the avatar; once the header is
+      // expanded it's invisible but would still swallow clicks meant for the
+      // avatar underneath — make it click-through so the avatar handles them.
+      pointer-events: none;
+    }
+  }
+
+  &-pinned-gift {
+    &::before {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      background: var(--halo-color);
+      border-radius: 50%;
+      filter: blur(15px) saturate(1.5);
+    }
+
+    position: absolute;
+    width: 30px;
+    height: 30px;
+
+    animation: profile-pinned-gift-fade-in 0.5s forwards;
+
+    @keyframes profile-pinned-gift-fade-in {
+      0% {opacity: 0;}
+      100% {opacity: 1;}
+    }
+
+    &[data-idx="0"] { left: -40px; top: -3px; }
+    &[data-idx="1"] { left: -100px; top: 57px; }
+    &[data-idx="2"] { left: -35px; top: 87px; }
+    &[data-idx="3"] { right: -50px; top: 17px; }
+    &[data-idx="4"] { right: -110px; top: 37px; }
+    &[data-idx="5"] { right: -80px; top: 87px; }
+  }
+
+  &-story-previews-container {
+    position: absolute;
+    bottom: 0.75rem;
+    inset-inline-end: 1rem;
+    z-index: 2;
+
+    .has-music & {
+      bottom: 2.1875rem;
+    }
+
+    .has-actions & {
+      bottom: calc(.75rem + var(--profile-actions-room));
+    }
+
+    .has-actions.has-music & {
+      bottom: calc(2.1875rem + var(--profile-actions-room));
+    }
+  }
+
+  // * the row of buttons under the name (`PeerProfileActions`), as iOS has them: it stands over the
+  // * header's colour, and over the photo once that opens, and takes its colours from either
+  &-actions {
+    position: absolute;
+    inset-inline: 1rem;
+    bottom: .75rem;
+    z-index: 2;
+    display: flex;
+    gap: .5rem;
+    // * a click between the buttons is the header's: it opens the photo
+    pointer-events: none;
+
+    .has-music & {
+      bottom: 2.25rem;
+    }
+  }
+
+  &-action {
+    // * what a hover and an open menu lay over the button's own colour. With no colour under it the
+    // * button is a plain one: an icon button's colour and ripple, the ripple's shade laid over it on
+    // * hover - the gray of a hover on the page would turn the button into the page's own colour
+    --profile-action-highlight: var(--original-ripple-color);
+    pointer-events: all;
+    background-color: var(--surface-color);
+    color: var(--primary-text-color);
+    text-transform: lowercase;
+
+    @include animation-level(1) {
+      transition: background-color var(--profile-recolor), color var(--profile-recolor);
+    }
+
+    @include hover() {
+      background-image: linear-gradient(var(--profile-action-highlight), var(--profile-action-highlight));
+    }
+
+    &.menu-open {
+      background-image: linear-gradient(var(--profile-action-highlight), var(--profile-action-highlight));
+    }
+
+    // * over the header's own colour: the white the icon buttons there take would be lost on the
+    // * button's own
+    .need-white & {
+      --profile-action-highlight: rgba(255, 255, 255, .15);
+      --ripple-color: var(--profile-action-highlight);
+      --focus-ring-color: #fff;
+      background-color: rgba(255, 255, 255, .2);
+      color: #fff;
+
+      .night & {
+        background-color: rgba(0, 0, 0, .2);
+      }
+    }
+
+    // * over the photo
+    .profile-container:not(.is-collapsed) & {
+      background-color: rgba(255, 255, 255, .15);
+    }
+  }
+
+  &-story-previews {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    opacity: 1;
+    transform: translateX(0);
+    transition: opacity var(--transition-standard-in), transform var(--transition-standard-in);
+    transform-origin: var(--transform-origin-right-center);
+    transition-delay: 0.1s;
+
+    .profile-container.is-collapsed & {
+      opacity: 0;
+      transform: translateX(calc(12px * var(--reflect)));
+      pointer-events: none;
+      transition-delay: 0s;
+    }
+  }
+
+  &-story-preview {
+    position: relative;
+    flex-shrink: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    .avatar-stories-simple {
+      --offset: 0px;
+      mask: radial-gradient(circle closest-side, transparent calc(100% - 2px), #fff calc(100% - 2px));
+    }
+
+    &:not(:first-child) {
+      margin-inline-start: -20px;
+
+      .profile-story-preview-media {
+        clip-path: url(#story-item-clip);
+      }
+
+      .avatar-stories-simple {
+        mask:
+          radial-gradient(circle closest-side, transparent calc(100% - 2px), #fff calc(100% - 2px)),
+          linear-gradient(calc(90deg * var(--reflect)), transparent 27%, #fff 0);
+        mask-composite: intersect;
+      }
+    }
+
+    &:not(:last-child) {
+      .avatar-stories-simple {
+        mask:
+          radial-gradient(circle closest-side, transparent calc(100% - 2px), #fff calc(100% - 2px)),
+          linear-gradient(calc(90deg * var(--reflect)), #fff 73%, transparent 0);
+        mask-composite: intersect;
+      }
+    }
+
+    &:not(:first-child):not(:last-child) {
+      .avatar-stories-simple {
+        mask:
+          radial-gradient(circle closest-side, transparent calc(100% - 2px), #fff calc(100% - 2px)),
+          linear-gradient(calc(90deg * var(--reflect)), #fff 73%, transparent 0),
+          linear-gradient(calc(90deg * var(--reflect)), transparent 27%, #fff 0);
+        mask-composite: intersect;
+      }
+    }
+
+    // * mirrored in RTL, where the circle before it overlaps from the right: the bite
+    // * `#story-item-clip` takes out of the left has to come out of the right side
+    &-media {
+      border-radius: 50%;
+      overflow: hidden;
+      position: relative;
+      transform: scale(calc(.95 * var(--reflect)), .95);
+    }
+
+    // * ...and the photo turned back, media is never mirrored
+    &-img {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover;
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform: scaleX(var(--reflect));
+    }
+  }
+
+  &-bot-verification {
+    --custom-emoji-size: 1rem;
+    font-size: var(--font-size-14);
+    padding-inline: calc(var(--section-padding-inline) + var(--section-margin-inline));
+    margin-bottom: var(--section-padding-bottom);
+    color: var(--secondary-text-color);
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    line-height: var(--line-height-14);
+
+    .verified-icon {
+      &-background {
+        fill: currentColor;
+      }
+    }
+  }
+
+  &-unofficial-warning {
+    .row-title {
+      font-size: var(--font-size-14);
+      line-height: var(--line-height-14);
+      color: var(--secondary-text-color);
+      overflow: unset;
+    }
+
+    .profile-unofficial-warning-icon {
+      color: var(--danger-color);
+      margin-inline-start: -.25rem;
+      font-size: 1.125rem;
+    }
+  }
+
+  &-notes {
+    .row-title {
+      white-space: pre-wrap;
+    }
+  }
+
+  &-music {
+    position: relative;
+    pointer-events: all;
+    transform: translateY(100%);
+    transition: transform var(--transition-standard-in);
+    height: 1.5rem;
+    background: rgba(0, 0, 0, .2);
+    font-size: var(--font-size-12);
+    line-height: 1;
+    letter-spacing: -0.24px;
+    padding-inline: .5rem;
+
+    .has-music & {
+      transform: translateY(0);
+    }
+
+    &-icon {
+      margin-inline-end: 0.125rem;
+      font-size: 14px;
+    }
+
+    &-performer {
+      font-weight: var(--font-weight-bold);
+    }
+
+    &-title:not(.only-title) {
+      opacity: 0.7;
+    }
+
+    &-container {
+      position: absolute !important;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      overflow: hidden;
+      height: 1.5rem;
+      pointer-events: none;
+    }
+
+    &-inner {
+      pointer-events: none;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      line-height: 1.5rem;
+    }
+  }
+}
+
+.search-super-container-gifts.tabs-tab,
+.search-super-container-stories.tabs-tab {
+  position: static;
+  overflow: initial!important;
+}
+
+.profile-music {
+  cursor: pointer;
+}
+
+.search-super-content-gifts {
+  height: 100%;
+}
+
+// * a chip its row's owner can put in a new place: a story album, a gift collection
+.search-super-content-stories-albums .stories-album-chip,
+.search-super-content-gifts .gift-collection-chip {
+  @include sortable-item-transition();
+
+  &.is-reorderable {
+    cursor: grab;
+  }
+
+  // * the chip held is lifted off the row on a plate of its own, the chosen one's staying where it was
+  &.is-dragging {
+    z-index: 2;
+    background-color: var(--surface-color);
+    box-shadow: var(--menu-box-shadow);
+  }
+}
+
+.search-super-content-stories {
+  background-color: var(--background-color) !important;
+  display: flex;
+  flex-direction: column;
+
+  &-albums {
+    .stories-album-chip {
+      max-width: 8rem;
+    }
+
+    .my-stories-container & {
+      top: 0;
+    }
+  }
+
+  .stories-album-chip-title,
+  .stories-album-title {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    @include text-overflow(true);
+
+    .emoji {
+      max-width: none;
+    }
+  }
+
+  .stories-album-wrapper {
+    position: relative;
+    overflow: clip;
+    flex: 1;
+    display: grid;
+
+    > .stories-album-content {
+      grid-area: 1 / 1;
+    }
+  }
+
+  .grid-album-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 0;
+    height: calc(var(--100vh-inset) - 96px);
+    position: relative;
+
+    .title {
+      font-size: var(--font-size-20);
+      line-height: var(--line-height-20);
+      font-weight: 500;
+      margin-bottom: 0.25rem;
+    }
+  }
+}

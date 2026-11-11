@@ -1,0 +1,31 @@
+ 
+.popup-instance-deactivated {
+  background-color: rgba(0, 0, 0, .6);
+  
+  // the message IS the overlay — strip the popup card the shell would otherwise draw
+  .instance-deactivated-container {
+    margin: auto;
+    text-align: center;
+    pointer-events: none;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    background-color: transparent;
+    border-radius: 0;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .header {
+    font-size: 2rem;
+    color: #fff;
+    //line-height: var(--line-height);
+  }
+
+  .subtitle {
+    color: #fff;
+    opacity: .6;
+    font-size: 1.5rem;
+    line-height: var(--line-height);
+  }
+}

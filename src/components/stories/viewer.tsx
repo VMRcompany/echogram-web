@@ -1,0 +1,4680 @@
+import {keepsKeyFromComposer, shouldPreserveKeyboardFocus} from '@helpers/dom/isKeyboardControl';
+import createFocusTrap, {FocusTrap} from '@helpers/dom/focusTrap';
+/* @refresh reload */
+
+import {animateSingle} from '@helpers/animation';
+import {bindActiveWindowListener, getAppWindow, getOverlayRoot} from '@helpers/appWindow';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import getInlineArrowKeys from '@helpers/dom/getInlineArrowKeys';
+import {DEFAULT_MENU_WINDOW_MARGIN} from '@helpers/positionMenu';
+import overlayCounter from '@helpers/overlayCounter';
+import throttle from '@helpers/schedulers/throttle';
+import clamp from '@helpers/number/clamp';
+import classNames from '@helpers/string/classNames';
+import windowSize from '@helpers/windowSize';
+import {Document, DocumentAttribute, MediaArea, MessageMedia, Reaction, StoryItem, User, Chat as MTChat, AvailableReaction, MessageEntity, StoriesStealthMode} from '@layer';
+import animationIntersector from '@components/animationIntersector';
+import appNavigationController, {NavigationItem} from '@components/appNavigationController';
+import PeerTitle from '@components/peerTitle';
+import SwipeHandler from '@components/swipeHandler';
+import styles from '@components/stories/viewer.module.scss';
+import {createSignal, createEffect, JSX, For, Accessor, onCleanup, createMemo, mergeProps, splitProps, untrack, on, getOwner, runWithOwner, createRoot, ParentProps, Signal, onMount, Setter, createReaction, Show, createRenderEffect} from 'solid-js';
+import {unwrap} from 'solid-js/store';
+import {assign, Portal} from 'solid-js/web';
+import rootScope from '@lib/rootScope';
+import {Middleware, MiddlewareHelper, getMiddleware} from '@helpers/middleware';
+import wrapRichText, {WrapRichTextOptions} from '@lib/richTextProcessor/wrapRichText';
+import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
+import tsNow from '@helpers/tsNow';
+import I18n, {LangPackKey, i18n, joinElementsWith} from '@lib/langPack';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import Modes from '@config/modes';
+import formatDuration, {DurationType} from '@helpers/formatDuration';
+import {easeOutCubicApply} from '@helpers/easing/easeOutCubic';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import findUpAsChild from '@helpers/dom/findUpAsChild';
+import InputFieldAnimated from '@components/inputFieldAnimated';
+import ChatInput from '@components/chat/input';
+import Chat from '@components/chat/chat';
+import {ChatType} from '@components/chat/chatType';
+import middlewarePromise from '@helpers/middlewarePromise';
+import emoticonsDropdown from '@components/emoticonsDropdown';
+import showStoryViewersPopup from '@components/popups/storyViewers';
+import ButtonMenuToggle from '@components/buttonMenuToggle';
+import {hideToast, toastNew} from '@components/toast';
+import debounce from '@helpers/schedulers/debounce';
+import appDownloadManager from '@lib/appDownloadManager';
+import getMediaFromMessage from '@appManagers/utils/messages/getMediaFromMessage';
+import confirmationPopup from '@components/confirmationPopup';
+import {formatDateAccordingToTodayNew, formatFullSentTime} from '@helpers/date';
+import getVisibleRect from '@helpers/dom/getVisibleRect';
+import onMediaLoad from '@helpers/onMediaLoad';
+import {AvatarNew, avatarNew} from '@components/avatarNew';
+import documentFragmentToNodes from '@helpers/dom/documentFragmentToNodes';
+import {SERVICE_PEER_ID} from '@appManagers/constants';
+import idleController from '@helpers/idleController';
+import OverlayClickHandler from '@helpers/overlayClickHandler';
+import getStoryPrivacyType, {StoryPrivacyType} from '@appManagers/utils/stories/privacyType';
+import {STORY_PRIVACY_ICONS} from '@components/stories/privacyIcons';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import removeStoriesFromRecent from '@components/stories/removeFromRecent';
+import StackedAvatars from '@components/stackedAvatars';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import focusInput from '@helpers/dom/focusInput';
+import {preloadStoriesMedia, wrapStoryMedia} from '@components/stories/preview';
+import {StoriesContextPeerState, useStories, StoriesProvider, STORY_DURATION} from '@components/stories/store';
+import createUnifiedSignal from '@helpers/solid/createUnifiedSignal';
+import liteMode from '@helpers/liteMode';
+import Icon from '@components/icon';
+import {ChatReactionsMenu} from '@components/chat/reactionsMenu';
+import setCurrentTime from '@helpers/dom/setCurrentTime';
+import ReactionElement from '@components/chat/reaction';
+import blurActiveElement from '@helpers/dom/blurActiveElement';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import reactionsEqual from '@appManagers/utils/reactions/reactionsEqual';
+import wrapSticker from '@components/wrappers/sticker';
+import createContextMenu from '@helpers/dom/createContextMenu';
+import isTargetAnInput from '@helpers/dom/isTargetAnInput';
+import {setQuizHint} from '@components/quizHint';
+import {doubleRaf} from '@helpers/schedulers';
+import {resolveFirst} from '@solid-primitives/refs';
+import {IS_MOBILE} from '@environment/userAgent';
+import formatNumber from '@helpers/number/formatNumber';
+import callbackify from '@helpers/callbackify';
+import noop from '@helpers/noop';
+import {dispatchHeavyAnimationEvent} from '@hooks/useHeavyAnimationCheck';
+import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
+import wrapReply from '@components/wrappers/reply';
+import getPeerId from '@appManagers/utils/peers/getPeerId';
+import AppStatisticsTab from '@components/sidebarRight/tabs/statistics';
+import getStoryRepostInfo from '@appManagers/utils/stories/repostInfo';
+import anchorCallback from '@helpers/dom/anchorCallback';
+import {ButtonIconTsx} from '@components/buttonIconTsx';
+import {IconTsx} from '@components/iconTsx';
+import {Transition} from 'solid-transition-group';
+import {TransitionGroup} from '@helpers/solid/transitionGroup';
+import openStoriesSearch, {openStoriesSearchByHashtag} from '@components/stories/openStoriesSearch';
+import {getAccountSession} from '@lib/accounts/getCurrentAccount';
+import createMiddleware from '@helpers/solid/createMiddleware';
+import showTooltip from '@components/tooltip';
+import safeWindowOpen from '@helpers/dom/safeWindowOpen';
+import isVideoStalled from '@helpers/dom/isVideoStalled';
+import wrapUrl from '@lib/richTextProcessor/wrapUrl';
+import {showStoryReport} from '@components/popups/reportAd';
+import {useAppSettings} from '@stores/appSettings';
+import showStoriesStealthModePopup from '@components/popups/storiesStealthMode';
+import {showStorySettingsForStory} from '@components/popups/storySettings';
+import {useAppConfig} from '@stores/appState';
+import {wrapStoriesStealthModeDuration} from '@components/wrappers/wrapDuration';
+import {copyStoryLink, handleShareStory, hasStoryLink} from './share';
+import createListenerSetter from '@helpers/solid/createListenerSetter';
+import pillStyles from '@components/stories/storyPill.module.scss';
+import StoryWeatherArea, {toggleTemperatureUnit} from '@components/stories/weatherArea';
+import getMediaAreaRadius from '@components/stories/mediaAreaRadius';
+import StoryMusicPanel, {STORY_MUSIC_PANEL_CLASS} from '@components/stories/musicPanel';
+import getAudioTitles from '@appManagers/utils/docs/getAudioTitles';
+import type {MyDocument} from '@appManagers/appDocsManager';
+import A11yButton from '@components/a11yButton';
+import {hotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
+import {hotListen} from '@helpers/hotModule';
+import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
+import createSubmenuTrigger from '@components/createSubmenuTrigger';
+import {ButtonMenuItemOptionsVerifiable, ButtonMenuSync, setButtonMenuItemDisabled} from '@components/buttonMenu';
+import {PLAYBACK_RATES, getPlaybackRateIcon, getPlaybackRateMenuButton, setPlaybackRateMenuState} from '@components/playbackRateButton';
+import {getStoryVideoDocuments, isStoryHighQuality, showStoryQualityUpgradePopup, STORY_QUALITY_ICON} from '@components/stories/quality';
+import {createAddToAlbumSubmenuTrigger, openCreateAlbumPopup} from '@components/stories/albums';
+import {createStoriesNotifyMuteButtons} from '@components/stories/notifyMute';
+import {TranslatableMessageTsx} from '@components/translatableMessage';
+import detectLanguageForTranslation from '@helpers/detectLanguageForTranslation';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import replaceContent from '@helpers/dom/replaceContent';
+import showStickersPopup from '@components/popups/stickers';
+import {getStoryContainedPacks, storyHasContainedPacks, StoryContainedPacks, StoryContainedPacksKind, wrapStoryContainedPacks} from '@components/stories/containedPacks';
+import {attachContextMenuListener} from '@helpers/dom/attachContextMenuListener';
+import openBoosts from '@components/openBoosts';
+import type {StoryReplyMode} from '@appManagers/appStoriesManager';
+
+const STORY_HEADER_AVATAR_SIZE = 32;
+const STORY_SCALE_SMALL = 0.33;
+const STORIES_PRESERVE = 2;
+const STORIES_PRESERVE_HIDDEN = 2;
+const STORIES_PRELOAD = 3;
+const STORY_REPOST_ICON: Icon = 'storyrepost';
+const STORY_MENU_PADDING = 8;
+let CHANGELOG_PEER_ID = SERVICE_PEER_ID;
+
+hotListen(import.meta.hot, rootScope, 'app_config', (appConfig) => {
+  const userId = appConfig.stories_changelog_user_id;
+  CHANGELOG_PEER_ID = userId ? userId.toPeerId(false) : SERVICE_PEER_ID;
+});
+
+const x = new OverlayClickHandler(undefined, true);
+
+const StorySlides = (props: {
+  state: StoriesContextPeerState,
+  index: Accessor<number>,
+  currentStory: Accessor<StoryItem>,
+  splitByDays?: boolean
+}) => {
+  let storyIndex: Accessor<number>, storiesForSlides: Accessor<StoryItem[]>;
+  if(props.splitByDays) {
+    const getStoryDateTimestamp = (storyItem: StoryItem.storyItem) => {
+      const timestamp = storyItem.date;
+      const date = new Date(timestamp * 1000);
+      date.setHours(0, 0, 0);
+      return date.getTime();
+    };
+
+    const storiesSplittedByDays = createMemo(() => {
+      const stories = props.state.stories;
+      const days: Record<number, StoryItem[]> = {};
+      (stories as StoryItem.storyItem[]).forEach((story) => {
+        const dateTimestamp = getStoryDateTimestamp(story);
+        (days[dateTimestamp] ??= []).push(story);
+      });
+      return days;
+    });
+
+    storiesForSlides = createMemo(() => {
+      const days = storiesSplittedByDays();
+      const story = props.currentStory();
+      const dateTimestamp = getStoryDateTimestamp(story as StoryItem.storyItem);
+      return days[dateTimestamp];
+    });
+
+    storyIndex = createMemo(() => {
+      const story = props.currentStory();
+      const stories = storiesForSlides();
+      // return props.state.index;
+      return stories.indexOf(story);
+    });
+  } else {
+    storiesForSlides = () => props.state.stories;
+    storyIndex = () => props.state.index;
+  }
+
+  const slides = (
+    <For each={storiesForSlides()}>
+      {(_, i) => <StorySlide {...mergeProps(props, {slideIndex: i, storyIndex})} />}
+    </For>
+  );
+
+  return slides;
+};
+
+// * The bar of a story fills by itself: from where the story is to its end in the time left, a linear
+// * animation of its scale the compositor runs. Set from a frame loop as the width of a pseudo-element,
+// * it had the page restyle, lay out and paint the bar in every frame of every story played
+const StorySlide = (props: {
+  slideIndex: Accessor<number>,
+  state: StoriesContextPeerState,
+  storyIndex: Accessor<number>,
+  index: Accessor<number>
+}) => {
+  const [stories] = useStories();
+  let animation: Animation;
+
+  const fill = document.createElement('div');
+  fill.classList.add(styles.ViewerStorySlidesSlideFill);
+
+  // * stands at `progress`, and with `left` grows from it to the end in that many ms
+  const show = (progress: number, left?: number) => {
+    animation?.cancel();
+    animation = undefined;
+    const from = `scaleX(${Math.min(1, Math.max(0, progress))})`;
+    fill.style.transform = from;
+    if(left > 0) {
+      animation = fill.animate([{transform: from}, {transform: 'scaleX(1)'}], {
+        duration: left,
+        easing: 'linear',
+        fill: 'forwards'
+      });
+    }
+  };
+
+  // * none for a story not started yet (no start time, or no length yet: still loading), which stands empty
+  const getProgress = () => {
+    const {startTime, storyDuration} = stories;
+    return startTime && storyDuration ? (Date.now() - startTime) / storyDuration : undefined;
+  };
+
+  createEffect(() => { // on peer change
+    if(stories.peer !== props.state) {
+      animation?.pause(); // * stands where it is, another peer's stories playing
+      return;
+    }
+
+    createEffect(on( // on story change
+      () => [props.storyIndex(), props.slideIndex()],
+      ([storyIndex, slideIndex]) => {
+        if(storyIndex !== slideIndex) {
+          show(storyIndex > slideIndex ? 1 : 0);
+          return;
+        }
+
+        show(0);
+        createEffect(() => { // on story toggle
+          if(stories.paused || stories.buffering) {
+            // * stands where it is drawn: the clock ran on while it buffered, the story did not
+            animation?.pause();
+          } else {
+            // * a play that moves the start or learns the length starts the bar again from there
+            const progress = getProgress();
+            show(progress ?? 0, progress === undefined ? 0 : stories.storyDuration * (1 - progress));
+          }
+        });
+      })
+    );
+  });
+
+  onCleanup(() => animation?.cancel());
+
+  return (
+    <div class={styles.ViewerStorySlidesSlide}>
+      {fill}
+    </div>
+  );
+};
+
+const DEFAULT_REACTION_EMOTICON = '❤';
+const SWIPE_UP_RISE = 20; // * how far the reply field or the footer rises after a drag up, till it opens (Android)
+const isDefaultReaction = (reaction: Reaction) => (reaction as Reaction.reactionEmoji)?.emoticon === DEFAULT_REACTION_EMOTICON;
+
+const StoryInput = (props: {
+  state: StoriesContextPeerState,
+  currentStory: Accessor<StoryItem>,
+  isActive: Accessor<boolean>,
+  focusedSignal: Signal<boolean>,
+  inputEmptySignal: Signal<boolean>,
+  inputMenuOpenSignal: Signal<boolean>,
+  isPublic: Accessor<boolean>,
+  likeButton: StoryLikeButton,
+  shareStory: () => void,
+  reaction: Accessor<JSX.Element>,
+  onShareButtonClick: (e: MouseEvent, listenTo: HTMLElement) => void,
+  onMessageSent: () => void,
+  setInputReady: Setter<boolean>,
+  isFull: Accessor<boolean>,
+  confirmSending: () => Promise<boolean>,
+  setChatInput: (input: ChatInput) => void,
+  swipeProgress: Accessor<number>
+}) => {
+  const [stories, actions] = useStories();
+  const [focused, setFocused] = props.focusedSignal;
+  const [inputEmpty, setInputEmpty] = props.inputEmptySignal;
+  const [inputMenuOpen, setInputMenuOpen] = props.inputMenuOpenSignal;
+  const middlewareHelper = createMiddleware();
+  const middleware = middlewareHelper.get();
+
+  // * the reply field is a chat of the account the stories are watched on, and goes with it
+  const chatManagers = bindManagersToSession(rootScope.managers);
+  const chat = new Chat(hotReloadGuard.appImManager, chatManagers, false, {elements: true, sharedMedia: true});
+  chat.setType(ChatType.Stories);
+  chat.isStandalone = true;
+
+  let btnReactionEl: HTMLButtonElement;
+  const btnReaction = (
+    <ButtonIconTsx
+      ref={btnReactionEl}
+      onClick={() => props.likeButton.toggle(btnReactionEl)}
+      class="btn-reaction"
+      noRipple={true}
+      aria-label={I18n.format('Reactions', true)}
+      aria-pressed={!!(props.currentStory() as StoryItem.storyItem)?.sent_reaction}
+    >
+      {props.reaction()}
+    </ButtonIconTsx>
+  );
+  props.likeButton.bind(btnReactionEl);
+
+  const input = chat.input = new ChatInput(chat, hotReloadGuard.appImManager, chatManagers, 'stories-input');
+  input.noRipple = true;
+  input.btnReaction = btnReactionEl;
+  input.confirmSending = props.confirmSending;
+  props.setChatInput(input);
+  input.excludeParts = {
+    replyMarkup: true,
+    scheduled: true,
+    downButton: true,
+    reply: true,
+    forwardOptions: true,
+    mentionButton: true,
+    attachMenu: true,
+    commandsHelper: true,
+    botCommands: true,
+    emoticons: IS_MOBILE
+  };
+  input.globalMentions = true;
+  input.getMiddleware = (...args) => middleware.create().get(...args);
+
+  // const onMouseDown = (e: MouseEvent) => {
+  //   if(
+  //     focused() &&
+  //     !findUpClassName(e.target, styles.ViewerStoryPrivacy) &&
+  //     !findUpClassName(e.target, 'btn-icon') &&
+  //     !findUpClassName(e.target, styles.small) &&
+  //     !findUpAsChild(e.target as HTMLElement, input.emoticonsDropdown.getElement())
+  //   ) {
+  //     document.addEventListener('click', cancelEvent, {capture: true, once: true});
+  //   }
+
+  //   onFocusChange(false);
+  // };
+
+  const onClick = (e: MouseEvent) => {
+    // if(!inputEmpty()) {
+    //   return;
+    // }
+
+    const target = e.target as HTMLElement;
+    const good = !findUpClassName(target, styles.ViewerStoryReactions) && (
+      findUpClassName(target, styles.ViewerStory) ||
+      target.classList.contains(styles.Viewer)
+    );
+    if(!good) {
+      return;
+    }
+
+    cancelEvent(e);
+    setFocused(false);
+  };
+
+  onCleanup(() => {
+    if(navigationItem) {
+      appNavigationController.removeItem(navigationItem);
+      navigationItem = undefined;
+    }
+
+    // * gone while focused — the member may write there no more, or the story cannot be answered: as if unfocused
+    if(untrack(focused)) {
+      getAppWindow().document.removeEventListener('click', onClick, {capture: true});
+      setFocused(false);
+      if(playAfterFocus) {
+        actions.play();
+      }
+    }
+  });
+
+  let navigationItem: NavigationItem;
+  createEffect(
+    on(
+      () => focused(),
+      (focused) => {
+        if(focused) {
+          playAfterFocus = untrack(() => !stories.paused);
+          // document.addEventListener('mousedown', onMouseDown, {capture: true, once: true});
+          getAppWindow().document.addEventListener('click', onClick, {capture: true});
+          appNavigationController.pushItem(navigationItem = {
+            type: 'stories-focus',
+            onPop: () => {
+              setFocused(false);
+            }
+          });
+        } else {
+          // document.removeEventListener('mousedown', onMouseDown, {capture: true});
+          getAppWindow().document.removeEventListener('click', onClick, {capture: true});
+          appNavigationController.removeItem(navigationItem);
+          navigationItem = undefined;
+        }
+
+        actions.toggle(focused ? false : playAfterFocus);
+        input.freezeFocused(focused);
+        input.chatInput.classList.toggle('is-focused', focused);
+        // input.setShrinking(!focused);
+      },
+      {defer: true}
+    )
+  );
+
+  let playAfterFocus = false;
+  input.onFocusChange = (_focused: boolean) => {
+    if(input.emoticonsDropdown.isActive()) {
+      return;
+    }
+
+    if(!_focused) {
+      return;
+    }
+
+    setFocused(_focused);
+  };
+
+  let playAfter = false;
+  const onMenuToggle = (open: boolean) => {
+    if(open) {
+      playAfter = !stories.paused;
+    }
+
+    actions.toggle(open ? false : playAfter);
+    setInputMenuOpen(open);
+  };
+  input.onMenuToggle = onMenuToggle;
+  input.construct();
+  input.constructPeerHelpers();
+  // input.setShrinking(true);
+  // input.chatInput.classList.add(styles.hideOnSmall);
+  // input.rowsWrapper.classList.add('night');
+  input.messageInput.dataset.textColor = 'white';
+
+  createEffect(() => {
+    if(props.isActive()) {
+      const onOpen = (): void => (onMenuToggle(true)/* , setFocused(true) */, undefined);
+      const onClose = (): void => (onMenuToggle(false)/* , setFocused(false) */, undefined);
+      emoticonsDropdown.addEventListener('open', onOpen);
+      emoticonsDropdown.addEventListener('close', onClose);
+      emoticonsDropdown.chatInput = input;
+
+      onCleanup(() => {
+        emoticonsDropdown.removeEventListener('open', onOpen);
+        emoticonsDropdown.removeEventListener('close', onClose);
+      });
+    }
+  });
+
+  createEffect(() => {
+    input.chatInput.classList.toggle('is-private', !props.isPublic());
+    input.setCanForwardStory(props.isPublic());
+  });
+
+  // * set only while it moves: a transform left on it would hold what it positions as fixed
+  createEffect(() => {
+    const progress = props.swipeProgress();
+    input.chatInput.style.transform = progress ? `translateY(${-progress * SWIPE_UP_RISE}px)` : '';
+  });
+
+  // * every button is in the field, which is as wide as the story, and focused grows past it on a wide screen
+  createEffect(() => {
+    const _focused = focused();
+    const chatInputPadding = props.isFull() ? 8 : 0;
+    const focusOffset = props.isFull() ? 0 : 135;
+    const width = stories.width + (_focused ? focusOffset : 0) - chatInputPadding * 2;
+    input.rowsWrapper.style.setProperty('width', width + 'px', 'important');
+    input.chatInput.classList.toggle('is-focused', _focused);
+  });
+
+  const owner = getOwner();
+
+  chat.peerId = props.state.peerId;
+  chat.onChangePeer({
+    peerId: chat.peerId,
+    type: ChatType.Stories
+  }, middlewarePromise(middleware)).then(() => {
+    if(!middleware()) return;
+    return chat.finishPeerChange({
+      peerId: chat.peerId,
+      middleware
+    });
+  }).then(() => {
+    if(!middleware()) return;
+    props.setInputReady(true);
+
+    runWithOwner(owner, () => {
+      createEffect(() => {
+        input.setReplyTo({
+          replyToStoryId: props.currentStory().id
+        });
+      });
+
+      createEffect(async() => {
+        JSON.stringify(stories.stealthMode); // * track every key change
+        chat.stealthMode = stories.stealthMode;
+        input.updateMessageInputPlaceholder(await input.getPlaceholderParams());
+      });
+    });
+  });
+
+  onCleanup(() => {
+    input.onFocusChange =
+      input.onFileSelection =
+      input.onMenuToggle =
+      input.onUpdateSendBtn =
+      input.onMessageSent2 =
+      input.forwardStoryCallback =
+      input.confirmSending =
+      undefined;
+    props.setChatInput(undefined);
+    middlewareHelper.destroy();
+    chat.destroy();
+  });
+
+  input.onFileSelection = (promise) => {
+    onMenuToggle(true);
+    promise.finally(() => {
+      onMenuToggle(false);
+    });
+  };
+
+  input.onUpdateSendBtn = (icon) => {
+    setInputEmpty(icon === 'record' || icon === 'forward');
+  };
+
+  input.onMessageSent2 = () => {
+    blurActiveElement();
+    setFocused(false);
+    props.onMessageSent();
+  };
+
+  input.forwardStoryCallback = (e) => {
+    props.onShareButtonClick(e, input.btnSendContainer);
+  };
+
+  return input.chatInput;
+};
+
+const JOINER = ' • ';
+// * the marks, embeddings, overrides and isolates that change the order text is shown in
+const BIDI_CONTROLS_REG_EXP = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+const renderStoryReaction = async(props: {
+  reaction: Reaction,
+  uReaction: ReturnType<typeof createUnifiedSignal<JSX.Element>>,
+  div: HTMLDivElement,
+  size: number,
+  textColor: string,
+  play: boolean
+}) => {
+  let doc: Document.document;
+  const {reaction, div, size, textColor, play, uReaction} = props;
+  const isCustomEmoji = reaction._ === 'reactionCustomEmoji';
+  const middleware = createMiddleware().get();
+  uReaction(null);
+  let availableReaction: MaybePromise<AvailableReaction>;
+  if(isCustomEmoji) {
+    const result = await rootScope.managers.acknowledged.appEmojiManager.getCustomEmojiDocument(reaction.document_id);
+    if(!middleware()) return;
+    if(!result.cached) {
+      uReaction();
+    }
+
+    doc = await result.result;
+    availableReaction = apiManagerProxy.getReaction(doc.stickerEmojiRaw);
+  } else {
+    const availableReactionsResult = apiManagerProxy.getAvailableReactions();
+    if(availableReactionsResult instanceof Promise) {
+      uReaction();
+    }
+    const availableReactions = await availableReactionsResult;
+    if(!middleware()) return;
+    availableReaction = availableReactions.find((availableReaction) => reactionsEqual(reaction, availableReaction));
+    doc = /* availableReaction.center_icon ??  */play ? availableReaction.select_animation : availableReaction.static_icon;
+  }
+
+  // preload animation
+  availableReaction && callbackify(availableReaction, (availableReaction) => {
+    if(availableReaction?.around_animation) {
+      appDownloadManager.downloadMedia({
+        media: availableReaction.around_animation
+      });
+    }
+  });
+
+  const loadPromises: Promise<any>[] = [];
+  await wrapSticker({
+    div,
+    doc,
+    width: size,
+    height: size,
+    play,
+    // isCustomEmoji,
+    textColor,
+    middleware,
+    loadPromises,
+    loop: play || undefined
+  });
+
+  await Promise.all(loadPromises);
+  if(!middleware()) return;
+  uReaction(div);
+};
+
+const StoryMediaArea = (props: {
+  story: StoryItem.storyItem,
+  mediaArea: MediaArea,
+  isActive: Accessor<boolean>,
+  setTooltipCloseCallback: Setter<() => void>,
+  setReady: Setter<boolean>,
+  sendReaction: StorySendReaction,
+  close: (callback?: () => void) => void,
+}) => {
+  const [stories, actions] = useStories();
+  const {x, y, w, h, rotation} = props.mediaArea.coordinates;
+  // const rotation = 10;
+  // const w = 100 / stories.width * 100;
+  // const h = 100 / stories.height * 100;
+  const playingMemo = createMemo((prev) => prev || (props.isActive() && stories.startTime));
+  const [children, setChildren] = createSignal<JSX.Element>();
+  const isLocation = createMemo(() => props.mediaArea._ === 'mediaAreaGeoPoint' || props.mediaArea._ === 'mediaAreaVenue');
+  const isReaction = createMemo(() => props.mediaArea._ === 'mediaAreaSuggestedReaction');
+  const isPost = createMemo(() => props.mediaArea._ === 'mediaAreaChannelPost');
+  const isLink = createMemo(() => props.mediaArea._ === 'mediaAreaUrl');
+  const isWeather = createMemo(() => props.mediaArea._ === 'mediaAreaWeather');
+  const isGift = createMemo(() => props.mediaArea._ === 'mediaAreaStarGift');
+  const middleware = createMiddleware().get();
+
+  // * the place leads to the public stories posted from it, its map is there too
+  const onLocationClick = () => {
+    showNotCenteredTooltip({
+      callback: () => {
+        const area = unwrap(props.mediaArea);
+        const session = getAccountSession();
+        props.close(() => openStoriesSearch({area}, session));
+      },
+      text: i18n('StoryViewLocation')
+    });
+  };
+
+  const onReactionClick = () => {
+    const mediaArea = props.mediaArea as MediaArea.mediaAreaSuggestedReaction;
+    const size = stories.width * w / 100;
+    const multiplier = 2.6875;
+    props.sendReaction({
+      reaction: mediaArea.reaction,
+      target: div,
+      sizes: {
+        genericEffect: size * 0.375,
+        genericEffectSize: size * 1.5,
+        size,
+        effectSize: size * multiplier
+      },
+      textColor: mediaArea.pFlags.dark ? 'white' : undefined,
+      fireSame: true
+    });
+  };
+
+  const showNotCenteredTooltip = (_props: {
+    callback: () => void | Promise<void>,
+    text: HTMLElement,
+    subtitle?: HTMLElement
+  }) => {
+    // * what the action waits for before it goes: the story stands still until then, or it could run
+    // * out and take the area, and the action with it, along to the next one
+    let acting: Promise<void>;
+    const a = anchorCallback(() => {
+      acting = Promise.resolve(_props.callback()).catch(noop);
+      close();
+    });
+    a.append(..._props.subtitle ? [_props.text, _props.subtitle] : [_props.text]);
+    const wasPlaying = !stories.paused;
+    actions.pause();
+    const {close} = showTooltip({
+      element: div,
+      vertical: 'top',
+      textElement: a,
+      centerVertically: false,
+      onClose: async() => {
+        await acting;
+        if(wasPlaying && middleware()) {
+          actions.play();
+        }
+      }
+    });
+    props.setTooltipCloseCallback(() => close);
+  };
+
+  const onPostClick = () => {
+    const {channel_id, msg_id} = props.mediaArea as MediaArea.mediaAreaChannelPost;
+    const peerId = channel_id.toPeerId(true);
+    // * `lastMsgId` is the client's id of the post, not the server's: given the server's, the chat
+    // * stopped at the nearest post and said the one asked for did not exist
+    const open = (lastMsgId?: number) => {
+      props.close(() => {
+        hotReloadGuard.appImManager.setInnerPeer({peerId, lastMsgId});
+      });
+    };
+
+    // * as iOS has it: the post is looked up first. One that is gone says so over the story, and a
+    // * channel this account cannot read opens as it is, without the post
+    const openPost = async() => {
+      const managers = bindManagersToSession(rootScope.managers);
+      const chatId = peerId.toChatId();
+      const mid = await managers.appMessagesIdsManager.generateMessageId(msg_id, chatId);
+      const message = await managers.appMessagesManager.reloadMessage(peerId, mid);
+      if(!middleware()) return;
+      if(message) {
+        open(mid);
+        return;
+      }
+
+      const [chat, isInChat, username] = await Promise.all([
+        managers.appChatsManager.getChat(chatId),
+        managers.appChatsManager.isInChat(chatId),
+        managers.appPeersManager.getPeerUsername(peerId)
+      ]);
+      if(!middleware()) return;
+      if(chat && !isInChat && !username) {
+        open();
+      } else {
+        toastNew({langPackKey: 'MessageNotFound'});
+      }
+    };
+
+    showNotCenteredTooltip({
+      callback: openPost,
+      text: i18n('Story.ViewPost')
+    });
+  };
+
+  const onLinkClick = () => {
+    const url = (props.mediaArea as MediaArea.mediaAreaUrl).url;
+    // * the address goes under the action, as iOS and Android have it, read left to right; a
+    // * direction override in it is left out, or it could make the address read as another
+    const urlElement = document.createElement('span');
+    urlElement.classList.add(styles.ViewerStoryMediaAreaUrl);
+    urlElement.dir = 'ltr';
+    urlElement.textContent = url.replace(BIDI_CONTROLS_REG_EXP, '');
+
+    showNotCenteredTooltip({
+      callback: () => {
+        if(wrapUrl(url).onclick) {
+          props.close(() => {
+            hotReloadGuard.appImManager.openUrl(url);
+          });
+        } else {
+          // * a lookalike host is asked about there, before it opens
+          safeWindowOpen(url);
+        }
+      },
+      text: i18n('OpenUrlTitle'),
+      subtitle: urlElement
+    });
+  };
+
+  const onGiftClick = () => {
+    const {slug} = props.mediaArea as MediaArea.mediaAreaStarGift;
+    showNotCenteredTooltip({
+      callback: () => {
+        props.close(() => {
+          hotReloadGuard.appImManager.openUrl(`https://t.me/nft/${slug}`);
+        });
+      },
+      text: i18n('Story.ViewGift')
+    });
+  };
+
+  const onClick = (e: MouseEvent) => {
+    if(!props.isActive()) {
+      return;
+    }
+
+    cancelEvent(e);
+    onTypeClick(e);
+  };
+
+  const renderReaction = (mediaArea: MediaArea.mediaAreaSuggestedReaction) => {
+    const reaction = mediaArea.reaction;
+    const [count, setCount] = createSignal<number>(0);
+    const uReaction = createUnifiedSignal<JSX.Element>();
+    const size = stories.width * w / 100 * 0.72;
+
+    let div: HTMLDivElement;
+    (<div
+      ref={div}
+      class={classNames(
+        styles.ViewerStoryMediaAreaReactionInner,
+        count() && styles.hasCount
+      )}
+    />);
+
+    renderStoryReaction({
+      reaction,
+      uReaction,
+      div,
+      size,
+      textColor: mediaArea.pFlags.dark ? 'white' : undefined,
+      play: true
+    });
+
+    createRenderEffect(() => {
+      const views = props.story.views;
+      const reactions = views?.reactions;
+      const reactionCount = reactions?.find((reactionCount) => reactionsEqual(reactionCount.reaction, reaction));
+      setCount(reactionCount?.count ?? 0);
+    });
+
+    createEffect(() => {
+      const element = uReaction();
+      if(element === null) {
+        return;
+      }
+
+      setChildren((
+        <>
+          <div
+            class={classNames(
+              styles.ViewerStoryMediaAreaReactionBubbles,
+              mediaArea.pFlags.dark && styles.dark,
+              mediaArea.pFlags.flipped && styles.flipped,
+              count() && styles.hasCount
+            )}
+          >
+            <div class={styles.ViewerStoryMediaAreaReactionBubble}></div>
+            <div class={classNames(styles.ViewerStoryMediaAreaReactionBubble, styles.small)}></div>
+          </div>
+          {element}
+          <div
+            class={classNames(
+              styles.ViewerStoryMediaAreaReactionCount,
+              mediaArea.pFlags.dark && styles.dark,
+              count() && styles.hasCount
+            )}
+            // style={{'font-size': size * .275 + 'px'}}
+            style={{'font-size': `calc(var(--stories-width) * ${w / 100 * 0.72 * .275})`}}
+          >
+            {count() ? formatNumber(count(), 1) : ''}
+          </div>
+        </>
+      ));
+      props.setReady(true);
+    });
+  };
+
+  let onTypeClick: (e: MouseEvent) => any;
+  if(isReaction()) {
+    onTypeClick = onReactionClick;
+    renderReaction(props.mediaArea as MediaArea.mediaAreaSuggestedReaction);
+  } else if(isLocation()) {
+    onTypeClick = onLocationClick;
+    props.setReady(true);
+  } else if(isPost()) {
+    onTypeClick = onPostClick;
+    props.setReady(true);
+  } else if(isLink()) {
+    onTypeClick = onLinkClick;
+    props.setReady(true);
+  } else if(isGift()) {
+    onTypeClick = onGiftClick;
+    props.setReady(true);
+  } else if(isWeather()) {
+    onTypeClick = toggleTemperatureUnit;
+    setChildren(
+      <StoryWeatherArea
+        mediaArea={props.mediaArea as MediaArea.mediaAreaWeather}
+        height={h}
+        storyHeight={stories.height}
+      />
+    );
+    props.setReady(true);
+  } else {
+    props.setReady(true);
+  }
+
+  // accessible name for the interactive overlay (only when the area has an action)
+  const interactiveLabel = createMemo<LangPackKey>(() => {
+    if(isReaction()) return 'Reactions';
+    if(isLocation()) return 'StoryViewLocation';
+    if(isPost()) return 'Story.ViewPost';
+    if(isLink()) return 'OpenUrlTitle';
+    if(isGift()) return 'Story.ViewGift';
+    return undefined;
+  });
+
+  let div: HTMLDivElement;
+  return (
+    <div
+      ref={div}
+      class={classNames(
+        styles.ViewerStoryMediaArea,
+        ...(isLocation() ? [
+          playingMemo() && 'shimmer',
+          'shimmer-bright',
+          'shimmer-once'
+        ] : []),
+        ...(isReaction() ? [
+          styles.ViewerStoryMediaAreaReaction
+        ] : []),
+        isWeather() && styles.ViewerStoryMediaAreaWeather
+      )}
+      style={`left: ${x}%; top: ${y}%; width: ${w}%; height: ${h}%; --rotate: ${rotation}deg; --area-radius: ${getMediaAreaRadius(props.mediaArea.coordinates)}`}
+      onClick={onClick}
+      role={interactiveLabel() ? 'button' : undefined}
+      tabindex={Modes.a11y && interactiveLabel() ? 0 : undefined}
+      onKeyDown={interactiveLabel() ? buttonKeyDown : undefined}
+      aria-label={interactiveLabel() ? I18n.format(interactiveLabel(), true) : undefined}
+    >
+      {children()}
+    </div>
+  );
+};
+
+type StorySendReactionAnimation = {
+  reaction: Reaction | Promise<Reaction>,
+  target: HTMLElement,
+  sizes?: Parameters<(typeof ReactionElement)['fireAroundAnimation']>[0]['sizes'],
+  textColor?: string,
+  fireSame?: boolean
+};
+type StorySendReaction = (params: StorySendReactionAnimation) => void;
+
+/** who posted a group's story: the header names them, and opens them */
+type StoryAuthor = {peerId: PeerId, name: string, header: JSX.Element};
+
+/** the story's heart, wherever it stands: in the reply field or in the footer */
+type StoryLikeButton = {
+  toggle: (target: HTMLElement) => void,
+  bind: (button: HTMLElement) => void
+};
+
+/**
+ * A drag up over the active story, by how far it went, and its end. What it does is the story's to say: the
+ * reply field takes it on a user's story (iOS, Android); the list of who viewed one's own would take it too
+ */
+type StorySwipeUp = {
+  move: (offset: number) => void,
+  end: () => void
+};
+
+const Stories = (props: {
+  state: StoriesContextPeerState,
+  index: Accessor<number>,
+  splitByDays?: boolean,
+  pinned?: boolean,
+  onReady?: () => void,
+  close: (callback?: () => void) => void,
+  peers: StoriesContextPeerState[],
+  isFull: Accessor<boolean>,
+  transitionSignal: Signal<boolean>,
+  swipeUpHandlers: Map<StoriesContextPeerState, StorySwipeUp>
+}) => {
+  const avatar = AvatarNew({
+    size: STORY_HEADER_AVATAR_SIZE,
+    peerId: props.state.peerId,
+    isDialog: false
+  });
+  avatar.node.classList.add(styles.ViewerStoryHeaderAvatar);
+  const isMe = rootScope.myId === props.state.peerId;
+  const peerTitle = !isMe && new PeerTitle();
+  let peerTitleElement: HTMLElement;
+  if(peerTitle) {
+    peerTitle.update({peerId: props.state.peerId, dialog: false});
+    peerTitleElement = peerTitle.element;
+  } else {
+    peerTitleElement = i18n('YourStory');
+  }
+
+  peerTitleElement.classList.add(styles.ViewerStoryHeaderName);
+
+  // * `wasPlaying` is resolved in the body, not as a parameter default: the production
+  // * minifier binds a closure variable read from a parameter default to the wrong symbol
+  const wasPlayingOr = (wasPlaying?: boolean) => wasPlaying ?? !stories.paused;
+  const bindOnAnyPopupClose = (wasPlaying?: boolean) => {
+    const _wasPlaying = wasPlayingOr(wasPlaying);
+    return () => onAnyPopupClose(_wasPlaying);
+  };
+  const onAnyPopupClose = (wasPlaying: boolean) => {
+    if(wasPlaying) {
+      actions.play();
+    }
+  };
+
+  const settingsMiddleware = createMiddleware().get();
+  let openingSettings = false;
+  const openStorySettings = async(previouslyPlaying?: boolean) => {
+    const story = currentStory();
+    if(story?._ !== 'storyItem' || openingSettings) return;
+    openingSettings = true;
+    const storyId = story.id;
+    const resume = wasPlayingOr(previouslyPlaying);
+    const isRelevant = () => settingsMiddleware() && isActive() && currentStory()?.id === storyId;
+    const onClose = () => {
+      openingSettings = false;
+      if(isRelevant()) onAnyPopupClose(resume);
+    };
+    actions.pause();
+    try {
+      if(!await rootScope.managers.appStoriesManager.canEditStorySettings(props.state.peerId, storyId)) {
+        onClose();
+        return;
+      }
+      await showStorySettingsForStory({peerId: props.state.peerId, storyId, onClose, isRelevant});
+    } catch{
+      if(isRelevant()) toastNew({langPackKey: 'StorySettingsLoadError'});
+      onClose();
+    }
+  };
+
+  const onShareClick = (_wasPlaying?: boolean) => {
+    const wasPlaying = wasPlayingOr(_wasPlaying);
+    actions.pause();
+    handleShareStory({
+      story: currentStory(),
+      peerId: props.state.peerId,
+      onSent: (text) => showMessageSentTooltip(text),
+      onClose: bindOnAnyPopupClose(wasPlaying)
+    });
+  };
+
+  const onShareButtonClick = (e: MouseEvent, listenTo: HTMLElement) => {
+    const story = currentStory() as StoryItem.storyItem;
+    if(story.pFlags.noforwards) {
+      if(!hasStoryLink(story, props.state.peerId)) {
+        return;
+      }
+
+      const {open} = createContextMenu({
+        buttons: [{
+          icon: 'link',
+          text: 'CopyLink',
+          onClick: copyLink
+        }],
+        listenTo: listenTo,
+        ...topMenuOptions
+      });
+      open(e);
+    } else {
+      onShareClick();
+    }
+  };
+
+  const avatarInfo = AvatarNew({
+    size: 162/* 54 */,
+    peerId: props.state.peerId,
+    isDialog: false,
+    withStories: true,
+    storyColors: {
+      read: 'rgba(255, 255, 255, .3)'
+    }
+  });
+  avatarInfo.node.classList.add(styles.ViewerStoryInfoAvatar);
+  let peerTitleInfoElement: HTMLElement;
+  if(isMe) {
+    peerTitleInfoElement = i18n('MyStory');
+  } else {
+    const peerTitleInfo = new PeerTitle();
+    peerTitleInfo.update({peerId: props.state.peerId, dialog: false, onlyFirstName: true});
+    peerTitleInfoElement = peerTitleInfo.element;
+  }
+  peerTitleInfoElement.classList.add(styles.ViewerStoryInfoName);
+
+  const [stories, actions] = useStories();
+  const [content, setContent] = createSignal<JSX.Element>();
+  const [videoDuration, setVideoDuration] = createSignal<number>();
+  const [caption, setCaption] = createSignal<JSX.Element>();
+  const [repost, setRepost] = createSignal<{reply: JSX.Element, header: JSX.Element}>();
+  // * who posted a group's story, when it is someone else than the group (iOS, Android)
+  const [author, setAuthor] = createSignal<StoryAuthor>();
+  // * media this client cannot show stands as a note, and is not replied to (iOS, Android)
+  const [mediaUnsupported, setMediaUnsupported] = createSignal(false);
+  const [reaction, setReaction] = createSignal<JSX.Element>();
+  const [captionOpacity, setCaptionOpacity] = createSignal(0);
+  const [captionActive, setCaptionActive] = createSignal(false);
+  const [date, setDate] = createSignal<{timestamp: number, edited?: boolean}>();
+  const [loading, setLoading] = createSignal(true);
+  const [canShareStory, setCanShareStory] = createSignal();
+  const focusedSignal = createSignal(false);
+  const sendingReactionSignal = createSignal<StorySendReactionAnimation>();
+  const inputEmptySignal = createSignal(true);
+  const inputMenuOpenSignal = createSignal(false);
+  const isPublicSignal = createSignal(false);
+  const [focused, setFocused] = focusedSignal;
+  const [sendingReaction, setSendingReaction] = sendingReactionSignal;
+  const [inputEmpty] = inputEmptySignal;
+  const [inputMenuOpen] = inputMenuOpenSignal;
+  const [isPublic, setIsPublic] = isPublicSignal;
+  const [noSound, setNoSound] = createSignal(false);
+  const [sliding, setSliding] = props.transitionSignal;
+  const [privacyType, setPrivacyType] = createSignal<StoryPrivacyType>();
+  // The story's own track, shown as a pill under the caption — set from setStoryMeta so it changes
+  // with the rest of the story's chrome, not the moment the index moves.
+  const [music, setMusic] = createSignal<MyDocument>();
+  const [mediaAreas, setMediaAreas] = createSignal<JSX.Element>();
+  const [stackedAvatars, setStackedAvatars] = createSignal<StackedAvatars>();
+  const [tooltipCloseCallback, setTooltipCloseCallback] = createSignal<VoidFunction>();
+  // * the stories whose caption is shown translated, till "Hide Translation" (Android's storyItem.translated)
+  const [translatedStories, setTranslatedStories] = createSignal(new Set<number>(), {equals: false});
+  const isCaptionTranslated = (storyId: number) => translatedStories().has(storyId);
+  const toggleCaptionTranslation = (storyId: number, translated: boolean) => {
+    setTranslatedStories((storyIds) => {
+      if(translated) storyIds.add(storyId);
+      else storyIds.delete(storyId);
+      return storyIds;
+    });
+  };
+  const [appSettings, setAppSettings] = useAppSettings();
+  const currentStory = createMemo(() => props.state.stories[props.state.index]);
+  const isExpired = createMemo(() => {
+    const story = currentStory();
+    const expireDate = (story as StoryItem.storyItem).expire_date;
+    if(!expireDate) return false;
+    return expireDate <= tsNow(true);
+  });
+  const isActive = createMemo(() => stories.peer === props.state);
+  const [forceReaction, setForceReaction] = createSignal(false, {equals: false});
+
+  let currentStoryMiddleware: Middleware;
+  createEffect(() => {
+    currentStory();
+    currentStoryMiddleware = createMiddleware().get();
+  });
+
+  const fireReactionAnimation = (reaction: Reaction, params = untrack(() => sendingReaction())) => {
+    if(!params || params.target === storyDiv) {
+      return;
+    }
+
+    const sizes = params.sizes ?? {
+      genericEffect: 26,
+      genericEffectSize: 100,
+      size: 22 + 18,
+      effectSize: 80
+    };
+
+    ReactionElement.fireAroundAnimation({
+      middleware: params.fireSame ? currentStoryMiddleware : createMiddleware().get(),
+      reaction,
+      sizes,
+      stickerContainer: params.target,
+      cache: params.fireSame ? {} : params.target as any,
+      textColor: params.textColor
+    });
+  };
+
+  createEffect(() => {
+    const reaction = (currentStory() as StoryItem.storyItem).sent_reaction;
+    if(!reaction) {
+      return;
+    }
+
+    // ! DO NOT REMOVE ! it handles update, since I don't observe any property in reaction
+    (reaction as Reaction.reactionCustomEmoji)?.document_id;
+    forceReaction();
+    fireReactionAnimation(reaction);
+  });
+
+  // * Stealth Mode keeps a view out of the list, and a reply or a reaction puts it back in: said once ever,
+  // * before the first of them (iOS)
+  const confirmStealthReply = async() => {
+    if(
+      !((stories.stealthMode?.active_until_date || 0) > tsNow(true)) ||
+      appSettings.seenTooltips.storyStealthReply
+    ) {
+      return true;
+    }
+
+    setAppSettings('seenTooltips', 'storyStealthReply', true);
+    try {
+      await confirmationPopup({
+        titleLangKey: 'Story.StealthModeConfirm.Title',
+        descriptionLangKey: 'Story.StealthModeConfirm.Text',
+        button: {
+          langKey: 'Proceed'
+        }
+      });
+      return true;
+    } catch{
+      return false;
+    }
+  };
+
+  const sendReaction: StorySendReaction = async(params) => {
+    const managers = bindManagersToSession(rootScope.managers);
+    let {reaction} = params;
+    const peerId = props.state.peerId;
+    const story = currentStory() as StoryItem.storyItem;
+    const storyId = story.id;
+    const sentReaction = story.sent_reaction;
+
+    // * wait for picker
+    if(reaction instanceof Promise) {
+      reaction = await reaction;
+      if(!reaction) {
+        return;
+      }
+    }
+
+    const isNewReaction = !reactionsEqual(sentReaction, reaction);
+    if(!isNewReaction && !params.fireSame) {
+      reaction = undefined;
+    }
+
+    // * only what puts a reaction on asks: taking one off shows nothing
+    if(reaction && !(await confirmStealthReply())) {
+      return;
+    }
+
+    setFocused(false);
+    setSendingReaction(params);
+
+    if(!isNewReaction && params.fireSame) {
+      setForceReaction(true);
+    }
+
+    await managers.acknowledged.appStoriesManager.sendReaction(
+      peerId,
+      storyId,
+      unwrap(reaction as Reaction)
+    );
+    setSendingReaction();
+  };
+
+  // * the reply field of the story, once it is there: a reaction picked over it goes as a message
+  let storyChatInput: ChatInput;
+
+  // * picked over the focused reply field, a reaction is a message that answers the story — privately, or in the
+  // * group — not a reaction on it, as iOS, Android and Desktop have it; it plays in the middle of the story
+  const sendReactionAsMessage = async(_reaction: Reaction | Promise<Reaction>) => {
+    const input = storyChatInput;
+    if(!input) {
+      return;
+    }
+
+    const {managers} = input;
+    const peerId = props.state.peerId;
+    const storyId = currentStory().id;
+    const reaction = await _reaction;
+    if(!reaction || (reaction._ !== 'reactionEmoji' && reaction._ !== 'reactionCustomEmoji')) {
+      return;
+    }
+
+    let text: string, entities: MessageEntity[] = [];
+    if(reaction._ === 'reactionCustomEmoji') {
+      const doc = await managers.appEmojiManager.getCustomEmojiDocument(reaction.document_id);
+      text = doc?.stickerEmojiRaw;
+      if(!text) {
+        return;
+      }
+
+      entities = [{_: 'messageEntityCustomEmoji', offset: 0, length: text.length, document_id: reaction.document_id}];
+    } else {
+      text = reaction.emoticon;
+    }
+
+    blurActiveElement();
+    setFocused(false);
+    if(!(await confirmStealthReply())) {
+      return;
+    }
+
+    const result = await ChatInput.sendMessageWithForward({
+      sendingParams: {...input.chat.getMessageSendingParams(), replyToStoryId: storyId},
+      text: {text, entities},
+      chatType: ChatType.Stories,
+      slowModeParams: input.getDefaultParamsForSlowModeTooltip(),
+      paidMessageInterceptor: input.paidMessageInterceptor
+    });
+    if(!result || !result.messageCount) {
+      return;
+    }
+
+    if(currentStory().id === storyId) {
+      fireReactionInCenter(reaction);
+    }
+
+    showMessageSentTooltip(i18n('Story.Tooltip.ReactionSent'), peerId);
+  };
+
+  const fireReactionInCenter = (reaction: Reaction) => {
+    const size = Math.min(stories.width, stories.height) * .4;
+    const center = document.createElement('div');
+    center.classList.add(styles.ViewerStoryReactionCenter);
+    center.style.setProperty('--size', size + 'px');
+    storyDiv.append(center);
+    fireReactionAnimation(reaction, {
+      reaction,
+      target: center,
+      sizes: {
+        genericEffect: size * .375,
+        genericEffectSize: size * 1.5,
+        size,
+        effectSize: size * 2.6875
+      },
+      fireSame: true
+    });
+    setTimeout(() => center.remove(), 3000);
+  };
+
+  // * the heart, in the reply field or the footer: a tap puts ❤ on, or takes off whatever is on; a long tap — a
+  // * right click with a mouse, the context menu key — opens the whole choice over it (iOS, Android)
+  const [likePicker, setLikePicker] = createSignal<HTMLElement>();
+  const [likeButtonElement, setLikeButtonElement] = createSignal<HTMLElement>();
+  let playAfterLikePicker = false;
+  // * dismissed as a menu is: a press anywhere but on it — a tap, a click, the control under it — only
+  // * closes it (iOS), and Escape does too
+  const likePickerOverlay = new OverlayClickHandler('menu');
+  likePickerOverlay.addEventListener('toggle', (open) => !open && closeLikePicker());
+  onCleanup(() => likePickerOverlay.close());
+
+  const openLikePicker = (button: HTMLElement) => {
+    if(likePicker() || !isActive()) {
+      return;
+    }
+
+    setAppSettings('seenTooltips', 'storyReactions', true);
+    tooltipCloseCallback()?.();
+    playAfterLikePicker = !stories.paused;
+    actions.pause();
+    setLikePicker(button);
+    likePickerOverlay.open(untrack(reactionsMenu).menu.widthContainer);
+  };
+
+  // * the story goes on once the choice is gone, or once the whole choice it opened is (a question asked after
+  // * the pick covers the viewer, which holds the story till it is answered)
+  const closeLikePicker = (waitFor?: Promise<any>) => {
+    if(!likePicker()) {
+      return;
+    }
+
+    setLikePicker();
+    likePickerOverlay.close();
+    const play = playAfterLikePicker;
+    Promise.resolve(waitFor).finally(() => {
+      if(play && isActive() && stories.paused && !untrack(focused)) {
+        actions.play();
+      }
+    });
+  };
+
+  const likeButton: StoryLikeButton = {
+    toggle: (target) => {
+      // * one tapped while the choice is open only closes it, by the click outside
+      if(likePicker()) {
+        return;
+      }
+
+      const story = currentStory() as StoryItem.storyItem;
+      sendReaction({
+        reaction: story.sent_reaction ? undefined : {_: 'reactionEmoji', emoticon: DEFAULT_REACTION_EMOTICON},
+        target
+      });
+    },
+    bind: (button) => {
+      setLikeButtonElement(button);
+      onCleanup(() => {
+        if(untrack(likeButtonElement) === button) {
+          setLikeButtonElement();
+        }
+      });
+
+      attachContextMenuListener({
+        element: button,
+        callback: (e) => {
+          cancelEvent(e);
+          openLikePicker(button);
+          // * the release of the long tap that opened it is no tap, as for a context menu
+          if(e instanceof TouchEvent || (e as PointerEvent).pointerType === 'touch') {
+            button.addEventListener('touchend', cancelEvent, {once: true});
+          }
+        },
+        listenerSetter: createListenerSetter()
+      });
+    }
+  };
+
+  // * the whole choice a strip opened stands outside the story: it goes with the story it was opened over
+  let expandedMenu: ChatReactionsMenu;
+  const watchExpanded = (menu: ChatReactionsMenu, picked: Promise<Reaction>) => {
+    expandedMenu = menu;
+    picked.finally(() => {
+      if(expandedMenu === menu) expandedMenu = undefined;
+    });
+  };
+  const closeExpanded = () => {
+    expandedMenu?.closeExpanded();
+    expandedMenu = undefined;
+  };
+  onCleanup(closeExpanded);
+
+  createEffect(on([currentStory, isActive], () => {
+    closeLikePicker();
+    closeExpanded();
+  }, {defer: true}));
+
+  const onLikePicked = (reaction: Reaction | Promise<Reaction>) => {
+    const target = likePicker();
+    // * the whole choice opens over the strip, and the story waits for what is picked there
+    closeLikePicker(reaction instanceof Promise ? reaction : undefined);
+    sendReaction({reaction, target});
+  };
+
+  // * the strip of reactions: over the focused empty reply field, and over the heart a long tap opens it on
+  type StoryReactionsMenuMode = 'message' | 'like';
+  type StoryReactionsMenu = {
+    mode: StoryReactionsMenuMode,
+    menu: ChatReactionsMenu,
+    // * the menu's own, destroyed as it goes: the story's would keep every menu it had till it went
+    middlewareHelper: MiddlewareHelper,
+    timeout?: number,
+    restoreFocus?: HTMLElement
+  };
+  const [reactionsMenu, setReactionsMenu] = createSignal<StoryReactionsMenu>();
+  const reactionsMenuMode = createMemo<StoryReactionsMenuMode>(() => {
+    if(likePicker()) return 'like';
+    if(focused() && inputEmpty() && !inputMenuOpen()) return 'message';
+  });
+
+  const createReactionsMenu = (mode: StoryReactionsMenuMode) => {
+    const middlewareHelper = getMiddleware();
+    const menu = new ChatReactionsMenu({
+      managers: rootScope.managers,
+      type: 'horizontal',
+      middleware: middlewareHelper.get(),
+      onFinish: (reaction) => {
+        if(reaction instanceof Promise) {
+          watchExpanded(menu, reaction);
+        }
+
+        return mode === 'like' ? onLikePicked(reaction) : sendReactionAsMessage(reaction);
+      },
+      size: 36,
+      openSide: 'top',
+      night: true,
+      description: mode === 'message' ? i18n(
+        props.state.peerId.isUser() ? 'Story.SendReactionAsMessage' : 'Story.SendReactionAsGroupMessage'
+      ) : undefined
+    });
+
+    menu.widthContainer.classList.add(styles.ViewerStoryReactions);
+    if(mode === 'like') {
+      menu.widthContainer.classList.add(styles.isLike);
+    }
+
+    const item: StoryReactionsMenu = {mode, menu, middlewareHelper};
+    setReactionsMenu(item);
+    menu.init().finally(() => {
+      if(reactionsMenu() !== item || untrack(reactionsMenuMode) !== mode) {
+        return;
+      }
+
+      menu.widthContainer.classList.add('is-visible');
+      // * opened from the keyboard, the choice takes the focus once its reactions are there, and gives it
+      // * back to the heart as it goes
+      const button = likePicker();
+      if(mode !== 'like' || !Modes.a11y || !button) {
+        return;
+      }
+
+      menu.rendered.then(() => {
+        const first = menu.container.querySelector<HTMLElement>('.btn-menu-reactions-reaction');
+        // * still open, over the same heart, which still has the focus
+        if(
+          reactionsMenu() !== item ||
+          untrack(likePicker) !== button ||
+          !first ||
+          !button.contains(getAppWindow().document.activeElement)
+        ) {
+          return;
+        }
+
+        first.focus();
+        item.restoreFocus = button;
+      });
+    });
+  };
+
+  const hideReactionsMenu = (item: StoryReactionsMenu) => {
+    item.menu.widthContainer.classList.remove('is-visible');
+    if(item.restoreFocus && item.menu.widthContainer.contains(getAppWindow().document.activeElement)) {
+      item.restoreFocus.focus();
+    }
+
+    item.timeout = window.setTimeout(() => retireReactionsMenu(item), liteMode.isAvailable('animations') ? 200 : 0);
+  };
+
+  const retireReactionsMenu = (item: StoryReactionsMenu) => {
+    clearTimeout(item.timeout);
+    item.menu.cleanup();
+    item.middlewareHelper.destroy();
+    if(untrack(reactionsMenu) === item) {
+      setReactionsMenu();
+    }
+  };
+
+  onCleanup(() => {
+    const item = untrack(reactionsMenu);
+    item && retireReactionsMenu(item);
+  });
+
+  createEffect(on(reactionsMenuMode, (mode) => {
+    const current = untrack(reactionsMenu);
+    if(current && current.mode === mode) {
+      clearTimeout(current.timeout);
+      current.menu.inited && current.menu.widthContainer.classList.add('is-visible');
+      return;
+    }
+
+    current && hideReactionsMenu(current);
+    mode && createReactionsMenu(mode);
+  }));
+
+  const setVideoListeners = (video: HTMLVideoElement) => {
+    let cleaned = false;
+    onCleanup(() => {
+      cleaned = true;
+      video.pause();
+      // video.src = '';
+      // video.load();
+      video.removeEventListener('waiting', onWaiting);
+      video.removeEventListener('canplay', onCanPlay);
+    });
+
+    // * this video's part in the viewer's buffering, taken back once it can play, goes away or stops being
+    // * the active one
+    const setVideoBuffering = (buffering: boolean) => actions.setBuffering(video, buffering);
+
+    const onCanPlay = () => {
+      setLoading(false);
+      setVideoBuffering(false);
+    };
+
+    const onWaiting = () => {
+      if(isVideoStalled(video)) {
+        setLoading(true);
+        if(isActive()) {
+          setVideoBuffering(true);
+        }
+        video.addEventListener('canplay', onCanPlay, {once: true});
+      }
+    };
+
+    const reset = () => {
+      if(!video.currentTime) {
+        return;
+      }
+
+      setCurrentTime(video, 0);
+    };
+
+    // * to a point of the story: the video is as long as the story, whatever its speed
+    const seekToProgress = (progress: number) => {
+      const duration = video.duration;
+      if(progress === undefined || !Number.isFinite(duration)) {
+        return;
+      }
+
+      setCurrentTime(video, clamp(progress * duration, 0, Math.max(0, duration - 0.3)));
+    };
+
+    video.addEventListener('waiting', onWaiting);
+
+    onCleanup(() => setVideoBuffering(false));
+    createEffect(on(isActive, (isActive) => !isActive && setVideoBuffering(false), {defer: true}));
+
+    // pause the video on viewer pause or story change
+    createEffect(() => {
+      if(stories.paused || !isActive()) {
+        video.pause();
+      } else {
+        video.play();
+      }
+    });
+
+    const onFirstActive = () => {
+      // seek to start on story change
+      createEffect(on(
+        () => [/* props.state.index,  */isActive()],
+        ([/* index,  */isActive]) => {
+          if(isActive) {
+            return;
+          }
+
+          reset();
+        }
+      ));
+
+      createEffect(() => {
+        video.muted = stories.muted;
+      });
+    };
+
+    if(isActive()) {
+      onFirstActive();
+    } else {
+      createReaction(onFirstActive)(() => isActive());
+    }
+
+    const story = untrack(() => currentStory());
+    createEffect(() => {
+      if(isActive() && !stories.startTime && currentStory() === story) {
+        reset();
+      }
+    });
+
+    // * a video put in while its story plays - the other quality chosen - goes on from where it is
+    if(untrack(() => isActive() && stories.startTime && currentStory() === story)) {
+      seekToProgress(actions.getProgress());
+    }
+
+    // * plays at the viewer's speed, and the story lasts as long as the video does at it
+    const setPlaybackRate = (rate: number) => {
+      video.defaultPlaybackRate = video.playbackRate = rate;
+    };
+
+    setPlaybackRate(untrack(() => stories.playbackRate));
+    createEffect(on(() => stories.playbackRate, (rate) => {
+      setPlaybackRate(rate);
+      if(isActive() && currentStory() === story) {
+        actions.setStoryDuration(getVideoStoryDuration(rate));
+      }
+    }, {defer: true}));
+
+    // * held and dragged along: the video follows the point of the story the finger takes it to, a
+    // * few times a second, and lands where it is let go
+    createEffect(() => {
+      if(!stories.seeking || !isActive() || currentStory() !== story) {
+        return;
+      }
+
+      const seek = () => seekToProgress(actions.getProgress());
+      const throttledSeek = throttle(seek, 150, true);
+      createEffect(on(() => stories.elapsedTimeOnPause, throttledSeek, {defer: true}));
+      onCleanup(() => {
+        throttledSeek.clear();
+        seek();
+      });
+    });
+
+    if(!untrack(noSound)) {
+      if(!cleaned && !appSettings.seenTooltips.storySound) {
+        const playingMemo = createMemo((prev) => prev || (isActive() && stories.startTime));
+        createEffect(() => {
+          if(playingMemo()) {
+            const {close} = showTooltip({
+              ...muteTooltipOptions,
+              textElement: i18n('Story.SoundTooltip')
+            });
+            setTooltipCloseCallback(() => close);
+          }
+        });
+
+        setAppSettings('seenTooltips', 'storySound', true);
+      }
+    }
+  };
+
+  const setStoryMeta = (story: StoryItem.storyItemSkipped | StoryItem.storyItem) => {
+    let privacyType = getStoryPrivacyType(story as StoryItem.storyItem);
+    if(!isMe && privacyType === 'public') {
+      privacyType = undefined;
+    }
+
+    const messageMedia = unwrap((story as StoryItem.storyItem).media);
+    const document = (messageMedia as MessageMedia.messageMediaDocument)?.document as Document.document;
+    const videoAttribute = document && document.attributes.find((attribute) => attribute._ === 'documentAttributeVideo') as DocumentAttribute.documentAttributeVideo;
+    const noSound = videoAttribute ? !!videoAttribute.pFlags.nosound : false;
+    const videoDuration = videoAttribute?.duration;
+    const date = story.date;
+    const edited = (story as StoryItem.storyItem).pFlags.edited;
+    const isPublic = !!(story as StoryItem.storyItem).pFlags.public;
+    // only a track that can be named gets a pill — a nameless document would render an empty one.
+    // `unwrap` like the media above: the panel hands this document to a manager, and a Solid store
+    // proxy cannot be structure-cloned across the worker port
+    const musicDoc = unwrap((story as StoryItem.storyItem).music) as MyDocument;
+
+    setMusic(musicDoc && getAudioTitles(musicDoc) ? musicDoc : undefined);
+    setPrivacyType(privacyType);
+    setDate({timestamp: date, edited});
+    setNoSound(noSound);
+    setVideoDuration(videoDuration && (videoDuration * 1000));
+    setIsPublic(isPublic);
+    // * a story that cannot be forwarded is shared by its link alone
+    setCanShareStory(isPublic && (!(story as StoryItem.storyItem).pFlags.noforwards || hasStoryLink(story, props.state.peerId)));
+    // shareButton.classList.toggle('hide', !isPublic);
+  };
+
+  const setStory = async(story: StoryItem) => {
+    setLoading(true);
+    if(story._ !== 'storyItem') {
+      setStackedAvatars();
+      setContent();
+      setCaption();
+      setReaction();
+      setMediaAreas();
+      setRepost();
+      setAuthor();
+      setMediaUnsupported(false);
+      setStoryMeta(story as StoryItem.storyItemSkipped);
+      rootScope.managers.appStoriesManager.getStoryById(props.state.peerId, story.id);
+      props.onReady?.();
+      return;
+    }
+
+    const middleware = createMiddleware().get();
+    const uStackedAvatars = isMe ? createUnifiedSignal<StackedAvatars>() : undefined;
+    const uCaption = createUnifiedSignal<JSX.Element>();
+    const uContent = createUnifiedSignal<JSX.Element>();
+    const uReaction = createUnifiedSignal<JSX.Element>();
+    const uMediaAreas = createUnifiedSignal<JSX.Element>();
+    const uRepost = createUnifiedSignal<{reply: JSX.Element, header: JSX.Element}>();
+    const uAuthor = createUnifiedSignal<StoryAuthor>();
+    const recentViewersMemo = isMe ? createMemo<UserId[]>((previousRecentViewers) => {
+      const views = story.views;
+      const recentViewers = views?.recent_viewers;
+      if(previousRecentViewers?.join() === recentViewers?.join()) {
+        return previousRecentViewers;
+      }
+      return recentViewers;
+    }) : undefined;
+
+    const getRichTextOptions = (
+      peerId: PeerId,
+      entities: MessageEntity[],
+      loadPromises?: Promise<any>[]
+    ): WrapRichTextOptions => {
+      return {
+        entities,
+        middleware,
+        textColor: 'white',
+        loadPromises,
+        passMaskedLinks: CHANGELOG_PEER_ID === peerId
+      };
+    };
+
+    isMe && createEffect(async() => {
+      let stackedAvatars: StackedAvatars;
+      const recentViewers = recentViewersMemo();
+      if(recentViewers?.length) {
+        stackedAvatars = new StackedAvatars({
+          avatarSize: 30,
+          middleware
+        });
+
+        const peerIds = recentViewers.map((userId) => {
+          return userId.toPeerId(false);
+        });
+
+        uStackedAvatars(null);
+        await stackedAvatars.render(peerIds);
+        if(!middleware()) {
+          return;
+        }
+      }
+
+      uStackedAvatars(stackedAvatars);
+    });
+
+    createEffect(async() => {
+      // * this run's: a translation shown or hidden meanwhile starts another one, which this must not undo
+      const runMiddleware = createMiddleware().get();
+      let captionNode: JSX.Element;
+      const {caption, entities} = story;
+      if(caption?.trim()) {
+        const loadPromises: Promise<any>[] = [];
+        let translated: HTMLElement, wrapped: DocumentFragment;
+        // * in place of the original once it has come, as Android shows it
+        if(isCaptionTranslated(story.id)) {
+          translated = TranslatableMessageTsx({
+            peerId: props.state.peerId,
+            // * the store's own entities, not its proxy: they go to the worker
+            textWithEntities: {_: 'textWithEntities', text: caption, entities: unwrap(entities) || []},
+            richTextOptions: getRichTextOptions(props.state.peerId, undefined, loadPromises),
+            enabled: true,
+            onError: () => {
+              toastNew({langPackKey: 'Translate.Error'});
+              toggleCaptionTranslation(story.id, false);
+            }
+          });
+        } else {
+          const {message, totalEntities} = wrapMessageEntities(caption, entities?.slice());
+          wrapped = wrapRichText(
+            message,
+            getRichTextOptions(props.state.peerId, totalEntities, loadPromises)
+          );
+        }
+
+        uCaption(null);
+        await Promise.all(loadPromises);
+        if(!middleware() || !runMiddleware()) {
+          return;
+        }
+
+        captionNode = translated || documentFragmentToNodes(wrapped);
+      }
+
+      uCaption(captionNode);
+    });
+
+    // * the file a video plays from follows the quality chosen: another one is put in in its place
+    const videoDocId = story.media?._ === 'messageMediaDocument' && createMemo(() => {
+      const media = story.media as MessageMedia.messageMediaDocument;
+      return getStoryVideoDocuments(media, isStoryHighQuality(props.state.peerId, story)).doc?.id;
+    });
+
+    let wasWrapped = false;
+    createEffect(() => {
+      // * read for the effect to follow: an edit that puts other media in is wrapped anew. Media of a
+      // * kind this client cannot show has no id, and is wrapped all the same, into a note in its place
+      void untrack(() => getMediaFromMessage(story)).id;
+      videoDocId && videoDocId();
+
+      uContent(null);
+
+      // * the other file starts where the story is (setVideoListeners), and the story waits for it as for a
+      // * stalled video: played or paused meanwhile, it is that once the file is in
+      const replacing = wasWrapped;
+      wasWrapped = true;
+      const bufferingOwner = {};
+      const stopBuffering = () => actions.setBuffering(bufferingOwner, false);
+
+      if(replacing && untrack(isActive)) {
+        setLoading(true);
+        actions.setBuffering(bufferingOwner, true);
+        onCleanup(stopBuffering);
+        createEffect(on(isActive, (isActive) => !isActive && stopBuffering(), {defer: true}));
+      }
+
+      const wrapped = wrapStoryMedia({
+        peerId: props.state.peerId,
+        storyItem: unwrap(story),
+        forViewer: true,
+        containerProps: {
+          class: styles.ViewerStoryContentMediaContainer
+        },
+        childrenClassName: styles.ViewerStoryContentMedia,
+        useBlur: 40,
+        highQuality: untrack(() => isStoryHighQuality(props.state.peerId, story))
+      });
+
+      const onReady = () => {
+        setMediaUnsupported(wrapped.unsupported);
+        uContent(wrapped.container);
+      };
+
+      const onLoad = () => {
+        if(!middleware()) {
+          return;
+        }
+
+        setLoading(false);
+        stopBuffering();
+        if(!replacing || !untrack(() => stories.startTime)) {
+          untrack(() => playOnOpen());
+        }
+        // props.onReady?.();
+      };
+
+      const onMedia = () => {
+        const media = wrapped.media();
+
+        if(media instanceof HTMLVideoElement) {
+          setVideoListeners(media);
+          onMediaLoad(media).then(onLoad);
+        } else {
+          onLoad();
+        }
+      };
+
+      createReaction(onReady)(() => wrapped.ready());
+      createReaction(onMedia)(() => wrapped.media());
+    });
+
+    createEffect(() => {
+      let reactionNode: JSX.Element;
+      const sentReaction = story.sent_reaction;
+      const isDefault = isDefaultReaction(sentReaction);
+      if(!sentReaction || isDefault) {
+        reactionNode = Icon(isDefault ? 'reactions_filled' : 'reactions', ...['btn-reaction-icon', isDefault && 'btn-reaction-default'].filter(Boolean));
+        uReaction(reactionNode);
+      } else {
+        const div = document.createElement('div');
+        div.classList.add('btn-reaction-sticker', 'night');
+        renderStoryReaction({
+          reaction: sentReaction,
+          uReaction,
+          div,
+          size: 26,
+          textColor: 'white',
+          play: false
+        });
+      }
+    });
+
+    createEffect(() => {
+      if(!(story as StoryItem.storyItem).media_areas?.length) {
+        uMediaAreas();
+        return;
+      }
+
+      uMediaAreas(null);
+
+      const [allReady, setAllReady] = createSignal(false);
+      const [readyCount, setReadyCount] = createSignal(0);
+      const mediaAreas = (
+        <For each={(story as StoryItem.storyItem).media_areas}>
+          {(mediaArea) => {
+            const [ready, setReady] = createSignal(false);
+
+            createReaction(() => {
+              setReadyCount((count) => count + 1);
+              if(readyCount() === (story as StoryItem.storyItem).media_areas.length) {
+                setAllReady(true);
+              }
+            })(ready);
+
+            return (
+              <StoryMediaArea
+                story={story}
+                mediaArea={mediaArea}
+                isActive={isActive}
+                setTooltipCloseCallback={setTooltipCloseCallback}
+                setReady={setReady}
+                sendReaction={sendReaction}
+                close={props.close}
+              />
+            );
+          }}
+        </For>
+      );
+
+      createReaction(() => {
+        uMediaAreas(mediaAreas);
+      })(allReady);
+    });
+
+    createEffect(async() => {
+      const managers = bindManagersToSession(rootScope.managers);
+      const repostInfo = getStoryRepostInfo(story);
+      if(!repostInfo) {
+        uRepost();
+        return;
+      }
+
+      const {fwdFrom, mediaAreaChannelPost} = repostInfo;
+      uRepost(null);
+
+      const [headerContent, setHeaderContent] = createSignal<JSX.Element>();
+      const [subtitle, setSubtitle] = createSignal<JSX.Element>();
+
+      const ret: {reply: JSX.Element, header: JSX.Element} = {
+        header: (
+          <span class={styles.ViewerStoryHeaderRepost}>
+            {headerContent()}
+          </span>
+        )
+      } as any;
+
+      let fwdFromPeerId: PeerId, fwdFromName: string, fwdFromStoryId: number;
+      if(fwdFrom) {
+        fwdFromPeerId = fwdFrom.from && getPeerId(fwdFrom.from);
+        fwdFromName = fwdFrom.from_name;
+        fwdFromStoryId = fwdFrom.story_id;
+      } else {
+        fwdFromPeerId = mediaAreaChannelPost.channel_id.toPeerId(true);
+      }
+
+      const peerTitleOptions: Parameters<typeof wrapPeerTitle>[0] = {
+        peerId: fwdFromPeerId,
+        fromName: fwdFromName
+      };
+
+      // * the avatar fills in as it loads: the story waits for the names alone, never for a download, as the
+      // * author's does
+      const {node: headerAvatar} = avatarNew({
+        peerId: fwdFromPeerId,
+        peerTitle: fwdFromName,
+        size: 16,
+        middleware
+      });
+
+      const subtitleElement = (
+        <span>{subtitle()}</span>
+      );
+
+      const processStoryPromise = async(promise: Promise<StoryItem.storyItem>, cached: boolean) => {
+        const storyItem = await promise;
+        if(!middleware()) {
+          return;
+        }
+
+        if(cached && !storyItem.caption) {
+          setSubtitle(i18n('Story'));
+          return;
+        }
+
+        const loadPromises: Promise<any>[] = [];
+        const {message, totalEntities} = wrapMessageEntities(storyItem.caption, storyItem.entities?.slice());
+        const wrapped = wrapRichText(
+          message,
+          getRichTextOptions(fwdFromPeerId, totalEntities, loadPromises)
+        );
+        await Promise.all(loadPromises);
+        if(!middleware()) {
+          return;
+        }
+
+        setSubtitle(documentFragmentToNodes(wrapped));
+      };
+
+      const storyPromise = fwdFromStoryId && managers.acknowledged.appStoriesManager.getStoryById(
+        fwdFromPeerId,
+        fwdFromStoryId
+      ).then(async(ackedResult) => {
+        const promise = processStoryPromise(ackedResult.result, ackedResult.cached);
+        if(!ackedResult.cached) {
+          setSubtitle(i18n('Story'));
+          return;
+        }
+
+        return promise;
+      });
+
+      const [reply, headerPeerTitle] = await Promise.all([
+        wrapPeerTitle(peerTitleOptions).then(async(peerTitle) => {
+          const title = document.createDocumentFragment();
+          if(fwdFromPeerId) {
+            const isBroadcast = await managers.appPeersManager.isBroadcast(fwdFromPeerId);
+            const icon = Icon(
+              isBroadcast ? 'newchannel_filled' : (fwdFromPeerId.isUser() ? 'newprivate_filled' : 'group_filled'),
+              'inline-icon',
+              'reply-title-icon',
+              'with-margin'
+            );
+            title.append(icon);
+          }
+
+          title.append(peerTitle);
+
+          if(fwdFromName || mediaAreaChannelPost) {
+            const container = document.createElement('div');
+            container.classList.add(pillStyles.Pill);
+            container.append(title);
+            return container;
+          }
+
+          const {container, fillPromise} = wrapReply({
+            title,
+            subtitle: subtitleElement as HTMLElement,
+            useHighlightingColor: true,
+            setColorPeerId: fwdFromPeerId
+          });
+
+          await fillPromise;
+          return container;
+        }),
+        wrapPeerTitle(peerTitleOptions),
+        storyPromise
+      ]);
+      if(!middleware()) return;
+
+      headerPeerTitle.classList.add(styles.ViewerStoryHeaderRepostTitle);
+
+      reply.classList.add(styles.ViewerStoryRepost);
+      ret.reply = reply;
+      setHeaderContent([
+        Icon(STORY_REPOST_ICON),
+        headerAvatar,
+        headerPeerTitle
+      ]);
+
+      uRepost(ret);
+    });
+
+    // * the author, before the time: a story reposted names where it comes from there instead
+    createEffect(async() => {
+      const authorPeerId = !props.state.peerId.isUser() && story.from_id && getPeerId(story.from_id);
+      if(!authorPeerId || authorPeerId === props.state.peerId) {
+        uAuthor();
+        return;
+      }
+
+      uAuthor(null);
+      // * the avatar fills in as it loads: the story waits for the name alone, never for a download
+      const {node} = avatarNew({
+        peerId: authorPeerId,
+        size: 16,
+        middleware
+      });
+
+      const title = await wrapPeerTitle({peerId: authorPeerId});
+      if(!middleware()) return;
+
+      title.classList.add(styles.ViewerStoryHeaderRepostTitle);
+      uAuthor({
+        peerId: authorPeerId,
+        name: title.textContent,
+        header: (
+          <span class={styles.ViewerStoryHeaderAuthor}>
+            {node}
+            {title}
+          </span>
+        )
+      });
+    });
+
+    createEffect(
+      on(
+        () => [inputReady(), uStackedAvatars?.(), uCaption(), uContent(), uReaction?.(), uMediaAreas(), uRepost(), uAuthor()] as const,
+        ([inputReady, ...u]) => {
+          if(!inputReady || u.some((v) => v === null)) {
+            return;
+          }
+
+          const [stackedAvatars, caption, content, reaction, mediaAreas, repost, author] = u;
+          setStackedAvatars(stackedAvatars);
+          setCaption(caption);
+          setContent(content);
+          setReaction(reaction);
+          setMediaAreas(mediaAreas);
+          setRepost(repost);
+          setAuthor(author);
+          props.onReady?.();
+
+          createEffect(() => {
+            setStoryMeta(story);
+          });
+        },
+        {defer: true}
+      )
+    );
+  };
+
+  createEffect(() => { // on story change
+    const story = currentStory();
+    setCaptionOpacity(0);
+    setCaptionActive(false);
+
+    createEffect(() => {
+      setStory(story);
+    });
+    // createEffect(on( // on story update
+    //   () => story._,
+    //   () => {
+    //     setStory(unwrap(story), hasViewer);
+    //   }
+    // ));
+  });
+
+  // * once the story has loaded, the next ones are fetched behind it, so that going on shows them at once
+  createEffect(() => {
+    if(!isActive() || loading()) {
+      return;
+    }
+
+    const middleware = createMiddleware().get();
+    const next = untrack(() => stories.getNearestStories(true, STORIES_PRELOAD));
+    preloadStoriesMedia(next.map(({peer, index}) => ({peerId: peer.peerId, storyItem: peer.stories[index]})), middleware);
+  });
+
+  const pollViewedStories = () => {
+    if(!pollViewedStoriesSet.size) {
+      return;
+    }
+
+    const ids = Array.from(pollViewedStoriesSet);
+    pollViewedStoriesSet.clear();
+    rootScope.managers.appStoriesManager.getStoriesById(props.state.peerId, ids, true);
+  };
+  const pollViewedStoriesSet: Set<number> = new Set();
+  createEffect(() => {
+    if(!isActive()) {
+      return;
+    }
+
+    // * stopped as the peer stops being the active one, and as the viewer closes on it: left running then, it held
+    // * this whole peer's part of the viewer for good
+    const pollViewedStoriesInterval = window.setInterval(pollViewedStories, 60e3);
+    onCleanup(() => clearInterval(pollViewedStoriesInterval));
+
+    createEffect(() => {
+      pollViewedStoriesSet.add(currentStory().id);
+    });
+  });
+
+  const readStories = (maxId: number) => {
+    if(viewedStories.size) {
+      rootScope.managers.appStoriesManager.incrementStoryViews(props.state.peerId, Array.from(viewedStories));
+      viewedStories.clear();
+    }
+
+    rootScope.managers.appStoriesManager.readStories(props.state.peerId, maxId);
+  };
+
+  const viewedStories: Set<number> = new Set();
+  const readDebounced = debounce(readStories, 5e3, true, true);
+  createEffect(() => { // read stories
+    if(!isActive()) {
+      return;
+    }
+
+    let lastId: number;
+    createEffect(() => {
+      const story = currentStory();
+      if(props.pinned && untrack(() => isExpired())) viewedStories.add(story.id);
+      readDebounced(lastId = story.id);
+    });
+
+    onCleanup(() => {
+      if(!readDebounced.isDebounced()) {
+        return;
+      }
+
+      readDebounced.clearTimeout();
+      readStories(lastId);
+    });
+  });
+
+  const playOnOpen = () => {
+    if(!stories.hasViewer || untrack(() => !isActive())) {
+      return;
+    }
+
+    playOnReady();
+  };
+
+  createEffect(playOnOpen); // play on open
+
+  const slides = <StorySlides {...mergeProps(props, {currentStory})} />;
+
+  let shouldAddTranslateX = true;
+  const calculateTranslateX = () => {
+    let diff = diffToActive();
+    if(!diff) {
+      return '0px';
+    }
+
+    if(
+      shouldShow() &&
+      stories.hasViewer &&
+      fadeIn() &&
+      shouldAddTranslateX
+    ) {
+      if(diff > 0) ++diff;
+      else --diff;
+    }
+
+    const storyWidth = stories.width;
+    const MARGIN = 40;
+    // * the sets further on in the list stand at the inline end: on the left in RTL
+    const multiplier = (diff > 0 ? 1 : -1) * (I18n.isRTL() ? -1 : 1);
+    const smallStoryWidth = storyWidth * STORY_SCALE_SMALL;
+    let offset = storyWidth * multiplier;
+    const distance = (storyWidth - smallStoryWidth) / 2 - MARGIN;
+    offset = (storyWidth - distance) * multiplier;
+    if(Math.abs(diff) !== 1) {
+      const d = (Math.abs(diff) - 1) * multiplier;
+      offset += d * smallStoryWidth + MARGIN * d;
+    }
+    return offset + 'px';
+  };
+
+  // * add 0.001 just to differ video and photo stories
+  const getVideoStoryDuration = (playbackRate: number) => untrack(() => videoDuration()) / playbackRate + 0.001;
+
+  const playOnReady = () => {
+    if(untrack(() => loading())) {
+      return;
+    }
+
+    const activeVideoDuration = untrack(() => videoDuration());
+    const storyDuration = activeVideoDuration ? getVideoStoryDuration(untrack(() => stories.playbackRate)) : STORY_DURATION;
+    actions.play(storyDuration);
+  };
+
+  // let transitionPromise: CancellablePromise<void>;
+  const onTransitionStart = (e?: TransitionEvent) => {
+    if(e && e.target !== div) {
+      return;
+    }
+
+    setSliding(true);
+    // transitionPromise = deferredPromise();
+  };
+
+  const onTransitionEnd = (e?: TransitionEvent) => {
+    if(e && e.target !== div) {
+      return;
+    }
+
+    shouldAddTranslateX = true;
+    setSliding(false);
+    // transitionPromise?.resolve();
+    if(!isActive()) {
+      return;
+    }
+
+    playOnReady();
+  };
+
+  const toggleMute = (e: MouseEvent) => {
+    if(noSound()) {
+      const {close} = showTooltip({
+        ...muteTooltipOptions,
+        textElement: i18n('Story.NoSound')
+      });
+      setTooltipCloseCallback(() => close);
+      return;
+    }
+
+    actions.toggleMute();
+  };
+
+  let muteButtonButton: HTMLButtonElement;
+  const muteButton = (
+    <ButtonIconTsx
+      ref={muteButtonButton}
+      classList={{[styles.noSound]: noSound()}}
+      icon={stories.muted || noSound() ? 'speakeroff_filled' : 'speaker_filled'}
+      onClick={toggleMute}
+      aria-label={I18n.format(stories.muted || noSound() ? 'VoipUnmute' : 'Call.Mute', true)}
+      aria-pressed={!!(stories.muted || noSound())}
+    />
+  );
+
+  const copyLink = () => {
+    copyStoryLink(bindManagersToSession(rootScope.managers), props.state.peerId, currentStory().id);
+  };
+
+  const topMenuOptions: Partial<Parameters<typeof createContextMenu>[0]> = {
+    onOpenBefore: async() => {
+      peer = await rootScope.managers.appStoriesManager.getPeer(props.state.peerId);
+      story = currentStory() as StoryItem.storyItem;
+      peerId = props.state.peerId;
+    },
+    onOpen: () => {
+      wasPlaying = !stories.paused;
+      actions.pause();
+    },
+    onCloseAfter: () => {
+      if(wasPlaying && !ignoreOnClose) {
+        actions.play();
+      }
+
+      ignoreOnClose = false;
+    }
+  };
+
+  // * caption start
+
+  const CAPTION_ACTIVE_THRESHOLD = 0.2;
+  createEffect(() => {
+    if(!isActive()) {
+      return;
+    }
+
+    actions.setLoop(videoDuration() !== undefined && captionActive());
+  });
+
+  let wasPlayingBeforeCaption: boolean;
+  const onCaptionScrollTop = (scrollTop: number) => {
+    const progress = Math.min(1, scrollTop / 100);
+    const active = progress >= CAPTION_ACTIVE_THRESHOLD;
+    setCaptionOpacity(progress);
+    setCaptionActive(active);
+    // console.log('caption progress', progress);
+
+    if(videoDuration() !== undefined) {
+      return;
+    }
+
+    if(active) {
+      if(wasPlayingBeforeCaption === undefined) {
+        wasPlayingBeforeCaption = !stories.paused;
+        actions.pause();
+      }
+    } else if(wasPlayingBeforeCaption) {
+      wasPlayingBeforeCaption = undefined;
+      actions.play();
+    }
+  };
+
+  let captionScrollable: HTMLDivElement, captionText: HTMLDivElement, scrolling = false;
+  const onCaptionScroll = () => {
+    if(scrolling) {
+      return;
+    }
+
+    const scrollTop = captionScrollable.scrollTop;
+    onCaptionScrollTop(scrollTop);
+  };
+
+  const scrollPath = (path: number) => {
+    const target = Math.max(0, path);
+    const startTime = Date.now();
+    const duration = liteMode.isAvailable('motion') ? 300 : 0;
+    scrolling = true;
+
+    const story = currentStory();
+    animateSingle(() => {
+      if(currentStory() !== story) {
+        return false;
+      }
+
+      const t = duration ? Math.min(1, (Date.now() - startTime) / duration) : 1;
+      const value = easeOutCubicApply(t, 1);
+      const currentPath = path * (1 - value);
+      const scrollTop = Math.round(target - currentPath);
+      captionScrollable.scrollTop = scrollTop;
+      onCaptionScrollTop(scrollTop);
+
+      return t < 1;
+    }, captionScrollable).finally(() => {
+      scrolling = false;
+    });
+  };
+
+  const onCaptionClick = (e: MouseEvent) => {
+    if((captionScrollable.scrollHeight <= captionScrollable.clientHeight) || captionScrollable.scrollTop) {
+      return;
+    }
+
+    cancelEvent(e);
+    // const visibleTextHeight = captionScrollable.clientHeight - captionScrollable.clientWidth * 0.7 - 8;
+    const visibleTextHeight = 56;
+    const path = Math.min(captionText.scrollHeight - visibleTextHeight, captionScrollable.clientHeight - 60);
+    scrollPath(path);
+  };
+
+  const captionContainer = (
+    <div
+      ref={captionScrollable}
+      tabindex={Modes.a11y ? 0 : undefined}
+      role="region"
+      aria-label={I18n.format('AccDescr.StoryCaption', true)}
+      class={classNames(
+        'scrollable',
+        'scrollable-y',
+        'no-scrollbar',
+        styles.ViewerStoryCaption,
+        repost() && caption() && styles.hasReply,
+        music() && styles.hasMusic
+      )}
+      onScroll={onCaptionScroll}
+    >
+      <div
+        ref={captionText}
+        class={classNames('spoilers-container', styles.ViewerStoryCaptionText)}
+        onClick={onCaptionClick}
+      >
+        <div class={styles.ViewerStoryCaptionTextCell} dir="auto">
+          {repost()?.reply}
+          {caption()}
+        </div>
+      </div>
+    </div>
+  );
+
+  // * caption end
+
+  const contentItem = (
+    <div
+      class={styles.ViewerStoryContentItem}
+      role="img"
+      aria-label={I18n.format(videoDuration() ? 'AttachVideo' : 'AttachPhoto', true)}
+      style={captionOpacity() && {opacity: 1 - captionOpacity() * 0.5}}
+    >
+      {content()}
+    </div>
+  );
+
+  const getDateText = () => {
+    const {timestamp, edited} = date() || {};
+    if(!timestamp) {
+      return;
+    }
+
+    const elapsedTime = tsNow(true) - timestamp;
+    const formatted = formatDuration(elapsedTime);
+    const map: {[type in DurationType]?: LangPackKey} = {
+      [DurationType.Seconds]: 'StoryJustNow',
+      [DurationType.Minutes]: 'MinutesShortAgo',
+      [DurationType.Hours]: 'HoursShortAgo'
+      // [DurationType.Days]: 'DaysShortAgo'
+    };
+
+    // if(formatted[0].type === DurationType.Seconds) {
+    //   formatted[0] = {
+    //     type: DurationType.Minutes,
+    //     duration: 0
+    //   };
+    // }
+
+    const first = formatted[0];
+    const key = map[first.type];
+    const elements: (Node | string | (Node | string)[])[] = [];
+    if(!key) {
+      // return formatFullSentTime(timestamp);
+      // elements.push(getFullDate(new Date(timestamp * 1000), {shortYear: true}));
+      elements.push(<span>{documentFragmentToNodes(formatFullSentTime(timestamp))}</span> as any);
+    } else if(first.type === DurationType.Days && first.duration !== 1) {
+      elements.push(formatDateAccordingToTodayNew(new Date(timestamp * 1000)));
+    } else {
+      elements.push(i18n(key, [first.duration]));
+    }
+
+    if(edited) {
+      elements.push(i18n('EditedMessage'));
+    }
+
+    const source = repost()?.header ?? author()?.header;
+    if(source) {
+      elements.unshift(source as HTMLElement);
+    }
+
+    let joined: JSX.Element[] = joinElementsWith(elements, JOINER);
+    if(source) {
+      joined = [
+        joined[0],
+        <span class={styles.ViewerStoryHeaderSecondary}>{joined.slice(1)}</span>
+      ];
+    }
+
+    return joined;
+  };
+
+  const showMessageSentTooltip = (textElement: HTMLElement, peerId?: PeerId) => {
+    let a: HTMLAnchorElement;
+    if(peerId) {
+      a = document.createElement('a');
+      a.href = '#';
+      a.addEventListener('click', (e) => {
+        cancelEvent(e);
+        props.close(() => {
+          hotReloadGuard.appImManager.setInnerPeer({peerId});
+        });
+      }, {capture: true, passive: false});
+      a.append(i18n('ViewInChat'));
+    }
+
+    setQuizHint({
+      textElement,
+      textRight: a,
+      appendTo: storyDiv,
+      from: 'bottom',
+      duration: 3000,
+      icon: 'checkround_filled'
+    });
+  };
+
+  // * a user's story is answered at once; a group's as its full chat says, which may come later
+  const isChangelog = props.state.peerId === CHANGELOG_PEER_ID;
+  const [replyMode, setReplyMode] = createSignal<StoryReplyMode>(
+    isMe || isChangelog ? 'none' : (props.state.peerId.isUser() ? 'reply' : undefined)
+  );
+  const [boostsNeeded, setBoostsNeeded] = createSignal<number>();
+  if(replyMode() === undefined) {
+    const managers = bindManagersToSession(rootScope.managers);
+    const middleware = createMiddleware().get();
+    const peerId = props.state.peerId;
+    const chatId = peerId.toChatId();
+    const updateReplyMode = () => {
+      managers.appStoriesManager.getReplyMode(peerId).then((result) => {
+        if(!middleware()) return;
+        // * no answer (the popup sandbox's managers give none) is no field
+        setBoostsNeeded(result?.boostsNeeded);
+        setReplyMode(result?.mode || 'none');
+      }, () => {
+        if(!middleware()) return;
+        setReplyMode('none');
+      });
+    };
+
+    updateReplyMode();
+    // * the member's rights, and the boosts the member has given, change while the story is open
+    const listenerSetter = createListenerSetter();
+    const onChatUpdate = (id: ChatId) => id === chatId && updateReplyMode();
+    listenerSetter.add(rootScope)('chat_update', onChatUpdate);
+    listenerSetter.add(rootScope)('chat_full_update', onChatUpdate);
+  }
+
+  const canReply = () => replyMode() === 'reply' && !mediaUnsupported();
+  const [inputReady, setInputReady] = createSignal(replyMode() === 'none');
+  // * the story waits for its field only where it has one: not where the footer stands instead
+  createEffect(() => {
+    if(replyMode() && !canReply()) {
+      setInputReady(true);
+    }
+  });
+
+  const storyInput = () => (
+    <StoryInput
+      {
+        ...mergeProps(props, {
+          currentStory,
+          isActive,
+          focusedSignal,
+          inputEmptySignal,
+          inputMenuOpenSignal,
+          likeButton,
+          isPublic,
+          shareStory: onShareClick,
+          reaction,
+          onShareButtonClick,
+          onMessageSent: () => {
+            showMessageSentTooltip(i18n('Story.Tooltip.MessageSent'), props.state.peerId);
+          },
+          setInputReady,
+          confirmSending: confirmStealthReply,
+          setChatInput: (input: ChatInput) => storyChatInput = input,
+          swipeProgress: swipeUpProgress
+        })
+      }
+    />
+  );
+
+  // * who saw one's own story, and who reacted to a channel's or a group's one, which its stories' editors see
+  // * (iOS, Android's viewsAllowed)
+  const [canViewInteractions, setCanViewInteractions] = createSignal(isMe);
+  if(!props.state.peerId.isUser()) {
+    const managers = bindManagersToSession(rootScope.managers);
+    const middleware = createMiddleware().get();
+    const peerId = props.state.peerId;
+    const chatId = peerId.toChatId();
+    const updateCanViewInteractions = () => {
+      managers.appStoriesManager.canViewStoryInteractions(peerId).then((value) => {
+        if(middleware()) setCanViewInteractions(!!value);
+      }, noop);
+    };
+
+    updateCanViewInteractions();
+    // * the admin's rights change while the story is open
+    createListenerSetter().add(rootScope)('chat_update', (id) => id === chatId && updateCanViewInteractions());
+  }
+
+  // * a drag up opens that list where it is seen, and otherwise a user's story's reply field with the keyboard
+  // * (iOS, Android) — never a group's or a channel's; what comes rises after the finger until then
+  const [swipeUpProgress, setSwipeUpProgress] = createSignal(0);
+  const canSwipeToViews = () => canViewInteractions() && currentStory()?._ === 'storyItem';
+  const canSwipeToReply = () => canReply() && props.state.peerId.isUser();
+  const swipeUp: StorySwipeUp = {
+    move: (offset) => {
+      const distance = Math.min(200, windowSize.height * .15);
+      setSwipeUpProgress(canSwipeToViews() || canSwipeToReply() ? Math.min(1, offset / distance) : 0);
+    },
+    end: () => {
+      const done = swipeUpProgress() >= 1;
+      setSwipeUpProgress(0);
+      if(!done) {
+        return;
+      }
+
+      if(canSwipeToViews()) {
+        openViewsList();
+      } else if(canSwipeToReply() && storyChatInput) {
+        // * in the touch's own end, or the keyboard does not come
+        focusInput(storyChatInput.messageInput);
+      }
+    }
+  };
+  props.swipeUpHandlers.set(props.state, swipeUp);
+  onCleanup(() => {
+    if(props.swipeUpHandlers.get(props.state) === swipeUp) {
+      props.swipeUpHandlers.delete(props.state);
+    }
+  });
+
+  // * once ever, a while after the heart first stands on a story that plays: how to get past ❤ (iOS, Android)
+  createEffect(() => {
+    const button = likeButtonElement();
+    if(
+      appSettings.seenTooltips.storyReactions ||
+      !button ||
+      !isActive() ||
+      !stories.startTime ||
+      stories.paused ||
+      focused() ||
+      untrack(tooltipCloseCallback)
+    ) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      if(!button.isConnected || tooltipCloseCallback()) {
+        return;
+      }
+
+      setAppSettings('seenTooltips', 'storyReactions', true);
+      const {close} = showTooltip({
+        element: button,
+        container: div,
+        vertical: 'top',
+        textElement: i18n(IS_TOUCH_SUPPORTED ? 'Story.ReactionsHint.LongTap' : 'Story.ReactionsHint.RightClick'),
+        paddingX: 13
+      });
+      setTooltipCloseCallback(() => close);
+    }, 1000);
+    onCleanup(() => clearTimeout(timeout));
+  });
+
+  // * top menu start
+
+  const isPeerArchived = async(visible: boolean) => {
+    const peerId = props.state.peerId;
+    if(peerId === rootScope.myId || peerId === CHANGELOG_PEER_ID) {
+      return false;
+    }
+
+    const [peer, isSubscribed] = await Promise.all([
+      rootScope.managers.appStoriesManager.getPeer(peerId),
+      rootScope.managers.appStoriesManager.isSubcribedToPeer(peerId)
+    ]);
+    const isHidden = !!peer.pFlags.stories_hidden;
+    return (visible ? !isHidden : isHidden) && isSubscribed;
+  };
+
+  const togglePeerHidden = async(hidden: boolean) => {
+    const peerId = props.state.peerId;
+    rootScope.managers.appStoriesManager.toggleStoriesHidden(peerId, hidden);
+    toastNew({
+      langPackKey: hidden ? 'StoriesMovedToContacts' : 'StoriesMovedToDialogs',
+      langPackArguments: [await wrapPeerTitle({peerId})]
+    });
+  };
+
+  const togglePinned = async(pinned: boolean) => {
+    const peerId = props.state.peerId;
+    rootScope.managers.appStoriesManager.togglePinned(peerId, currentStory().id, pinned).then(() => {
+      toastNew({
+        langPackKey: pinned ?
+          (peerId.isUser() ? 'StoryPinnedToProfile' : 'StoryPinnedToPosts') :
+          (peerId.isUser() ? 'StoryArchivedFromProfile' : 'StoryUnpinnedFromPosts')
+      });
+    });
+  };
+
+  let wasPlaying = false,
+    peer: User.user | MTChat.channel,
+    peerId: PeerId,
+    story: StoryItem.storyItem | StoryItem.storyItemSkipped,
+    ignoreOnClose = false,
+    // * the story is the viewer's own, or a channel's whose stories they edit: what is left is someone
+    // * else's, whose menu holds what only a viewer needs (iOS performOtherMoreAction, Android's second one)
+    canEdit = false;
+
+  const isVideoStory = () => !!videoDuration();
+  const isOthersStory = () => story?._ === 'storyItem' && !canEdit;
+
+  const speedButton: ButtonMenuItemOptionsVerifiable = createSubmenuTrigger({
+    options: {
+      icon: getPlaybackRateIcon(1),
+      text: 'Story.PlaybackSpeed',
+      separatorDown: true,
+      verify: () => {
+        // * its icon says the speed the videos play at
+        speedButton.icon = getPlaybackRateIcon(stories.playbackRate);
+        return isVideoStory();
+      }
+    },
+    createSubmenu: () => {
+      const menu = ButtonMenuSync({
+        buttons: PLAYBACK_RATES.map((rate) => ({
+          ...getPlaybackRateMenuButton(rate),
+          icon: rate === stories.playbackRate ? 'check' : undefined,
+          onClick: () => actions.setPlaybackRate(rate)
+        }))
+      });
+      menu.classList.add('checkable-button-menu');
+      setPlaybackRateMenuState(menu, stories.playbackRate);
+      return menu;
+    }
+  });
+
+  const albumButton = createAddToAlbumSubmenuTrigger({
+    getPeerId: () => props.state.peerId,
+    getStoryIds: () => [story.id],
+    getAlbums: () => rootScope.managers.appStoriesManager.getAlbums(props.state.peerId),
+    verify: () => canEdit,
+    onCreateAlbum: async() => {
+      const managers = bindManagersToSession(rootScope.managers);
+      const peerId = props.state.peerId;
+      ignoreOnClose = true;
+      const onAnyPopupClose = bindOnAnyPopupClose(wasPlaying);
+      let albumId: number;
+      try {
+        albumId = await openCreateAlbumPopup(peerId, [story.id]);
+      } catch(err) {
+        toastNew({langPackKey: 'Error.AnError'});
+      } finally {
+        onAnyPopupClose();
+      }
+
+      if(albumId === undefined) {
+        return;
+      }
+
+      const albums = await managers.appStoriesManager.getAlbums(peerId);
+      const album = albums.find((album) => album.album_id === albumId);
+      toastNew({
+        langPackKey: 'Story.AddedToAlbum',
+        langPackArguments: [wrapEmojiText(album?.title ?? '')]
+      });
+    }
+  });
+
+  const setHighQuality = (highQuality: boolean) => {
+    setAppSettings('stories', 'highQuality', highQuality);
+    setQuizHint({
+      title: i18n(highQuality ? 'Story.ToastQualityHD.Title' : 'Story.ToastQualitySD.Title'),
+      textElement: i18n(highQuality ? 'Story.ToastQualityHD.Text' : 'Story.ToastQualitySD.Text'),
+      appendTo: storyDiv,
+      from: 'bottom',
+      duration: 3000,
+      icon: STORY_QUALITY_ICON
+    });
+  };
+
+  const isQualityShown = async() => isVideoStory() && isOthersStory() && !(await apiManagerProxy.isPremiumFeaturesHidden());
+  const isHighQuality = () => isStoryHighQuality(peerId, story as StoryItem.storyItem);
+
+  // * one's own story or a channel's one edits is saved freely; someone else's, unless it is protected,
+  // * with Premium only, which the item offers otherwise
+  const canSaveFreely = () => props.state.peerId === rootScope.myId || canEdit;
+  const canSaveWithPremium = () => story?._ === 'storyItem' && !story.pFlags.noforwards;
+
+  // * asked for as the menu opens, once for both of its items
+  let containedPacks: Promise<Record<StoryContainedPacksKind, StoryContainedPacks>>;
+  const createContainedPacksButton = (kind: StoryContainedPacksKind) => {
+    const button: ButtonMenuItemOptionsVerifiable = {
+      text: 'Loading',
+      multiline: true,
+      // * the line above the two goes with the first, and stays while either of them does
+      separator: kind === 'stickers',
+      onClick: () => {
+        ignoreOnClose = true;
+        const onAnyPopupClose = bindOnAnyPopupClose(wasPlaying);
+        containedPacks.then((packs) => {
+          const {inputs} = packs[kind];
+          if(inputs.length) {
+            showStickersPopup(inputs, kind === 'emoji', undefined, onAnyPopupClose);
+          } else {
+            onAnyPopupClose();
+          }
+        });
+      },
+      verify: () => !!containedPacks,
+      onOpen: () => {
+        const {element, textElement} = button;
+        if(!element) {
+          return;
+        }
+
+        // * one row says it is loading, the other one waits out of sight to be known; neither opens before
+        if(kind === 'emoji') {
+          element.classList.add('hide');
+        }
+
+        setButtonMenuItemDisabled(button, true);
+        containedPacks.then((packs) => {
+          if(button.element !== element) {
+            return;
+          }
+
+          const has = !!packs[kind].inputs.length;
+          element.classList.toggle('hide', !has);
+          setButtonMenuItemDisabled(button, !has);
+          if(has) {
+            replaceContent(textElement, wrapStoryContainedPacks(kind, packs[kind]));
+          }
+
+          if(kind === 'stickers') {
+            (button.separator as HTMLElement)?.classList?.toggle('hide', !has && !packs.emoji.inputs.length);
+          }
+        });
+      }
+    };
+
+    return button;
+  };
+
+  const containedPacksButtons = [createContainedPacksButton('stickers'), createContainedPacksButton('emoji')];
+
+  // * the submenus and the packs' items set themselves up on the menu built
+  const menuButtonsWithSetup = [albumButton, speedButton, ...containedPacksButtons];
+
+  const btnMenu = ButtonMenuToggle({
+    buttons: [albumButton, speedButton, {
+      icon: 'settings',
+      text: 'StorySettings',
+      onClick: () => {
+        ignoreOnClose = true;
+        void openStorySettings(wasPlaying);
+      },
+      verify: () => story?._ === 'storyItem' && rootScope.managers.appStoriesManager.canEditStorySettings(peerId, story.id)
+    }, {
+      icon: 'plusround',
+      text: 'Story.AddToProfile',
+      onClick: () => togglePinned(true),
+      verify: () => peerId === rootScope.myId && !(story as StoryItem.storyItem).pFlags?.pinned
+    }, {
+      icon: 'crossround',
+      text: 'Story.RemoveFromProfile',
+      onClick: () => togglePinned(false),
+      verify: () => peerId === rootScope.myId && !!(story as StoryItem.storyItem).pFlags?.pinned
+    }, {
+      icon: 'plusround',
+      text: 'SaveToPosts',
+      onClick: () => togglePinned(true),
+      verify: () => !peerId.isUser() && !(story as StoryItem.storyItem).pFlags?.pinned && rootScope.managers.appStoriesManager.hasRights(peerId, story.id, 'pin')
+    }, {
+      icon: 'crossround',
+      text: 'RemoveFromPosts',
+      onClick: () => togglePinned(false),
+      verify: () => !peerId.isUser() && !!(story as StoryItem.storyItem).pFlags?.pinned && rootScope.managers.appStoriesManager.hasRights(peerId, story.id, 'pin')
+    }, {
+      icon: 'forward',
+      text: 'ShareFile',
+      onClick: () => {
+        ignoreOnClose = true;
+        onShareClick(wasPlaying);
+      },
+      verify: () => {
+        return !!(story as StoryItem.storyItem)?.pFlags?.public && !(story as StoryItem.storyItem).pFlags.noforwards;
+      }
+    }, {
+      icon: 'link',
+      text: 'CopyLink',
+      onClick: copyLink,
+      verify: () => hasStoryLink(story, peerId)
+    }, {
+      icon: STORY_QUALITY_ICON,
+      text: 'Story.ContextMenuSD',
+      onClick: () => setHighQuality(false),
+      verify: async() => isHighQuality() && await isQualityShown()
+    }, {
+      icon: STORY_QUALITY_ICON,
+      text: 'Story.ContextMenuHD',
+      onClick: () => setHighQuality(true),
+      verify: async() => rootScope.premium && !isHighQuality() && await isQualityShown()
+    }, {
+      icon: 'premium_lock',
+      text: 'Story.ContextMenuHD',
+      onClick: () => {
+        ignoreOnClose = true;
+        showStoryQualityUpgradePopup(bindOnAnyPopupClose(wasPlaying));
+      },
+      verify: async() => !rootScope.premium && await isQualityShown()
+    }, {
+      icon: 'download',
+      text: 'MediaViewer.Context.Download',
+      onClick: () => {
+        const story = currentStory();
+        const media = getMediaFromMessage(story as StoryItem.storyItem, true);
+        if(!media) {
+          return;
+        }
+        appDownloadManager.downloadToDisc({media: unwrap(media)});
+      },
+      verify: () => canSaveFreely() || (canSaveWithPremium() && rootScope.premium)
+    }, {
+      icon: 'premium_lock',
+      text: 'MediaViewer.Context.Download',
+      onClick: () => {
+        toastNew({
+          langPackKey: 'Story.ToastPremiumSaveToGallery',
+          langPackArguments: [anchorCallback(() => {
+            hideToast();
+            hotReloadGuard.showPremiumPopup({feature: 'stories'});
+          })],
+          // * it has a link to follow: longer than a toast that only tells
+          duration: 5000
+        });
+      },
+      verify: async() => !canSaveFreely() &&
+        canSaveWithPremium() &&
+        !rootScope.premium &&
+        !(await apiManagerProxy.isPremiumFeaturesHidden())
+    }, {
+      icon: 'eyecross',
+      text: 'Stories.StealthMode.View',
+      onClick: async() => {
+        const managers = bindManagersToSession(rootScope.managers);
+        ignoreOnClose = true;
+        const onAnyPopupClose = bindOnAnyPopupClose(wasPlaying);
+        const stealthMode = await managers.appStoriesManager.getStealthMode();
+        // * already on: for how much longer, instead of the window that turns it on
+        const activeFor = (stealthMode?.active_until_date || 0) - tsNow(true);
+        if(activeFor > 0) {
+          setQuizHint({
+            title: i18n('Story.ToastStealthModeActiveTitle'),
+            textElement: i18n('Story.ToastStealthModeActiveText', [wrapStoriesStealthModeDuration(activeFor)]),
+            appendTo: storyDiv,
+            from: 'bottom',
+            duration: 5000,
+            icon: 'eyecross'
+          });
+          onAnyPopupClose();
+          return;
+        }
+
+        const appConfig = useAppConfig();
+        showStoriesStealthModePopup({
+          onActivate: () => {
+            setQuizHint({
+              title: i18n('Stories.StealthMode.Activated.Title'),
+              textElement: i18n('Stories.StealthMode.Activated.Subtitle', [
+                wrapStoriesStealthModeDuration(appConfig.stories_stealth_future_period),
+                wrapStoriesStealthModeDuration(appConfig.stories_stealth_past_period)
+              ]),
+              appendTo: storyDiv,
+              from: 'bottom',
+              duration: 8000,
+              icon: 'checkround_filled'
+            });
+          },
+          onClose: onAnyPopupClose
+        });
+      },
+      // * a channel's stories are watched in the open either way: neither iOS nor Android offers it there
+      verify: () => props.state.peerId.isUser()
+    }, ...createStoriesNotifyMuteButtons(
+      () => props.state.peerId,
+      () => isOthersStory() && props.state.peerId !== CHANGELOG_PEER_ID
+    ), {
+      icon: 'archive',
+      text: 'ArchivePeerStories',
+      onClick: () => togglePeerHidden(true),
+      verify: () => isPeerArchived(true)
+    }, {
+      icon: 'unarchive',
+      text: 'UnarchiveStories',
+      onClick: () => togglePeerHidden(false),
+      verify: () => isPeerArchived(false)
+    }, {
+      icon: 'delete',
+      text: 'StoriesRemoveFromRecent',
+      onClick: () => removeStoriesFromRecent(props.state.peerId),
+      verify: async() => props.state.peerId !== rootScope.myId &&
+        await rootScope.managers.appStoriesManager.getPeerStoriesRemoval(props.state.peerId) === 'remove'
+    }, {
+      icon: 'premium_translate',
+      text: 'TranslateMessage',
+      onClick: () => toggleCaptionTranslation(story.id, true),
+      verify: async() => isOthersStory() &&
+        !isCaptionTranslated(story.id) &&
+        !!(await detectLanguageForTranslation((story as StoryItem.storyItem).caption))
+    }, {
+      icon: 'premium_translate',
+      text: 'Story.HideTranslation',
+      onClick: () => toggleCaptionTranslation(story.id, false),
+      verify: () => story?._ === 'storyItem' && isCaptionTranslated(story.id)
+    }, {
+      icon: 'statistics_filled',
+      text: 'ViewStatistics',
+      onClick: () => {
+        const storyId = currentStory().id;
+        props.close(() => {
+          setTimeout(() => {
+            hotReloadGuard.appSidebarRight.createTab(AppStatisticsTab).open(peerId.toChatId(), undefined, storyId);
+            hotReloadGuard.appSidebarRight.toggleSidebar(true);
+          }, 0);
+        });
+      },
+      verify: () => rootScope.managers.appProfileManager.canViewStatistics(peerId)
+    }, {
+      // * a group's story with a reply field has no footer to open who reacted from: its admins open it here,
+      // * as the mouse and the keyboard have no swipe up
+      icon: 'reactions',
+      text: 'Reactions',
+      onClick: () => {
+        ignoreOnClose = true;
+        openViewsList(wasPlaying);
+      },
+      verify: () => story?._ === 'storyItem' && !peerId.isUser() && canViewInteractions() && canReply()
+    }, {
+      icon: 'delete danger' as Icon,
+      text: 'Delete',
+      onClick: async() => {
+        const managers = bindManagersToSession(rootScope.managers);
+        const id = currentStory().id;
+        const peerId = props.state.peerId;
+        ignoreOnClose = true;
+        const onAnyPopupClose = bindOnAnyPopupClose(wasPlaying);
+        try {
+          await confirmationPopup({
+            titleLangKey: 'DeleteStoryTitle',
+            descriptionLangKey: 'DeleteStorySubtitle',
+            button: {
+              langKey: 'Delete',
+              isDanger: true
+            }
+          });
+        } catch(err) {
+          onAnyPopupClose();
+          return;
+        }
+
+        managers.appStoriesManager.deleteStories(peerId, [id]);
+      },
+      verify: () => rootScope.managers.appStoriesManager.hasRights(peerId, story.id, 'delete')
+    }, {
+      icon: 'flag',
+      className: 'danger',
+      text: 'ReportChat',
+      onClick: () => {
+        ignoreOnClose = true;
+        const onAnyPopupClose = bindOnAnyPopupClose(wasPlaying);
+        showStoryReport(props.state.peerId, [currentStory().id], onAnyPopupClose);
+      },
+      verify: () => !(story as StoryItem.storyItem).pFlags?.out && props.state.peerId !== CHANGELOG_PEER_ID
+      // separator: true
+    }, ...containedPacksButtons],
+    direction: 'bottom-left',
+    positionPadding: {top: STORY_MENU_PADDING, bottom: STORY_MENU_PADDING},
+    ...topMenuOptions,
+    onOpenBefore: async() => {
+      const managers = bindManagersToSession(rootScope.managers);
+      await topMenuOptions.onOpenBefore();
+      containedPacks = story?._ === 'storyItem' && storyHasContainedPacks(story) ?
+        getStoryContainedPacks(story, managers) :
+        undefined;
+      canEdit = story?._ === 'storyItem' && await managers.appStoriesManager.hasRights(peerId, story.id, 'edit');
+    },
+    onOpen: (e, element) => {
+      topMenuOptions.onOpen(e, element);
+      // * as many items as it can have do not fit under the header of a short screen: it scrolls in the room it has,
+      // * as a floating menu does
+      const top = btnMenu.getBoundingClientRect().bottom + STORY_MENU_PADDING;
+      element.style.maxHeight = `${Math.max(0, getAppWindow().innerHeight - top - DEFAULT_MENU_WINDOW_MARGIN)}px`;
+      element.style.overflowY = 'auto';
+      menuButtonsWithSetup.forEach((button) => button.onOpen?.());
+    },
+    onClose: () => {
+      menuButtonsWithSetup.forEach((button) => button.onClose?.());
+    }
+  });
+  btnMenu.classList.add('night');
+  btnMenu.setAttribute('aria-label', I18n.format('MultiAccount.More', true));
+
+  // * top menu end
+
+  // * privacy icon start
+
+  const onPrivacyIconClick = async() => {
+    if(isMe) {
+      await openStorySettings();
+      return;
+    }
+    const type = privacyType();
+    const peerTitle = await wrapPeerTitle({peerId: props.state.peerId, onlyFirstName: true});
+    const {close} = showTooltip({
+      container: headerDiv,
+      element: privacyIconElement,
+      vertical: 'bottom',
+      textElement: i18n(
+        type === 'close' ? 'StoryCloseFriendsHint' : (type === 'selected' ? 'StorySelectedContactsHint' : 'StoryContactsHint'),
+        [peerTitle]
+      ),
+      paddingX: 13
+    });
+
+    setTooltipCloseCallback(() => close);
+  };
+
+  createEffect(() => {
+    const close = tooltipCloseCallback();
+    if(!close) {
+      return;
+    }
+
+    onCleanup(close);
+
+    createEffect(
+      on(
+        () => [isActive(), currentStory()],
+        () => {
+          close();
+          setTooltipCloseCallback();
+        },
+        {defer: true}
+      )
+    );
+  });
+
+  let privacyIconElement: HTMLButtonElement;
+  const privacyIcon = (
+    <A11yButton
+      ref={privacyIconElement}
+      class={classNames(
+        styles.ViewerStoryPrivacy,
+        'privacy-bg',
+        `privacy-bg-${privacyType()}`
+      )}
+      onClick={() => onPrivacyIconClick()}
+      aria-label={I18n.format('PrivacyTitle', true)}
+    >
+      {Icon(STORY_PRIVACY_ICONS[privacyType()])}
+    </A11yButton>
+  );
+
+  // * privacy icon end
+
+  // * my footer start
+
+  const getViews = isMe && (() => {
+    const story = currentStory();
+    if(story._ !== 'storyItem') {
+      return;
+    }
+
+    const viewsCount = story.views?.views_count ?? 0;
+    if(!viewsCount) {
+      const isExpired = story.expire_date <= tsNow(true);
+      if(isExpired) {
+        return i18n('NobodyViewsArchived');
+      } else {
+        return i18n('NobodyViews');
+      }
+    } else {
+      return i18n('Views', [viewsCount]);
+    }
+  });
+
+  const openViewsList = (wasPlaying?: boolean) => {
+    const story = currentStory();
+    if(story?._ !== 'storyItem' || !canViewInteractions()) {
+      return;
+    }
+
+    // * held still from the start, not once the list has come, and played on once it closes
+    const onClose = bindOnAnyPopupClose(wasPlaying);
+    actions.pause();
+    showStoryViewersPopup({
+      peerId: props.state.peerId,
+      storyId: story.id,
+      stories: () => props.state.stories,
+      // * the story the list goes to is the one the viewer stands on once it closes (iOS, Android)
+      onStoryChange: (id) => {
+        const index = props.state.stories.findIndex((story) => story.id === id);
+        if(index !== -1) {
+          actions.set({peer: props.state, index});
+        }
+      },
+      onOpenPeer: (peerId) => {
+        props.close(() => hotReloadGuard.appImManager.setInnerPeer({peerId}));
+      },
+      onOpenStory: (peerId, id) => {
+        props.close(() => createStoriesViewerWithPeer({peerId, id}));
+      },
+      onOpenMessage: (peerId, mid) => {
+        props.close(() => hotReloadGuard.appImManager.setInnerPeer({peerId, lastMsgId: mid}));
+      },
+      onClose
+    });
+  };
+
+  const onDeleteClick = isMe && (async() => {
+    const managers = bindManagersToSession(rootScope.managers);
+    const peerId = props.state.peerId;
+    const storyId = currentStory().id;
+    await confirmationPopup({
+      titleLangKey: 'DeleteStoryTitle',
+      descriptionLangKey: 'DeleteStorySubtitle',
+      button: {
+        isDanger: true,
+        langKey: 'Delete'
+      }
+    });
+
+    managers.appStoriesManager.deleteStories(peerId, [storyId]);
+  });
+
+  if(isMe) {
+    const viewedStories: Set<number> = new Set();
+    const getAround = 2;
+    let promise: Promise<any>;
+    const getStoriesViews = async() => {
+      if(promise) {
+        return;
+      }
+
+      const story = currentStory();
+      const index = props.state.stories.indexOf(story);
+      const slice = props.state.stories.slice(Math.max(0, index - getAround), index + getAround);
+      slice.forEach((story) => {
+        viewedStories.add(story.id);
+      });
+
+      const ids = Array.from(viewedStories);
+      viewedStories.clear();
+      promise = rootScope.managers.appStoriesManager.getStoriesViews(props.state.peerId, ids).then(() => {
+        promise = undefined;
+      });
+
+      // let's clear after last execution, not before viewer is closed
+      if(cleaned) {
+        clearInterval(interval);
+      }
+    };
+    const interval = setInterval(getStoriesViews, 10e3);
+
+    createEffect(() => {
+      const story = currentStory();
+      viewedStories.add(story.id);
+    });
+
+    let cleaned = false;
+    onCleanup(() => {
+      cleaned = true;
+    });
+
+    onMount(() => {
+      getStoriesViews();
+    });
+  }
+
+  // * a group whose own restrictions hold the member back lifts them for enough boosts (iOS, Android)
+  const openBoostToUnrestrict = async() => {
+    // * of the account the story is watched on: a switch while it opens opens nothing on the next one
+    const managers = bindManagersToSession(rootScope.managers);
+    const peerId = props.state.peerId;
+    // * held still while the popup loads, and played on once it closes, as for the story's other popups
+    const onClose = bindOnAnyPopupClose();
+    actions.pause();
+    try {
+      const peerTitle = await wrapPeerTitle({peerId});
+      await openBoosts({
+        peerId,
+        managers,
+        slider: hotReloadGuard.appSidebarRight,
+        reason: {
+          titleLangKey: 'BoostGroup',
+          descriptionLangKey: 'Story.BoostToUnrestrict',
+          descriptionArgs: [i18n('Story.BoostToUnrestrict.Times', [boostsNeeded()]), peerTitle]
+        },
+        onClose
+      });
+    } catch{
+      onClose();
+    }
+  };
+
+  // * the footer of a story with no reply field: what stands on its start is the story's own to say, the
+  // * heart and the sharing stand on its end
+  let footerReactionIcon: HTMLElement, footerShareButton: HTMLElement;
+  const storyViews = () => (currentStory() as StoryItem.storyItem).views;
+  // * a count stands beside its icon for as long as there is something to count, and one's own reaction is
+  // * counted before the server has (iOS, Android)
+  const footerCount = (count: number) => count > 0 && (
+    <span class={styles.ViewerStoryFooterCount}>{formatNumber(count, 1)}</span>
+  );
+  const reactionsCount = () => Math.max((currentStory() as StoryItem.storyItem).sent_reaction ? 1 : 0, storyViews()?.reactions_count || 0);
+  // * a channel's or a group's story is seen at least once, by whoever is looking at it (Android)
+  const channelViews = () => [
+    Icon('eye1_filled', styles.ViewerStoryFooterIconIcon),
+    footerCount(storyViews()?.views_count || 1)
+  ];
+  const footer = () => (
+    <div
+      class={classNames(
+        styles.ViewerStoryFooter,
+        styles.hideOnSmall,
+        isMe && styles.isMe,
+        isChangelog && styles.isChangelog
+      )}
+      style={swipeUpProgress() ? {transform: `translateY(${-swipeUpProgress() * SWIPE_UP_RISE}px)`} : undefined}
+    >
+      {isMe ? (
+        <>
+          <A11yButton class={styles.ViewerStoryFooterLeft} onClick={() => openViewsList()}>
+            {stackedAvatars() && stackedAvatars().container}
+            {getViews()}
+            {/* * the reactions in red and the reposts in green follow the views (iOS, Android) */}
+            {storyViews()?.views_count > 0 && storyViews().reactions_count > 0 && (
+              <span class={classNames(styles.ViewerStoryFooterStat, styles.reactions)}>
+                {Icon('reactions_filled', styles.ViewerStoryFooterStatIcon)}
+                <span aria-hidden="true">{formatNumber(storyViews().reactions_count, 1)}</span>
+                <span class="sr-only">{i18n('ReactionsTooltip', [storyViews().reactions_count])}</span>
+              </span>
+            )}
+            {storyViews()?.views_count > 0 && storyViews().forwards_count > 0 && (
+              <span class={classNames(styles.ViewerStoryFooterStat, styles.reposts)}>
+                {Icon(STORY_REPOST_ICON, styles.ViewerStoryFooterStatIcon)}
+                <span aria-hidden="true">{formatNumber(storyViews().forwards_count, 1)}</span>
+                <span class="sr-only">{i18n('SharesTooltip', [storyViews().forwards_count])}</span>
+              </span>
+            )}
+          </A11yButton>
+          <div class={styles.ViewerStoryFooterRight}>
+            <ButtonIconTsx icon="delete" onClick={onDeleteClick} />
+          </div>
+        </>
+      ) : (!isChangelog && (!props.state.peerId.isUser() || mediaUnsupported()) ? (
+        <>
+          <div class={styles.ViewerStoryFooterLeft}>
+            {mediaUnsupported() ? (
+              <span class={styles.ViewerStoryFooterText}>{i18n('StoryCantReply')}</span>
+            ) : replyMode() === 'boost' ? (
+              <A11yButton class={styles.ViewerStoryFooterLocked} onClick={openBoostToUnrestrict}>
+                <IconTsx icon="lock" class={styles.ViewerStoryFooterLockedIcon} />
+                <span class={styles.ViewerStoryFooterLockedText}>{i18n('Story.CommentsRestricted')}</span>
+                <span class={styles.ViewerStoryFooterLockedButton}>{i18n('Unlock')}</span>
+              </A11yButton>
+            ) : canViewInteractions() ? (
+              // * the admins who edit the stories open who reacted to them from the views (Android, iOS)
+              <A11yButton
+                as="span"
+                class={classNames(styles.ViewerStoryFooterIcon, styles.ViewerStoryFooterReaction)}
+                aria-label={I18n.format('Reactions', true)}
+                onClick={() => openViewsList()}
+              >
+                {channelViews()}
+              </A11yButton>
+            ) : (
+              <span class={styles.ViewerStoryFooterIcon}>
+                {channelViews()}
+              </span>
+            )}
+          </div>
+          <div class={styles.ViewerStoryFooterRight}>
+            {/* * a story shown as a note is not shared either (Android) */}
+            {canShareStory() && !mediaUnsupported() && (
+              <A11yButton
+                as="span"
+                ref={footerShareButton}
+                aria-label={I18n.format('Forward', true)}
+                class={classNames(styles.ViewerStoryFooterIcon, styles.ViewerStoryFooterReaction)}
+                onClick={(e) => {
+                  onShareButtonClick(e, footerShareButton);
+                }}
+              >
+                {Icon('forward', styles.ViewerStoryFooterIconIcon)}
+                {/* * how many times it was shared, with the button that shares it (iOS, Android) */}
+                {footerCount(storyViews()?.forwards_count)}
+              </A11yButton>
+            )}
+            <A11yButton
+              as="span"
+              aria-label={I18n.format('Reactions', true)}
+              aria-pressed={!!(currentStory() as StoryItem.storyItem).sent_reaction}
+              ref={likeButton.bind}
+              class={classNames(styles.ViewerStoryFooterIcon, styles.ViewerStoryFooterReaction)}
+              onClick={() => likeButton.toggle(footerReactionIcon)}
+            >
+              <span ref={footerReactionIcon} class={styles.ViewerStoryFooterReactionIcon}>{reaction()}</span>
+              {/* * counted for a channel's or a group's story, not for a person's */}
+              {!props.state.peerId.isUser() && footerCount(reactionsCount())}
+            </A11yButton>
+          </div>
+        </>
+      ) : i18n('StoryCantReply'))}
+    </div>
+  );
+
+  // * my footer end
+
+  createEffect(
+    on(
+      () => [isActive(), currentStory()],
+      () => {
+        if(liteMode.isAvailable('motion')) {
+          return;
+        }
+
+        untrack(() => {
+          onTransitionStart();
+          onTransitionEnd();
+        });
+      }
+    )
+  );
+
+  // createEffect(() => {
+  //   if(stories.peer && !liteMode.isAvailable('animations')) {
+  //     untrack(() => {
+  //       onTransitionStart();
+  //       onTransitionEnd();
+  //     });
+  //   }
+  // });
+
+  const onProfileClick = (e: MouseEvent) => {
+    // * I'm handling it elsewhere
+    if(findUpClassName(e.target, styles.ViewerStoryHeaderRepost)) {
+      return;
+    }
+
+    // * the author's name opens the author, the rest of it the group (Android)
+    openPeer(findUpClassName(e.target, styles.ViewerStoryHeaderAuthor) && author() ?
+      author().peerId :
+      props.state.peerId);
+  };
+
+  const openPeer = (peerId: PeerId) => {
+    props.close(() => {
+      hotReloadGuard.appImManager.setInnerPeer({peerId});
+    });
+  };
+
+  const diffToActive = createMemo(() => {
+    return props.index() - props.peers.indexOf(stories.peer);
+  });
+
+  // * a set further on in the list turns in from the inline end: from the left in RTL
+  const fromLeft = createMemo<boolean>((prev) => {
+    return sliding() ? prev : (I18n.isRTL() ? diffToActive() > 0 : diffToActive() < 0);
+  });
+
+  const fromRight = createMemo<boolean>((prev) => {
+    return sliding() ? prev : (I18n.isRTL() ? diffToActive() < 0 : diffToActive() > 0);
+  });
+
+  const [fadeIn, setFadeIn] = createSignal(false);
+
+  const shouldShow = createMemo((/* prev */) => {
+    const diff = Math.abs(diffToActive());
+    let shouldBeVisible: boolean;
+    if(/* props.isFull() &&  */!stories.hasViewer) {
+      shouldBeVisible = diff === 0;
+
+      if(!props.isFull() && diff <= STORIES_PRESERVE) {
+        shouldAddTranslateX = false;
+      }
+    } else {
+      shouldBeVisible = diff <= STORIES_PRESERVE;
+    }
+
+    // if(!shouldBeVisible && prev) {
+    //   return sliding();
+    // }
+
+    return shouldBeVisible;
+  });
+
+  createEffect<boolean>((prev) => {
+    if(!shouldShow()) {
+      // if(prev) {
+      setFadeIn(true);
+      // }
+
+      return true;
+    } else if(prev) {
+      setFadeIn(true);
+
+      doubleRaf().then(() => {
+        setFadeIn(false);
+      });
+
+      return true;
+    }
+  });
+
+  // * where the story stands while held: its clock is stopped there
+  const seekProgress = () => stories.storyDuration ? clamp(stories.elapsedTimeOnPause / stories.storyDuration, 0, 1) : 0;
+
+  let div: HTMLDivElement, storyDiv: HTMLDivElement, headerDiv: HTMLDivElement;
+  const ret = (
+    <div
+      ref={div}
+      class={styles.ViewerStoryContainer}
+      role={!isActive() ? 'button' : undefined}
+      tabindex={Modes.a11y && !isActive() ? 0 : undefined}
+      aria-label={!isActive() ? I18n.format('OpenStory', true) : undefined}
+      onKeyDown={!isActive() ? buttonKeyDown : undefined}
+      classList={{
+        ...(props.isFull() ? {
+          [styles.fromLeft]: fromLeft(),
+          [styles.current]: isActive(),
+          [styles.fromRight]: fromRight()
+        } : {
+          [styles.small]: !isActive()
+        }),
+        [styles.hold]: stories.hideInterface && isActive(),
+        [styles.focused]: focused(),
+        [styles.fadeIn]: fadeIn()
+      }}
+      style={!props.isFull() && {
+        '--translateX': calculateTranslateX()
+      }}
+      onClick={(e) => {
+        if(!isActive()) {
+          actions.set({peer: props.state, index: props.state.index});
+        } else if(
+          findUpClassName(e.target, styles.ViewerStoryRepost) ||
+          findUpClassName(e.target, styles.ViewerStoryHeaderRepost)
+        ) {
+          const story = currentStory();
+          const repostInfo = getStoryRepostInfo(story as StoryItem.storyItem);
+          if(!repostInfo) {
+            toastNew({
+              langPackKey: 'HidAccount'
+            });
+            return;
+          }
+
+          const {fwdFrom, mediaAreaChannelPost} = repostInfo;
+          if(fwdFrom?.from || mediaAreaChannelPost) {
+            e.stopPropagation();
+            const managers = bindManagersToSession(rootScope.managers);
+            props.close(async() => {
+              const peerId = fwdFrom ? getPeerId(fwdFrom.from) : mediaAreaChannelPost.channel_id.toPeerId(true);
+              if(fwdFrom?.story_id && !findUpClassName(e.target, styles.ViewerStoryHeaderRepost)) {
+                createStoriesViewerWithPeer({
+                  peerId,
+                  id: fwdFrom.story_id
+                });
+              } else {
+                // * the post by the client's id of it, not the server's: given the server's, the chat stopped
+                // * at the nearest post and said the one asked for did not exist
+                const lastMsgId = mediaAreaChannelPost && await managers.appMessagesIdsManager.generateMessageId(
+                  mediaAreaChannelPost.msg_id,
+                  peerId.toChatId()
+                );
+                hotReloadGuard.appImManager.setInnerPeer({peerId, lastMsgId});
+              }
+            });
+          }
+        } else if(
+          captionScrollable.scrollTop &&
+          !findUpAsChild(e.target, captionText) &&
+          !findUpClassName(e.target, styles.ViewerStoryHeader)
+        ) {
+          scrollPath(-captionScrollable.scrollTop);
+        } else if(
+          !stories.paused &&
+          !stories.hideInterface &&
+          !findUpAsChild(e.target, captionText) &&
+          !findUpClassName(e.target, styles.ViewerStoryHeader) &&
+          !findUpClassName(e.target, 'stories-input') &&
+          !findUpClassName(e.target, styles.ViewerStoryReactions) &&
+          findUpClassName(e.target, styles.ViewerStory)
+        ) {
+          const rect = div.getBoundingClientRect();
+          // * the first third from the inline start goes back: the right one in RTL
+          const x = I18n.getIsRTL() ? rect.right - e.clientX : e.clientX - rect.left;
+          const next = x > rect.width / 3;
+          actions.goToNearestStorySafe(next);
+        }
+      }}
+      onTransitionStart={onTransitionStart}
+      onTransitionEnd={onTransitionEnd}
+    >
+      <div ref={storyDiv} class={styles.ViewerStory}>
+        {/* fades out with the media fading in, rather than going in one frame */}
+        <Transition name="fade-2">
+          {loading() && isActive() && <div class={classNames(styles.ViewerStoryShimmer, 'shimmer')} />}
+        </Transition>
+        <div class={styles.ViewerStoryContent}>
+          {contentItem}
+        </div>
+        <div class={styles.hideOnSmall}>
+          <div class={classNames(styles.ViewerStoryShadow, (caption() || music()) && styles.hasCaption)}></div>
+          <div class={styles.ViewerStorySlides}>
+            {slides}
+          </div>
+          <div ref={headerDiv} class={classNames(styles.ViewerStoryHeader, 'night')}>
+            <A11yButton class={styles.ViewerStoryHeaderLeft} onClick={onProfileClick}>
+              {avatar.element}
+              <div class={styles.ViewerStoryHeaderInfo}>
+                <div class={styles.ViewerStoryHeaderRow}>
+                  {peerTitleElement}
+                  {props.splitByDays && (
+                    <span class={styles.ViewerStoryHeaderSecondary}>
+                      {`${JOINER}${props.state.index + 1}/${props.state.stories.length}`}
+                    </span>
+                  )}
+                </div>
+                <div
+                  class={classNames(
+                    // styles.ViewerStoryHeaderRow,
+                    repost() || author() ? styles.hasRepost : styles.ViewerStoryHeaderSecondary,
+                    styles.ViewerStoryHeaderTime
+                  )}
+                >
+                  {getDateText()}
+                </div>
+              </div>
+            </A11yButton>
+            {/* * the author's name inside the header's button opens the author by pointer only; from the
+              keyboard it is a control of its own, as the viewer's other ones for the keyboard */}
+            {Modes.a11y && author() && (
+              <button type="button" class="sr-only sr-only-focusable" onClick={() => openPeer(author().peerId)}>
+                {author().name}
+              </button>
+            )}
+            <div class={styles.ViewerStoryHeaderRight}>
+              {privacyType() && privacyIcon}
+              <ButtonIconTsx
+                icon={stories.paused && !stories.playAfterGesture ? 'play_filled' : 'pause_filled'}
+                onClick={() => actions.toggle()}
+                aria-label={I18n.format(stories.paused && !stories.playAfterGesture ? 'Play' : 'Pause', true)}
+              />
+              {videoDuration() && muteButton}
+              {/* <ButtonIconTsx icon={'more'} /> */}
+              {btnMenu}
+              {props.isFull() && (
+                <ButtonIconTsx
+                  icon={'close'}
+                  onClick={() => props.close()}
+                  aria-label={I18n.format('Close', true)}
+                />
+              )}
+            </div>
+          </div>
+          {(caption() || repost()) && captionContainer}
+          {/* outside the caption's scroller so a long caption can't push it out of sight; the
+            caption reserves the room for it instead. keyed: the panel binds its menu to one
+            element, so a different track has to rebuild it */}
+          <Show keyed when={music()}>
+            {(doc) => <StoryMusicPanel doc={doc} menuOptions={topMenuOptions} />}
+          </Show>
+          {reactionsMenu()?.menu.widthContainer}
+        </div>
+        {/* held and dragged along, the story's own line stands alone, as a video's seek bar: it is not
+          mirrored (playback runs left to right), and holding hides the rest of the interface */}
+        <Transition name="fade-2">
+          {isActive() && stories.seeking && (
+            <div class={styles.ViewerStorySeek}>
+              <div class={styles.ViewerStorySeekBar} dir="ltr">
+                <div class={styles.ViewerStorySeekBarFill} style={{transform: `scaleX(${seekProgress()})`}} />
+              </div>
+              <div class={styles.ViewerStorySeekHint}>{i18n('Story.SlideToSeek')}</div>
+            </div>
+          )}
+        </Transition>
+        {/* Media areas are part of the story, not of the interface drawn over it — holding to
+          pause fades the interface away and has to leave them where they are (iOS keeps them in
+          the content view for the same reason), so they live outside `hideOnSmall`. */}
+        {mediaAreas() && (
+          <div
+            class={styles.ViewerStoryMediaAreas}
+            style={captionOpacity() && {'opacity': 1 - captionOpacity() * 0.5, 'z-index': 0}}
+          >
+            {mediaAreas()}
+          </div>
+        )}
+        {!props.isFull() && (
+          <div class={styles.ViewerStoryInfo}>
+            {avatarInfo.node}
+            {peerTitleInfoElement}
+          </div>
+        )}
+      </div>
+      <Show when={canReply()} fallback={replyMode() && footer()}>
+        {storyInput()}
+      </Show>
+      {/* <MessageInputField /> */}
+    </div>
+  );
+
+  const muteTooltipOptions: Parameters<typeof showTooltip>[0] = {
+    container: headerDiv,
+    element: muteButtonButton,
+    vertical: 'bottom',
+    paddingX: 13
+  };
+
+  return (
+    <Show when={shouldShow()}>
+      {ret}
+    </Show>
+  );
+}
+
+export default function StoriesViewer(props: {
+  onExit?: () => void,
+  target?: Accessor<Element>,
+  splitByDays?: boolean,
+  pinned?: boolean
+}) {
+  const [stories, actions] = useStories();
+  const [show, setShow] = createSignal(false);
+  const previouslyFocused = getOverlayRoot().ownerDocument.activeElement as HTMLElement;
+  let focusTrap: FocusTrap;
+  const isFull = createMemo(() => {
+    return windowSize.height > windowSize.width ||
+      windowSize.width < (stories.width + 135 + 8 * 2) ||
+      stories.width === windowSize.width;
+  });
+  const wasShown = createMemo((shown) => shown || show());
+
+  // * fix `ended` property
+  actions.viewerReady(false);
+
+  const CANCELABLE_KEYS: Set<string> = new Set([
+    'ArrowRight',
+    'ArrowLeft',
+    'ArrowDown',
+    'Space'
+  ]);
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    if(Modes.a11y && shouldPreserveKeyboardFocus(e)) return;
+    if(isTargetAnInput(getAppWindow().document.activeElement as HTMLElement)) {
+      throttledKeyDown.clear();
+      return;
+    }
+
+    const activeStoryContainer = getActiveStoryContainer();
+    if(animating || !!activeStoryContainer.querySelector('.is-recording')) {
+      throttledKeyDown.clear();
+      cancelEvent(e);
+      return;
+    }
+
+    if(CANCELABLE_KEYS.has(e.key) || CANCELABLE_KEYS.has(e.code)) {
+      cancelEvent(e);
+    } else if(!keepsKeyFromComposer(e)) {
+      const input = activeStoryContainer.querySelector<HTMLElement>('.input-message-input');
+      if(
+        input &&
+        !IS_TOUCH_SUPPORTED &&
+        input.isContentEditable &&
+        overlayCounter.overlaysActive === overlaysActive
+      ) {
+        focusInput(input, e);
+      }
+    }
+
+    if(e.key === 'ArrowDown') {
+      throttledKeyDown.clear();
+      close();
+      return;
+    }
+
+    throttledKeyDown(e);
+  };
+
+  const throttledKeyDown = throttle((e: KeyboardEvent) => {
+    const inlineKeys = getInlineArrowKeys();
+    if(e.key === inlineKeys.next) {
+      actions.goToNearestStorySafe(true);
+    } else if(e.key === inlineKeys.previous) {
+      actions.goToNearestStorySafe(false);
+    } else if(e.code === 'Space') {
+      actions.toggle();
+    }
+  }, 200, true);
+
+  // Follow the active window so the stories keyboard handler keeps firing when the overlay
+  // moves into a Document PiP window.
+  let disposeKeyDownListener: () => void;
+
+  emoticonsDropdown.getElement().classList.add('night');
+  emoticonsDropdown.setTextColor('white');
+
+  onCleanup(() => {
+    disposeKeyDownListener?.();
+    focusTrap?.deactivate();
+    toggleOverlay(false);
+    swipeHandler.removeListeners();
+    appNavigationController.removeItem(navigationItem);
+
+    emoticonsDropdown.getElement().classList.remove('night');
+    emoticonsDropdown.setTextColor();
+    emoticonsDropdown.chatInput = undefined;
+  });
+
+  let closed = false;
+  const close = (callback?: () => void) => {
+    closed = true;
+    callback && runWithOwner(owner, () => {
+      onCleanup(() => {
+        callback();
+      });
+    });
+
+    actions.viewerReady(false);
+    if(dispose) {
+      deferred = deferredPromise();
+      dispatchHeavyAnimationEvent(deferred, 1000);
+      dispose();
+      dispose = undefined;
+    }
+    actions.pause();
+    throttledKeyDown.clear();
+    setShow(false);
+    div.removeEventListener('click', onDivClick, {capture: true});
+  };
+
+  let div: HTMLDivElement, backgroundDiv: HTMLDivElement, closeButton: HTMLButtonElement;
+  let dispose: () => void; // * dispose listeners on close to avoid effects during animation
+  const swipeUpHandlers: Map<StoriesContextPeerState, StorySwipeUp> = new Map();
+  const ret = createRoot((_dispose) => {
+    dispose = _dispose;
+
+    createEffect(() => {
+      if(stories.ended) {
+        close();
+      }
+    });
+
+    const storiesReadiness: Set<PeerId> = new Set();
+    const storiesShouldBeReady: Set<PeerId> = new Set();
+    const perf = performance.now();
+    let wasReady = false;
+
+    const openOnReady = () => {
+      clearTimeout(timeout)
+      // * closed while it waited for its stories: it does not open after all
+      if(closed) return;
+      wasReady = true;
+      runWithOwner(owner, () => {
+        onMount(() => {
+          open();
+        });
+      });
+    };
+
+    const timeout = setTimeout(() => {
+      console.error('stories timeout');
+      stories.peers
+      .filter((peer) => storiesShouldBeReady.has(peer.peerId) && !storiesReadiness.has(peer.peerId))
+      .forEach((peer) => {
+        console.error('stories not ready', peer);
+      });
+      openOnReady();
+    }, 250);
+    onCleanup(() => clearTimeout(timeout));
+
+    const createStories = (peer: StoriesContextPeerState, index: Accessor<number>) => {
+      const onReady = () => {
+        storiesReadiness.add(peer.peerId);
+
+        if(wasReady) {
+          return;
+        }
+
+        // console.log('stories ready', peer.peerId, storiesReadiness.size, performance.now() - perf);
+
+        if(storiesReadiness.size === storiesShouldBeReady.size) {
+          openOnReady();
+        }
+      };
+
+      storiesShouldBeReady.add(peer.peerId);
+
+      const transitionSignal = createSignal(false);
+      const ret = (
+        <Stories
+          state={peer}
+          index={index}
+          splitByDays={props.splitByDays}
+          pinned={props.pinned}
+          onReady={onReady}
+          close={close}
+          peers={itemsToRender()}
+          isFull={isFull}
+          transitionSignal={transitionSignal}
+          swipeUpHandlers={swipeUpHandlers}
+        />
+      );
+
+      const ref = resolveFirst(() => ret);
+      createEffect(() => {
+        const element = ref();
+        if(!element) {
+          return;
+        }
+
+        transitions.set(element, transitionSignal[0]);
+
+        onCleanup(() => {
+          transitions.delete(element);
+        });
+      });
+
+      return ret;
+    };
+
+    const preserve = STORIES_PRESERVE + STORIES_PRESERVE_HIDDEN;
+    const getItemsToRender = (index: number) => stories.peers.slice(Math.max(index - preserve, 0), Math.min(index + preserve + 1, stories.peers.length));
+    const itemsToRender = createMemo(() => getItemsToRender(stories.index));
+    const btnClose = <ButtonIconTsx ref={closeButton} icon={'close'} class={styles.ViewerClose} onClick={() => close()} aria-label={I18n.format('Close', true)} />;
+    const transitions: WeakMap<Element, Accessor<boolean>> = new WeakMap();
+
+    return (
+      <div
+        ref={div}
+        role="dialog"
+        aria-modal="true"
+        aria-label={I18n.format('Stories', true)}
+        class={classNames(
+          styles.Viewer,
+          !show() && styles.isInvisible,
+          isFull() && styles.isFull,
+          stories.hasViewer && styles.isReady
+        )}
+        onClick={(e) => {
+          if(animating) {
+            cancelEvent(e);
+            return;
+          }
+
+          if(e.target === div) {
+            close();
+          }
+        }}
+        style={{
+          '--stories-width': stories.width + 'px',
+          '--stories-height': stories.height + 'px'
+        }}
+      >
+        <div ref={backgroundDiv} class={styles.ViewerBackground} />
+        {!isFull() && btnClose}
+        {/* <For each={stories.peers}>{createStories}</For> */}
+        <TransitionGroup noWait={() => isFull()/*  || !stories.hasViewer */} transitions={transitions}>
+          <For each={itemsToRender()}>{createStories}</For>
+        </TransitionGroup>
+        {Modes.a11y && <>
+          <button type="button" class="sr-only sr-only-focusable" onClick={() => actions.goToNearestStorySafe(false)}>
+            {i18n('KeyboardShortcuts.Action.PreviousStory')}
+          </button>
+          <button type="button" class="sr-only sr-only-focusable" onClick={() => actions.goToNearestStorySafe(true)}>
+            {i18n('KeyboardShortcuts.Action.NextStory')}
+          </button>
+        </>}
+      </div>
+    );
+  });
+
+  // * a video held still for a moment is moved through by dragging along it, the whole of it in 220 px
+  // * (Android) - the finger's own coordinates, as the video is not mirrored. Touch only, as on iOS and
+  // * Android: a mouse holds to pause alone
+  const SEEK_HOLD = 500, SEEK_DISTANCE = 220, SEEK_MOVE_TOLERANCE = 10;
+  let pauseTimeout: number, seekTimeout: number, seekFrom: number;
+  const startSeeking = () => {
+    const progress = actions.getProgress();
+    if(!stories.paused || !stories.hideInterface || progress === undefined || stories.storyDuration === STORY_DURATION) {
+      return;
+    }
+
+    seekFrom = progress;
+    actions.setSeeking(true);
+  };
+
+  // * which way the drag goes, told by its first few pixels: one going up is the story's, never a jump to
+  // * the next set or a close; the story waits meanwhile, its interface in sight, and plays on after it as
+  // * it did before it
+  let swipeAxis: 'up' | 'other', playingBeforeSwipeUp: boolean;
+  const swipeHandler = new SwipeHandler({
+    element: div,
+    onSwipe: (xDiff, yDiff, e) => {
+      if(!(e instanceof TouchEvent)) {
+        return;
+      }
+
+      if(stories.seeking) {
+        actions.seek(seekFrom + xDiff / SEEK_DISTANCE);
+        return false;
+      }
+
+      // * a finger that moves first swipes, as before
+      if(Math.abs(xDiff) > SEEK_MOVE_TOLERANCE || Math.abs(yDiff) > SEEK_MOVE_TOLERANCE) {
+        window.clearTimeout(seekTimeout);
+      }
+
+      if(!swipeAxis && Math.max(Math.abs(xDiff), Math.abs(yDiff)) > 8) {
+        swipeAxis = yDiff < 0 && -yDiff > Math.abs(xDiff) && swipeUpHandlers.has(stories.peer) ? 'up' : 'other';
+        if(swipeAxis === 'up') {
+          window.clearTimeout(pauseTimeout);
+          window.clearTimeout(seekTimeout);
+          playingBeforeSwipeUp = !stories.paused || stories.playAfterGesture;
+          actions.pause();
+        }
+      }
+
+      if(swipeAxis === 'up') {
+        swipeUpHandlers.get(stories.peer)?.move(Math.max(0, -yDiff));
+        return false;
+      }
+
+      const jumpOn = Math.min(125, windowSize.width / 3);
+      const closeOn = Math.min(125, windowSize.height * 0.2);
+      if(yDiff > closeOn) {
+        close();
+        return true;
+      }
+
+      if(Math.abs(xDiff) < jumpOn) {
+        return false;
+      }
+
+      const peerIndex = stories.peers.indexOf(stories.peer);
+      // * a swipe toward the inline start brings the next set: to the right in RTL
+      const neighbourIndex = peerIndex + ((xDiff < 0) !== I18n.getIsRTL() ? 1 : -1);
+      const neighbour = stories.peers[neighbourIndex];
+      if(!neighbour) {
+        close();
+      } else {
+        actions.set({peer: neighbour});
+      }
+
+      return true;
+    },
+    verifyTouchTarget: (e) => {
+      return !findUpClassName(e.target, 'btn-icon') &&
+        !findUpClassName(e.target, 'btn-corner') &&
+        !findUpClassName(e.target, styles.ViewerStoryRepost) &&
+        !findUpClassName(e.target, styles.ViewerStoryMediaArea) &&
+        !findUpClassName(e.target, styles.ViewerStoryPrivacy) &&
+        !findUpClassName(e.target, styles.ViewerStoryCaptionText) &&
+        !findUpClassName(e.target, STORY_MUSIC_PANEL_CLASS) &&
+        !findUpClassName(e.target, styles.ViewerStoryReactions) &&
+        !!findUpClassName(e.target, styles.ViewerStory) &&
+        !findUpClassName(e.target, styles.small) &&
+        !findUpClassName(e.target, styles.focused);
+    },
+    onStart: () => {
+      // if(stories.paused && !stories.hideInterface) {
+      //   return;
+      // }
+
+      pauseTimeout = window.setTimeout(() => {
+        actions.pause(true);
+      }, 200);
+
+      if(IS_TOUCH_SUPPORTED) {
+        seekTimeout = window.setTimeout(startSeeking, SEEK_HOLD);
+      }
+    },
+    onReset: (e) => {
+      window.clearTimeout(pauseTimeout);
+      window.clearTimeout(seekTimeout);
+      if(stories.seeking) {
+        actions.setSeeking(false);
+      }
+
+      const swipedUp = swipeAxis === 'up';
+      swipeAxis = undefined;
+      if(swipedUp) {
+        if(playingBeforeSwipeUp) {
+          actions.play();
+        }
+
+        // * after the story plays on again, so that what the drag opens pauses it for as long as it is open
+        swipeUpHandlers.get(stories.peer)?.end();
+        return;
+      }
+
+      if(!e ||
+        !stories.paused ||
+        findUpClassName(e.target, 'btn-icon') ||
+        findUpClassName(e.target, styles.ViewerStoryPrivacy) ||
+        findUpClassName(e.target, 'btn-corner') ||
+        findUpClassName(e.target, styles.ViewerStoryReactions)) {
+        return;
+      }
+
+      const story = findUpClassName(e.target, styles.ViewerStory);
+      const caption = story?.querySelector('.' + styles.ViewerStoryCaption);
+      if(caption?.scrollTop) {
+        return;
+      }
+
+      if(story && stories.hideInterface) {
+        getAppWindow().document.addEventListener('click', cancelEvent, {capture: true, once: true});
+      }
+
+      const playStories = stories.playAfterGesture || !stories.hideInterface;
+      actions.toggleInterface(false);
+      if(playStories) {
+        actions.play();
+      }
+    }
+  });
+
+  let avatarFrom: ReturnType<typeof AvatarNew>;
+  const open = () => {
+    const target = props.target?.();
+    // * the avatar flies to the header with full animations only, so below them nothing waits for it
+    if(!target || !target.classList.contains('avatar') || !liteMode.isAvailable('motion')) {
+      setShow(true);
+      return;
+    }
+
+    avatarFrom = AvatarNew({
+      size: STORY_HEADER_AVATAR_SIZE,
+      isDialog: false,
+      useCache: false
+    });
+
+    avatarFrom.node.style.cssText = `position: absolute; visibility: hidden; z-index: 1000; transform-origin: top left;`;
+    getOverlayRoot().append(avatarFrom.node);
+
+    if(!untrack(() => show())) {
+      createEffect(() => {
+        if(avatarFrom.ready()) {
+          setShow(true);
+        }
+      });
+    }
+
+    createEffect(() => {
+      const peerId = stories.peer?.peerId;
+      if(!peerId || !avatarFrom) {
+        return;
+      }
+
+      untrack(() => {
+        avatarFrom.render({peerId});
+      });
+    });
+
+    onCleanup(() => {
+      if(!avatarFrom) {
+        return;
+      }
+
+      avatarFrom.node.remove();
+    });
+  };
+
+  const onDivClick = (e: MouseEvent) => {
+    if(animating) {
+      cancelEvent(e);
+    }
+
+    const story = findUpClassName(e.target, styles.ViewerStory);
+    const caption = story?.querySelector('.' + styles.ViewerStoryCaptionText) as HTMLElement;
+    const callback = caption && hotReloadGuard.onMediaCaptionClick(caption, e);
+    if(!callback) {
+      return;
+    }
+
+    // * a hashtag of a story looks for the public stories with it, not for messages
+    const hashtag = findUpClassName(e.target, 'anchor-hashtag') as HTMLAnchorElement;
+    const session = getAccountSession();
+    close(hashtag ? () => openStoriesSearchByHashtag(hashtag, session) : callback);
+    return false;
+  };
+
+  div.addEventListener('click', onDivClick, {capture: true});
+
+  const owner = getOwner();
+
+  const navigationItem: NavigationItem = {
+    type: 'stories',
+    noBlurOnPop: Modes.a11y,
+    onPop: () => {
+      if(animating) {
+        return false;
+      }
+
+      close();
+    },
+    closeOutright: async() => {
+      // * still waiting for its first story: nothing has shown, so nothing has to move away
+      if(!wasShown()) {
+        close();
+        animating = false;
+        props.onExit?.();
+        actions.stop();
+        deferred.resolve();
+        return;
+      }
+
+      while(animating) {
+        await deferred;
+      }
+
+      close();
+      // * and settles once it is gone: its cleanup lets go of what the next account's viewer would hold (the
+      // * emoji panel's input, its night colours) - close() only starts the exit, which resolves this
+      await deferred;
+    }
+  };
+
+  appNavigationController.pushItem(navigationItem);
+
+  const getActiveStoryContainer = (el: Element = div) => {
+    return el.querySelector(`.${styles.ViewerStoryContainer}:not(.${styles.small})`) as HTMLElement;
+  };
+
+  const animate = (el: Element, forwards: boolean, done: () => void) => {
+    const container = getActiveStoryContainer(el);
+    if(!liteMode.isAvailable('animations') || !container) {
+      done();
+      return;
+    }
+
+    const containers = Array.from(el.querySelectorAll(`.${styles.ViewerStoryContainer}`));
+    let needAvatarOpacity: boolean;
+    const dropAvatarFrom = () => {
+      if(avatarFrom) {
+        avatarFrom.node.remove();
+        avatarFrom = undefined;
+      }
+    };
+    const target = untrack(() => {
+      const target = props.target?.();
+      if(!target) {
+        return;
+      }
+
+      // reduced animations: the viewer fades where it stands instead of flying from the avatar
+      if(!liteMode.isAvailable('motion')) {
+        dropAvatarFrom();
+        return;
+      }
+
+      const overflowElement = findUpClassName(target, 'scrollable');
+      if(!overflowElement) {
+        return target;
+      }
+
+      const visibleRect = getVisibleRect(target as HTMLElement, overflowElement);
+      if(!visibleRect) {
+        dropAvatarFrom();
+        return;
+      }
+
+      if(avatarFrom && (visibleRect.overflow.horizontal || visibleRect.overflow.vertical)) {
+        needAvatarOpacity = true;
+      }
+
+      return target;
+    });
+    const rectFrom = target && (target.querySelector('.avatar') || target).getBoundingClientRect();
+    const rectTo = container.getBoundingClientRect();
+    const borderRadius = avatarFrom ? '50%' : window.getComputedStyle(container).borderRadius;
+
+    // ! manually reverse the keyframes because Safari treats `direction: reverse` with lags
+    const makeKeyframes = (keyframes: Keyframe[]) => {
+      if(!forwards) {
+        keyframes.reverse();
+      }
+
+      return keyframes;
+    };
+
+    const options: KeyframeAnimationOptions = {
+      duration: 250,
+      easing: 'cubic-bezier(0.4, 0.0, 0.6, 1)'
+      // direction: forwards ? 'normal' : 'reverse'
+    };
+
+    // * animate avatar movement
+    let avatarAnimation: Animation, avatar: HTMLElement;
+    if(avatarFrom) {
+      avatar = container.querySelector<HTMLElement>(`.${styles.ViewerStoryHeaderAvatar}`);
+      avatar.style.visibility = 'hidden';
+      // const rectFrom = props.target.querySelector('.avatar').getBoundingClientRect();
+      const rectTo = avatar.getBoundingClientRect();
+      avatarFrom.node.style.top = `${rectFrom.top}px`;
+      avatarFrom.node.style.left = `${rectFrom.left}px`;
+      avatarFrom.node.style.visibility = '';
+      if(!avatarFrom.node.parentElement) {
+        getOverlayRoot().append(avatarFrom.node);
+      }
+      const translateX = rectTo.left - rectFrom.left;
+      const translateY = rectTo.top - rectFrom.top;
+
+      const keyframes: Keyframe[] = makeKeyframes([{
+        transform: `translate(0, 0) scale(${rectFrom.width / STORY_HEADER_AVATAR_SIZE})`
+      }, {
+        transform: `translate(${translateX}px, ${translateY}px) scale(1)`
+      }]);
+
+      if(needAvatarOpacity) {
+        keyframes[0].opacity = 0;
+        keyframes[1].opacity = 1;
+      }
+
+      avatarAnimation = avatarFrom.node.animate(keyframes, options);
+    }
+
+    const setOverflow = (overflow: boolean) => {
+      // container.style.overflow = overflow ? 'visible' : '';
+    };
+
+    if(!forwards) {
+      setOverflow(false);
+    }
+
+    // * animate main container
+    const translateX = rectFrom && rectFrom.left - (windowSize.width / 2) + rectFrom.width / 2;
+    const translateY = rectFrom && rectFrom.top - (windowSize.height / 2) + rectFrom.height / 2;
+    const containerAnimation = rectFrom && container.animate(makeKeyframes([{
+      borderRadius,
+      transform: `translate3d(${translateX}px, ${translateY}px, 0) scale3d(${rectFrom.width / rectTo.width}, ${rectFrom.height / rectTo.height}, 1)`,
+      opacity: 0
+    }, {
+      opacity: 1,
+      offset: 0.3
+    }, {
+      borderRadius: '0%',
+      transform: `translate3d(0, 0, 0) scale3d(1, 1, 1)`
+    }]), options);
+
+    // * animate simple opacity
+    const opacityAnimations = (containerAnimation ?
+      [backgroundDiv, !isFull() && closeButton].filter(Boolean) :
+      [container, el]
+    ).map((element) => {
+      return element.animate(makeKeyframes([{opacity: 0}, {opacity: 1}]), options);
+    });
+
+    // * animate small containers
+    const activeIndex = containers.indexOf(container);
+    containers.splice(activeIndex, 1);
+    const before = containers.slice(0, activeIndex);
+    const after = containers.slice(activeIndex);
+    const animateSmallContainers = (containers: Element[], next: boolean) => {
+      if(!rectFrom) {
+        return containers.map((container) => {
+          return container.animate(makeKeyframes([{opacity: 0}, {opacity: 1}]), options);
+        });
+      }
+
+      return containers.map((container, idx, arr) => {
+        const offsetX = (next ? idx + 1 : (arr.length - idx)) * 60 * (next ? -1 : 1) * (I18n.getIsRTL() ? -1 : 1);
+        return container.animate(makeKeyframes([{
+          transform: `translate3d(calc(var(--translateX) + ${offsetX}px), 0, 0) scale3d(${STORY_SCALE_SMALL / 2}, ${STORY_SCALE_SMALL / 2}, 1)`,
+          opacity: 0.001 // fix lag with fractal opacity so element should be prepared for animation
+        }, {
+          opacity: 0.001,
+          offset: 0.5
+        }, {
+          transform: `translate3d(var(--translateX), 0, 0) scale3d(${STORY_SCALE_SMALL}, ${STORY_SCALE_SMALL}, 1)`,
+          opacity: 1
+        }]), options);
+      })
+    };
+
+    const animations = [
+      ...opacityAnimations,
+      containerAnimation,
+      avatarAnimation,
+      ...animateSmallContainers(before, false),
+      ...animateSmallContainers(after, true)
+    ];
+
+    const promises = animations.map((animation) => animation?.finished);
+    return Promise.all(promises).then(() => {
+      if(avatarFrom) {
+        avatarFrom.node.remove();
+        avatar.style.visibility = '';
+      }
+
+      if(forwards) {
+        setOverflow(true);
+      }
+
+      done();
+    });
+  };
+
+  let overlaysActive: number;
+  // * taken as it shows: one closed before it ever showed gives back nothing
+  let holdsOverlay = false;
+  const toggleOverlay = (active: boolean) => {
+    if(holdsOverlay === active) {
+      return;
+    }
+
+    holdsOverlay = active;
+    actions.toggleSorting('viewer', active);
+    overlayCounter.isDarkOverlayActive = active;
+    animationIntersector.checkAnimations2(active);
+
+    if(active) {
+      overlaysActive = overlayCounter.overlaysActive;
+    }
+  };
+
+  const listenerSetter = createListenerSetter();
+  let wasPlayingBeforeIdle: boolean;
+  listenerSetter.add(idleController)('change', (idle) => {
+    if(idle) {
+      wasPlayingBeforeIdle = !stories.paused;
+      actions.pause();
+      x.open();
+      return;
+    }
+
+    const onMouseDown = () => {
+      clearTimeout(timeout);
+    };
+
+    document.body.addEventListener('mousedown', onMouseDown, {once: true});
+    const timeout = setTimeout(() => {
+      document.body.removeEventListener('mousedown', onMouseDown);
+      x.close();
+    }, 100);
+
+    if(wasPlayingBeforeIdle) {
+      actions.play();
+    }
+  });
+
+  // * what opens over the viewer holds the story, and it plays on, if it played, once nothing is over it
+  listenerSetter.add(overlayCounter)('change', () => {
+    actions.setCovered(overlayCounter.overlaysActive > overlaysActive);
+  });
+
+  let deferred: CancellablePromise<void> = deferredPromise<void>();
+
+  let animating = true;
+  return (
+    <Show when={wasShown()} fallback={ret}>
+      <Transition
+        onEnter={(el, done) => {
+          dispatchHeavyAnimationEvent(deferred, 1000);
+          disposeKeyDownListener = bindActiveWindowListener((w) => w.document.body, 'keydown', onKeyDown);
+          toggleOverlay(true);
+          animate(el, true, done);
+        }}
+        onAfterEnter={() => {
+          animating = false;
+          focusTrap = createFocusTrap(div);
+          // land on the dialog, not on its first button: that one is Close, and Space — the
+          // pause key — would press it
+          focusTrap.activate(previouslyFocused, div);
+          actions.viewerReady(true);
+          deferred.resolve();
+          // play();
+        }}
+        onExit={(el, done) => {
+          focusTrap?.deactivate();
+          animating = true;
+          actions.viewerReady(false);
+          animate(el, false, done);
+        }}
+        onAfterExit={() => {
+          animating = false;
+          props.onExit?.();
+          actions.stop();
+          deferred.resolve();
+        }}
+        appear
+      >
+        {show() && ret}
+      </Transition>
+    </Show>
+  );
+}
+
+export const createStoriesViewerWithProvider = (
+  viewerProps: Parameters<typeof StoriesViewer>[0],
+  providerProps: Parameters<typeof StoriesProvider>[0]
+): JSX.Element => {
+  return createRoot((dispose) => {
+    const savedOnExit = viewerProps.onExit;
+    viewerProps.onExit = () => {
+      dispose();
+      savedOnExit?.();
+    };
+    return (
+      <StoriesProvider {...providerProps}>
+        {createStoriesViewer(viewerProps)}
+      </StoriesProvider>
+    );
+  });
+};
+
+export const createStoriesViewer = (
+  props: Parameters<typeof StoriesViewer>[0] & Parameters<typeof StoriesProvider>[0]
+): JSX.Element => {
+  if(props.peers && !props.onExit) {
+    return createRoot((dispose) => {
+      props.onExit = () => dispose();
+      return (
+        <StoriesProvider peers={props.peers} index={props.index}>
+          {createStoriesViewer(props)}
+        </StoriesProvider>
+      );
+    });
+  }
+
+  // * over what stands open, a popup it is opened from (a profile's shared media) included: last in
+  // * the page, as the media viewer comes, and under the popups it opens itself
+  const mount = getAppWindow().document.getElementById('stories-viewer');
+  if(mount.nextElementSibling) {
+    mount.parentElement.append(mount);
+  }
+
+  return (
+    <Portal mount={mount}>
+      <StoriesViewer {...props} />
+    </Portal>
+  );
+};
+
+export const createStoriesViewerWithStory = (
+  props: Omit<Parameters<typeof createStoriesViewer>[0], 'peers' | 'index'> & {
+    peerId: PeerId,
+    storyItem: StoryItem
+  }
+) => {
+  const [, rest] = splitProps(props, ['peerId', 'storyItem']);
+  return createStoriesViewer({
+    ...rest,
+    peers: [{
+      peerId: props.peerId,
+      stories: [props.storyItem],
+      index: 0,
+      count: 1
+    }],
+    index: 0
+  });
+};
+
+export const createStoriesViewerWithPeer = async(
+  props: Omit<Parameters<typeof createStoriesViewer>[0], 'peers' | 'index'> & {
+    peerId: PeerId,
+    id?: number,
+  }
+): Promise<void> => {
+  const managers = bindManagersToSession(rootScope.managers);
+  const [, rest] = splitProps(props, ['peerId', 'id']);
+  const peerStories = await managers.appStoriesManager.getPeerStories(props.peerId);
+  const storyIndex = props.id ? peerStories.stories.findIndex((story) => story.id === props.id) : undefined;
+  if(props.id) {
+    const storyItem = await managers.appStoriesManager.getStoryById(props.peerId, props.id);
+    if(!storyItem) {
+      toastNew({langPackKey: 'Story.ExpiredToast'});
+      return;
+    }
+    // if(storyItem) { // own story can be missed in PeerStories
+    //   return createStoriesViewerWithPeer(props);
+    // }
+
+    createStoriesViewerWithStory({
+      ...rest,
+      peerId: props.peerId,
+      storyItem,
+      singleStory: true
+    });
+    return;
+  }
+
+  createStoriesViewer({
+    ...rest,
+    peers: [{
+      peerId: props.peerId,
+      stories: peerStories.stories,
+      maxReadId: peerStories.max_read_id,
+      index: storyIndex,
+      count: peerStories.stories.length
+    }],
+    index: 0
+  });
+};
+
+// export const openStories = (target?: Parameters<typeof StoriesViewer>[0]['target'], onExit?: () => void) => {
+//   const dispose = render(
+//     () => (
+//       <StoriesProvider stories={[]}>
+//         <StoriesViewer onExit={() => {dispose(); onExit?.();}} target={target} />
+//       </StoriesProvider>
+//     ),
+//     document.getElementById('stories-viewer')
+//   );
+// };

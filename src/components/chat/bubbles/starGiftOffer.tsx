@@ -1,0 +1,138 @@
+import {Match, Switch} from 'solid-js';
+import {I18nTsx} from '@helpers/solid/i18n';
+import {Message, MessageAction, StarGift} from '@layer';
+
+
+import {MyStarGift} from '@appManagers/appGiftsManager';
+import I18n, {i18n} from '@lib/langPack';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import Modes from '@config/modes';
+import tsNow from '@helpers/tsNow';
+import {wrapFormattedDuration} from '@components/wrappers/wrapDuration';
+import formatDuration, {DurationType} from '@helpers/formatDuration';
+import {createCurrentTime} from '@helpers/solid/createCurrentTime';
+
+import styles from '@components/chat/bubbles/starGiftOffer.module.scss';
+import {StarGiftPreview} from '@components/stargifts/starGiftPreview';
+import Icon from '@components/icon';
+import ReplyMarkupLayout from '@components/chat/bubbleParts/replyMarkupLayout';
+import Chat from '@components/chat/chat';
+import confirmationPopup from '@components/confirmationPopup';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import rootScope from '@lib/rootScope';
+import {transferStarGiftConfirmationPopup} from '@components/popups/transferStarGift';
+import showStarGiftInfoPopup from '../../popups/starGiftInfo';
+import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
+
+function wrapExpiresIn(duration: number) {
+  const formatted = formatDuration(duration, 2);
+  if(formatted[0].type <= DurationType.Minutes) {
+    formatted.splice(1, Infinity);
+  }
+  return wrapFormattedDuration(formatted);
+}
+
+export function StarGiftOfferBubble(props: {
+  gift: MyStarGift
+  title: HTMLElement
+  outgoing: boolean
+  action: MessageAction.messageActionStarGiftPurchaseOffer
+  modifyBubble?: (callback: VoidFunction) => void
+}) {
+  const now = createCurrentTime({
+    fn: () => tsNow(true),
+    updateWrapper: props.modifyBubble
+  });
+  const expired = () => props.action.expires_at < now();
+
+  return (
+    <div
+      class={/* @once */ styles.wrap}
+      role="button"
+      tabindex={Modes.a11y ? 0 : undefined}
+      aria-label={I18n.format('ActionGiftPremiumView', true)}
+      onClick={() => {
+        showStarGiftInfoPopup({gift: props.gift})
+      }}
+      onKeyDown={buttonKeyDown}
+    >
+      <StarGiftPreview
+        gift={props.gift}
+        class={/* @once */ styles.giftWrap}
+        canvasClass={/* @once */ styles.giftBackdropCanvas}
+        stickerSize={48}
+      />
+
+      <div class={/* @once */ styles.title}>
+        {props.title}
+      </div>
+
+      <Switch>
+        <Match when={props.action.pFlags.accepted}>
+          <I18nTsx class={/* @once */ styles.status} key="StarGiftOffer.Accepted" />
+        </Match>
+        <Match when={props.action.pFlags.declined}>
+          <I18nTsx class={/* @once */ styles.status} key="StarGiftOffer.Rejected" />
+        </Match>
+        <Match when={!expired()}>
+          <I18nTsx
+            class={/* @once */ styles.status}
+            key="StarGiftOffer.ExpiresIn"
+            args={[wrapExpiresIn(props.action.expires_at - now())]}
+          />
+        </Match>
+        <Match when={expired()}>
+          <I18nTsx class={/* @once */ styles.status} key="StarGiftOffer.Expired" />
+        </Match>
+      </Switch>
+    </div>
+  )
+}
+
+export function showStarGiftOfferButtons(act: MessageAction.messageActionStarGiftPurchaseOffer) {
+  return !act.pFlags.accepted && !act.pFlags.declined && act.expires_at > tsNow(true);
+}
+
+export function StarGiftOfferReplyMarkup(props: {
+  gift: MyStarGift,
+  message: Message.messageService,
+  chat: Chat
+}) {
+  const onRejectClick = async() => {
+    const managers = bindManagersToSession(rootScope.managers);
+    await confirmationPopup({
+      titleLangKey: 'StarGiftOffer.RejectOfferTitle',
+      descriptionLangKey: 'StarGiftOffer.RejectOfferText',
+      descriptionLangArgs: [await wrapPeerTitle({peerId: props.message.peerId})],
+      button: {
+        langKey: 'StarGiftOffer.Reject',
+        isDanger: true
+      }
+    });
+
+    await managers.appGiftsManager.resolveGiftOffer(props.message.id, 'reject');
+  };
+  const onAcceptClick = () => {
+    transferStarGiftConfirmationPopup({
+      gift: props.gift,
+      recipient: props.message.peerId,
+      fromOffer: props.message.action as MessageAction.messageActionStarGiftPurchaseOffer,
+      handleSubmit: async() => {
+        await rootScope.managers.appGiftsManager.resolveGiftOffer(props.message.id, 'accept');
+      }
+    });
+  };
+
+  return (
+    <ReplyMarkupLayout>
+      <ReplyMarkupLayout.Row>
+        <ReplyMarkupLayout.Button textClass="reply-markup-suggested-action" onClick={onRejectClick}>
+          {Icon('crossround_filled')}{/* @once */i18n('StarGiftOffer.Reject')}
+        </ReplyMarkupLayout.Button>
+        <ReplyMarkupLayout.Button textClass="reply-markup-suggested-action" onClick={onAcceptClick}>
+          {Icon('checkround_filled')}{/* @once */i18n('StarGiftOffer.Accept')}
+        </ReplyMarkupLayout.Button>
+      </ReplyMarkupLayout.Row>
+    </ReplyMarkupLayout>
+  );
+}

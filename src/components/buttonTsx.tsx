@@ -1,0 +1,149 @@
+import {Accessor, createMemo, createSignal, JSX, Ref, Setter, splitProps} from 'solid-js';
+import {FormatterArguments, i18n, LangPackKey} from '@lib/langPack';
+import {IconTsx} from '@components/iconTsx';
+import classNames from '@helpers/string/classNames';
+import RippleElement from '@components/rippleElement';
+import iconButtonLabel from '@helpers/dom/iconButtonLabel';
+import Modes from '@config/modes';
+import {I18nTsx} from '@helpers/solid/i18n';
+
+type ButtonAccessibilityProps = Pick<JSX.ButtonHTMLAttributes<HTMLButtonElement>,
+  | 'aria-hidden'
+  | 'aria-label'
+  | 'aria-pressed'
+  | 'aria-expanded'
+  | 'aria-controls'
+  // Native, non-delegated listeners. Needed wherever an ancestor cancels the
+  // event before it reaches the document listener Solid delegates from — a row
+  // inside `AppSelectPeers`, say (appSelectPeers.ts:420).
+  | 'on:click'
+  | 'on:keydown'
+>;
+
+const Button = (props: Partial<{
+  ref: Ref<HTMLElement>,
+  as: 'a' | 'div' | 'button',
+  class: string,
+  disabled: boolean,
+  primaryFilled: boolean,
+  primary: boolean,
+  primaryTransparent: boolean,
+  large: boolean,
+  children: JSX.Element,
+  icon: Icon,
+  iconAfter: Icon,
+  iconClass: string,
+  onClick: (e: MouseEvent) => any,
+  text: LangPackKey,
+  textArgs: FormatterArguments,
+  noRipple: boolean,
+  rippleSquare: boolean,
+  onlyMobile: boolean,
+  tabIndex: number
+}> & ButtonAccessibilityProps = {}): JSX.Element => {
+  let disabled: Accessor<boolean>, setDisabled: Setter<boolean>;
+  if(props.disabled !== undefined) {
+    disabled = createMemo(() => props.disabled);
+  } else {
+    [disabled, setDisabled] = createSignal(false);
+  }
+
+  return (
+    <RippleElement
+      ref={props.ref as Ref<any>}
+      component={props.as || 'button'}
+      type={!props.as || props.as === 'button' ? 'button' : undefined}
+      class={classNames(
+        props.class,
+        props.primaryFilled && 'btn-primary btn-color-primary',
+        props.primary && 'btn btn-primary primary',
+        props.primaryTransparent && 'btn-primary primary btn-transparent',
+        props.large && 'btn-large',
+        props.onlyMobile && 'only-handhelds'
+      )}
+      disabled={disabled()}
+      onClick={props.onClick && setDisabled ? ((e: any) => {
+        try {
+          const result = props.onClick(e);
+          if(result instanceof Promise) {
+            setDisabled(true);
+            result.finally(() => {
+              setDisabled(false);
+            });
+          }
+        } catch(err) {
+          throw err;
+        }
+      }) : props.onClick}
+      noRipple={props.noRipple}
+      rippleSquare={props.rippleSquare}
+      tabIndex={props.tabIndex}
+      aria-hidden={props['aria-hidden']}
+      aria-label={props['aria-label']}
+      aria-pressed={props['aria-pressed']}
+      aria-expanded={props['aria-expanded']}
+      aria-controls={props['aria-controls']}
+      on:click={props['on:click']}
+      on:keydown={props['on:keydown']}
+    >
+      {props.icon && <IconTsx icon={props.icon} class={classNames('button-icon', props.iconClass)} />}
+      {props.text ? i18n(props.text, props.textArgs) : props.children}
+      {props.iconAfter && <IconTsx icon={props.iconAfter} class={classNames('button-icon', props.iconClass)} />}
+    </RippleElement>
+  );
+};
+
+Button.Corner = (props: Partial<{
+  ref: Ref<HTMLElement>,
+  children: JSX.Element,
+  onClick: (e: MouseEvent) => void,
+  class: string,
+  icon: Icon,
+  disabled: boolean,
+  tabIndex: number
+}> & ButtonAccessibilityProps) => {
+  return (
+    <Button
+      {...props}
+      class={classNames('btn-circle', 'btn-corner', 'z-depth-1', props.class)}
+      tabIndex={props.tabIndex ?? (Modes.a11y ? undefined : -1)}
+    />
+  );
+};
+
+Button.Icon = (props: {icon: Icon} & Partial<{
+  ref: Ref<HTMLElement>,
+  children: JSX.Element,
+  onClick: (e: MouseEvent) => void,
+  class: string,
+  disabled: boolean,
+  noRipple: boolean,
+  tabIndex: number
+}> & ButtonAccessibilityProps) => {
+  return (
+    <Button
+      {...props}
+      class={classNames('btn-icon', props.icon, props.class)}
+      aria-label={props['aria-label'] || iconButtonLabel(props.icon)}
+      tabIndex={props.tabIndex ?? (Modes.a11y ? undefined : -1)}
+    />
+  );
+};
+
+// * an icon over a short label, one of a row of equal buttons: the actions in a profile's header or
+// * a gift's, as iOS has them. The row gives them their colours
+Button.Tile = (props: {icon: Icon, text: LangPackKey} & Partial<{
+  ref: Ref<HTMLElement>,
+  onClick: (e: MouseEvent) => any,
+  class: string,
+  noRipple: boolean
+}> & ButtonAccessibilityProps) => {
+  const [local, others] = splitProps(props, ['text', 'class']);
+  return (
+    <Button {...others} class={classNames('btn-tile', local.class)}>
+      <I18nTsx key={local.text} class="btn-tile-text" />
+    </Button>
+  );
+};
+
+export default Button;

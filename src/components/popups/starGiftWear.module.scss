@@ -1,0 +1,59 @@
+.popup {
+  --popup-width: 26.25rem;
+  :global {
+    .popup-header {
+      margin: 0;
+    }
+
+    .popup-body {
+      padding: 1rem;
+    }
+
+    .profile-name {
+      display: flex;
+      align-items: center;
+    }
+  }
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: -1rem;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  padding-inline: 1rem;
+  padding-bottom: 1rem;
+  width: 100%;
+  height: 15rem
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+}
+
+.close {
+  color: #fff;
+}
+
+.avatar {
+  width: 120px;
+  height: 120px;
+  position: relative;
+  margin-top: 1.625rem;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  padding-top: 1rem;
+  padding-inline: 1rem;
+}
+

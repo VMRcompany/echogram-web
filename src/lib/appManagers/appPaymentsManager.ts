@@ -1,0 +1,465 @@
+import {
+  HelpPremiumPromo,
+  InputInvoice,
+  InputPaymentCredentials,
+  InputPeer,
+  InputStorePaymentPurpose,
+  PaymentRequestedInfo,
+  PaymentsPaymentForm,
+  PaymentsPaymentResult,
+  PaymentsStarsStatus,
+  StarsAmount,
+  Update
+} from '@layer';
+import {AppManager} from '@appManagers/manager';
+import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
+import isEphemeralMessageId from '@appManagers/utils/messageId/isEphemeralMessageId';
+import formatStarsAmount from '@appManagers/utils/payments/formatStarsAmount';
+import {getStarsTransactionMessagePeerId} from '@appManagers/utils/payments/starsTransaction';
+import toJSONValue from '@appManagers/utils/toJSONValue';
+import forEachReverse from '@helpers/array/forEachReverse';
+import makeError from '@helpers/makeError';
+import noop from '@helpers/noop';
+import forgetFailedRequest from '@helpers/forgetFailedRequest';
+import tsNow from '@helpers/tsNow';
+
+export default class AppPaymentsManager extends AppManager {
+  private premiumPromo: MaybePromise<HelpPremiumPromo>;
+  private starsStatus: MaybePromise<PaymentsStarsStatus>;
+  private starsStatusTon: MaybePromise<PaymentsStarsStatus>;
+
+  protected after() {
+    // * reset premium promo
+    this.rootScope.addEventListener('premium_toggle', () => {
+      this.getPremiumPromo(true);
+    });
+
+    this.apiUpdatesManager.addMultipleEventsListeners({
+      updateStarsBalance: this.onUpdateStarsBalance
+    });
+  }
+
+  public getInputInvoiceBySlug(slug: string): InputInvoice.inputInvoiceSlug {
+    return {
+      _: 'inputInvoiceSlug',
+      slug
+    };
+  }
+
+  public getInputInvoiceByPeerId(peerId: PeerId, mid: number): InputInvoice.inputInvoiceMessage {
+    if(isEphemeralMessageId(mid)) {
+      throw makeError('MESSAGE_ID_INVALID');
+    }
+
+    return {
+      _: 'inputInvoiceMessage',
+      peer: this.appPeersManager.getInputPeerById(peerId),
+      msg_id: getServerMessageId(mid)
+    };
+  }
+
+  /** What the server knows of a bank card number in a message: its issuer and where to look it up. */
+  public getBankCardData(number: string) {
+    return this.apiManager.invokeApiSingle('payments.getBankCardData', {number});
+  }
+
+  public getPaymentForm(invoice: InputInvoice) {
+    return this.apiManager.invokeApi('payments.getPaymentForm', {
+      invoice,
+      theme_params: this.apiManager.getThemeParams()
+    }).then((paymentForm) => {
+      if(paymentForm._ !== 'payments.paymentFormStarGift') {
+        this.appPeersManager.saveApiPeers(paymentForm);
+        paymentForm.photo = this.appWebDocsManager.saveWebDocument(paymentForm.photo);
+      }
+
+      return paymentForm;
+    });
+  }
+
+  public getPaymentReceipt(peerId: PeerId, mid: number) {
+    if(isEphemeralMessageId(mid)) {
+      return Promise.reject(makeError('MESSAGE_ID_INVALID'));
+    }
+
+    return this.apiManager.invokeApi('payments.getPaymentReceipt', {
+      peer: this.appPeersManager.getInputPeerById(peerId),
+      msg_id: getServerMessageId(mid)
+    }).then((paymentForm) => {
+      this.appPeersManager.saveApiPeers(paymentForm);
+      paymentForm.photo = this.appWebDocsManager.saveWebDocument(paymentForm.photo);
+
+      return paymentForm;
+    });
+  }
+
+  public validateRequestedInfo(invoice: InputInvoice, info: PaymentRequestedInfo, save?: boolean) {
+    return this.apiManager.invokeApi('payments.validateRequestedInfo', {
+      save,
+      invoice,
+      info
+    });
+  }
+
+  public sendPaymentForm(
+    invoice: InputInvoice,
+    formId: PaymentsPaymentForm['form_id'],
+    requestedInfoId: string,
+    shippingOptionId: string,
+    credentials: InputPaymentCredentials,
+    tipAmount?: number
+  ) {
+    return this.apiManager.invokeApi('payments.sendPaymentForm', {
+      form_id: formId,
+      invoice,
+      requested_info_id: requestedInfoId,
+      shipping_option_id: shippingOptionId,
+      credentials,
+      tip_amount: tipAmount || undefined
+    }).then(this.processPaymentResult);
+  }
+
+  public clearSavedInfo(info?: boolean, credentials?: boolean) {
+    return this.apiManager.invokeApi('payments.clearSavedInfo', {
+      info,
+      credentials
+    });
+  }
+
+  public getPremiumGiftCodeOptions(peerId?: PeerId) {
+    return this.apiManager.invokeApiCacheable('payments.getPremiumGiftCodeOptions', {
+      boost_peer: peerId !== undefined ? this.appPeersManager.getInputPeerById(peerId) : undefined
+    });
+  }
+
+  public getPremiumPromo(overwrite?: boolean) {
+    if(overwrite && this.premiumPromo) {
+      this.premiumPromo = undefined;
+    }
+
+    return this.premiumPromo ??= forgetFailedRequest(this.apiManager.invokeApiSingleProcess({
+      method: 'help.getPremiumPromo',
+      params: {},
+      processResult: (helpPremiumPromo) => {
+        this.appPeersManager.saveApiPeers(helpPremiumPromo);
+        helpPremiumPromo.videos = helpPremiumPromo.videos.map((doc) => {
+          return this.appDocsManager.saveDoc(doc, {type: 'premiumPromo'});
+        });
+
+        return this.premiumPromo = helpPremiumPromo;
+      }
+    }), () => this.premiumPromo, () => this.premiumPromo = undefined);
+  }
+
+  /**
+   * The Premium offer came up. `source` says where from — a link's `ref`, the feature it opened
+   * on, or `settings` — and travels with the order of features the server asked for.
+   */
+  public async reportPremiumPromoShown(source: string) {
+    const appConfig = await this.apiManager.getAppConfig();
+    return this.saveAppLog('premium.promo_screen_show', {
+      premium_promo_order: appConfig.premium_promo_order || [],
+      source
+    });
+  }
+
+  /** The subscribe button of the Premium offer was pressed. */
+  public reportPremiumPromoAccepted() {
+    return this.saveAppLog('premium.promo_screen_accept', null);
+  }
+
+  // * statistics: nobody waits for it, and a failure is not the user's business
+  private saveAppLog(type: string, data: any) {
+    return this.apiManager.invokeApi('help.saveAppLog', {
+      events: [{
+        _: 'inputAppEvent',
+        time: tsNow() / 1000 + this.timeManager.getServerTimeOffset(),
+        type,
+        peer: 0,
+        data: toJSONValue(data)
+      }]
+    }, {ignoreErrors: true}).catch(noop);
+  }
+
+  public checkGiftCode(slug: string) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'payments.checkGiftCode',
+      params: {slug},
+      processResult: (checkedGiftCode) => {
+        this.appPeersManager.saveApiPeers(checkedGiftCode);
+        checkedGiftCode.slug = slug;
+
+        if(checkedGiftCode.giveaway_msg_id) {
+          const fromPeerId = checkedGiftCode.from_id && this.appPeersManager.getPeerId(checkedGiftCode.from_id);
+          checkedGiftCode.giveaway_msg_id = this.appMessagesIdsManager.generateMessageId(
+            checkedGiftCode.giveaway_msg_id,
+            !fromPeerId || fromPeerId.isUser() ? undefined : fromPeerId.toChatId()
+          );
+        }
+
+        return checkedGiftCode;
+      }
+    });
+  }
+
+  public applyGiftCode(slug: string) {
+    // return Promise.reject({type: 'PREMIUM_SUB_ACTIVE_UNTIL_1703345751'});
+
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'payments.applyGiftCode',
+      params: {slug},
+      processResult: (updates) => {
+        this.apiUpdatesManager.processUpdateMessage(updates);
+      }
+    });
+  }
+
+  public getGiveawayInfo(peerId: PeerId, mid: number) {
+    if(isEphemeralMessageId(mid)) {
+      return Promise.reject(makeError('MESSAGE_ID_INVALID'));
+    }
+
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'payments.getGiveawayInfo',
+      params: {
+        peer: this.appPeersManager.getInputPeerById(peerId),
+        msg_id: getServerMessageId(mid)
+      }
+    });
+  }
+
+  public launchPrepaidGiveaway(peerId: PeerId, id: Long, purpose: InputStorePaymentPurpose) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'payments.launchPrepaidGiveaway',
+      params: {
+        peer: this.appPeersManager.getInputPeerById(peerId),
+        giveaway_id: id,
+        purpose
+      },
+      processResult: (updates) => {
+        this.apiUpdatesManager.processUpdateMessage(updates);
+      }
+    });
+  }
+
+  public getStarsTopupOptions() {
+    return this.apiManager.invokeApi('payments.getStarsTopupOptions');
+  }
+
+  private saveStarsStatus = (starsStatus: PaymentsStarsStatus, ownerPeerId = this.rootScope.myId) => {
+    this.appPeersManager.saveApiPeers(starsStatus);
+
+    starsStatus.history?.forEach((transaction) => {
+      const transactionPeerId = transaction.peer._ === 'starsTransactionPeer' ?
+        this.appPeersManager.getPeerId(transaction.peer.peer) : undefined;
+      const peerId = getStarsTransactionMessagePeerId(transaction, ownerPeerId, this.rootScope.myId);
+      if(transaction.msg_id && peerId) {
+        transaction.msg_id = this.appMessagesIdsManager.generateMessageId(
+          transaction.msg_id,
+          this.appPeersManager.isChannel(peerId) ? peerId.toChatId() : undefined
+        );
+      }
+
+      if(transaction.giveaway_post_id && transactionPeerId) {
+        transaction.giveaway_post_id = this.appMessagesIdsManager.generateMessageId(
+          transaction.giveaway_post_id,
+          this.appPeersManager.isChannel(transactionPeerId) ? transactionPeerId.toChatId() : undefined
+        );
+      }
+
+      if(transaction.stargift) {
+        const gift = this.appGiftsManager.wrapGift(transaction.stargift);
+        if(transaction.stargift._ === 'starGift') transaction.stargift.sticker = gift.sticker;
+      }
+
+      if(transaction.extended_media) {
+        forEachReverse(transaction.extended_media, (messageMedia, idx, media) => {
+          const m = {media: messageMedia};
+          this.appMessagesManager.saveMessageMedia(
+            m,
+            'media',
+            {type: 'starsTransaction', peerId, mid: transaction.msg_id}
+          );
+
+          if(m.media) {
+            media[idx] = m.media;
+          } else {
+            media.splice(idx, 1);
+          }
+        });
+      }
+    });
+
+    return starsStatus;
+  };
+
+  /**
+   * The stars ledger is always read as its owner, and our own `User` is not in the cache until
+   * the server has sent it — on a cold session it is not there at all. Name ourselves with
+   * `inputPeerSelf`, which needs no `access_hash`, instead of going through the user cache
+   * (tdesktop does the same: `_peer->isSelf() ? MTP_inputPeerSelf() : _peer->input()`).
+   */
+  private getStarsOwnerInputPeer(peerId?: PeerId): InputPeer {
+    // * resolved in the body, not as a parameter default - the bundler has been caught binding
+    // * a default to an unrelated symbol (see scripts/check-bundle-mangling.mjs)
+    if(peerId === undefined || peerId === this.rootScope.myId) {
+      return {_: 'inputPeerSelf'};
+    }
+
+    return this.appPeersManager.getInputPeerById(peerId);
+  }
+
+  public getCachedStarsStatus() {
+    if(this.starsStatus instanceof Promise) return;
+    return this.starsStatus;
+  }
+
+  public getStarsStatus(overwrite?: boolean) {
+    return this.loadStarsStatus('starsStatus', overwrite);
+  }
+
+  public getStarsStatusTon(overwrite?: boolean) {
+    return this.loadStarsStatus('starsStatusTon', overwrite);
+  }
+
+  private loadStarsStatus(key: 'starsStatus' | 'starsStatusTon', overwrite?: boolean) {
+    if(overwrite) {
+      this[key] = undefined;
+    }
+
+    if(this[key]) {
+      return this[key];
+    }
+
+    // a request that failed is not the balance: the next one asks again
+    return this[key] = forgetFailedRequest(this.apiManager.invokeApiSingleProcess({
+      method: 'payments.getStarsStatus',
+      params: {
+        peer: this.getStarsOwnerInputPeer(),
+        ton: key === 'starsStatusTon' || undefined
+      },
+      processResult: (starsStatus) => {
+        return this[key] = this.saveStarsStatus(starsStatus);
+      }
+    }), () => this[key], () => this[key] = undefined);
+  }
+
+  public getPeerStarsStatus(peerId: PeerId, ton?: boolean) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'payments.getStarsStatus',
+      params: {
+        peer: this.getStarsOwnerInputPeer(peerId),
+        ton
+      },
+      processResult: (starsStatus) => this.saveStarsStatus(starsStatus, peerId)
+    });
+  }
+
+  public getStarsTransactions(offset: string = '', inbound?: boolean, ton?: boolean, peerId = this.rootScope.myId) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'payments.getStarsTransactions',
+      params: {
+        peer: this.getStarsOwnerInputPeer(peerId),
+        offset,
+        inbound,
+        outbound: inbound === false,
+        limit: 30,
+        ton
+      },
+      processResult: (starsStatus) => this.saveStarsStatus(starsStatus, peerId)
+    });
+  }
+
+  public getStarsSubscriptions(offset?: string, missingBalance?: boolean) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'payments.getStarsSubscriptions',
+      params: {
+        peer: this.getStarsOwnerInputPeer(),
+        offset,
+        missing_balance: missingBalance
+      },
+      processResult: this.saveStarsStatus
+    });
+  }
+
+  public changeStarsSubscription(subscriptionId: string, canceled: boolean) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'payments.changeStarsSubscription',
+      params: {
+        subscription_id: subscriptionId,
+        peer: this.getStarsOwnerInputPeer(),
+        canceled
+      }
+    });
+  }
+
+  public fulfillStarsSubscription(subscriptionId: string) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'payments.fulfillStarsSubscription',
+      params: {
+        subscription_id: subscriptionId,
+        peer: this.getStarsOwnerInputPeer()
+      }
+    });
+  }
+
+  public sendStarsForm(
+    invoice: InputInvoice,
+    formId: PaymentsPaymentForm['form_id']
+  ) {
+    return this.apiManager.invokeApi('payments.sendStarsForm', {
+      form_id: formId,
+      invoice
+    }).then(this.processPaymentResult);
+  }
+
+  public getStarsTransactionsByID(transactionId: string, ton?: boolean, refund?: boolean, peerId = this.rootScope.myId) {
+    if(!transactionId) return;
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'payments.getStarsTransactionsByID',
+      params: {
+        peer: this.getStarsOwnerInputPeer(peerId),
+        ton,
+        id: [{_: 'inputStarsTransaction', pFlags: {refund: refund || undefined}, id: transactionId}]
+      },
+      processResult: (starsStatus) => this.saveStarsStatus(starsStatus, peerId).history?.[0]
+    });
+  }
+
+  public getStarsGiftOptions(userId: UserId) {
+    return this.apiManager.invokeApi('payments.getStarsGiftOptions', {user_id: this.appUsersManager.getUserInput(userId)});
+  }
+
+  public getStarsGiveawayOptions() {
+    return this.apiManager.invokeApi('payments.getStarsGiveawayOptions');
+  }
+
+  private processPaymentResult = (result: PaymentsPaymentResult) => {
+    if(result._ === 'payments.paymentResult') {
+      this.apiUpdatesManager.processUpdateMessage(result.updates);
+    }
+
+    return result;
+  };
+
+  public updateLocalStarsBalance(balance: StarsAmount, fulfilledReservedStars?: number) {
+    const ton = balance._ === 'starsTonAmount';
+    const starsStatus = balance._ === 'starsTonAmount' ? this.starsStatusTon : this.starsStatus;
+
+    (starsStatus as PaymentsStarsStatus).balance = balance;
+    this.rootScope.dispatchEvent('stars_balance', {
+      balance: formatStarsAmount(balance),
+      ton
+    });
+  }
+
+  private onUpdateStarsBalance = (update: Update.updateStarsBalance) => {
+    const isTon = update.balance._ === 'starsTonAmount';
+    const starsStatus = isTon ? this.starsStatusTon : this.starsStatus;
+    if(!starsStatus || starsStatus instanceof Promise) {
+      return;
+    }
+
+    this.updateLocalStarsBalance(update.balance);
+  };
+}

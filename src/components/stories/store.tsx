@@ -1,0 +1,1354 @@
+import type {StoriesListPosition, StoriesListType} from '@appManagers/appStoriesManager';
+import {createEffect, on, createMemo, batch, onCleanup, createContext, ParentComponent, useContext} from 'solid-js';
+import {createStore, reconcile} from 'solid-js/store';
+import mediaSizes from '@helpers/mediaSizes';
+import clamp from '@helpers/number/clamp';
+import windowSize from '@helpers/windowSize';
+import {StoryItem, PeerStories, StoryAlbum, StoriesStealthMode, MediaArea} from '@layer';
+import StoriesCacheType from '@appManagers/utils/stories/cacheType';
+import insertStory from '@appManagers/utils/stories/insertStory';
+import rootScope, {BroadcastEvents} from '@lib/rootScope';
+import createListenerSetter from '../../helpers/solid/createListenerSetter';
+import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
+import {AnyFunction} from '@types';
+import findAndSplice from '@helpers/array/findAndSplice';
+import putInOrder from '@helpers/array/putInOrder';
+import forEachReverse from '@helpers/array/forEachReverse';
+import getPeerId from '@appManagers/utils/peers/getPeerId';
+import AppStoriesManager from '@appManagers/appStoriesManager';
+import untrackActions from '@helpers/solid/untrackActions';
+import {hotListen} from '@helpers/hotModule';
+
+/** how long a story without a video stays on screen */
+export const STORY_DURATION = 5e3;
+const SEARCH_PAGE_LIMIT = 30;
+
+export type NextPrevStory = () => void;
+export type ChangeStoryParams = {
+  peer: StoriesContextPeerState;
+  index?: number;
+};
+
+export type StoriesContextPeerState = {
+  peerId: PeerId,
+  stories: Array<StoryItem>,
+  albums?: Array<StoryAlbum>,
+  maxReadId?: number,
+  index?: number,
+  count: number
+};
+
+export type StoriesSortingFreezeType = 'list' | 'viewer';
+
+/** public stories with a hashtag (of one peer's with `peerId`), or from the place of a location area */
+export type StoriesSearch = {
+  hashtag?: string,
+  area?: MediaArea,
+  peerId?: PeerId
+};
+
+export type StoriesContextState = {
+  index: number,
+  paused: boolean,
+  ended: boolean,
+  muted: boolean,
+  loop: boolean,
+  buffering: boolean,
+  hideInterface: boolean,
+  playAfterGesture: boolean,
+  ready: boolean,
+  hasViewer: boolean,
+  startTime: number,
+  elapsedTime: number,
+  elapsedTimeOnPause: number,
+  storyDuration: number,
+  width: number,
+  height: number,
+  pinned: boolean,
+  archive: boolean,
+  stealthMode: StoriesStealthMode,
+  peers: StoriesContextPeerState[],
+  peer: StoriesContextPeerState,
+  getNearestStory: (next: boolean, loop?: boolean, offsetIndex?: number, offsetPeer?: StoriesContextPeerState, offsetStoryIndex?: number) => ChangeStoryParams,
+  getNearestStories: (next: boolean, count: number, loop?: boolean) => ChangeStoryParams[],
+  albumId: number | undefined,
+  loaded: boolean,
+  canEdit: boolean,
+  /** how many stories a search found: the server's count while there are more pages */
+  foundCount: number,
+  // * how fast the videos play: one speed for the whole viewer, as on iOS
+  playbackRate: number,
+  // * held and dragged along to move through the video (touch only)
+  seeking: boolean
+};
+
+export type StoriesContextActions = {
+  play: (storyDuration?: number) => void,
+  pause: (hideInterface?: boolean) => void,
+  toggle: (play?: boolean) => void,
+  stop: () => void,
+  restart: () => void,
+  previous: NextPrevStory,
+  next: NextPrevStory,
+  goToNearestStorySafe: (next: boolean) => void,
+  goToNearestStory: (next: boolean) => void,
+  set: (story: ChangeStoryParams) => void,
+  viewerReady: (ready: boolean) => void,
+  resetIndexes: () => void,
+  toggleMute: () => void,
+  toggleInterface: (hide: boolean) => void,
+  setCovered: (covered: boolean) => void,
+  toggleSorting: (type: StoriesSortingFreezeType, freeze: boolean) => void,
+  load: () => Promise<boolean>,
+  setBuffering: (owner: object, buffering: boolean) => void,
+  setLoop: (loop: boolean) => void,
+  setAlbumId: (albumId: number | undefined) => void,
+  setPlaybackRate: (playbackRate: number) => void,
+  setSeeking: (seeking: boolean) => void,
+  seek: (progress: number) => void,
+  setStoryDuration: (storyDuration: number) => void,
+  getProgress: () => number | undefined,
+  handleSwipe: (xDiff: number, setAlbumOverride?: (albumId: number | undefined) => void) => boolean,
+  /**
+   * Shows a list's stories or albums in the order they were dragged into, in the same task as the
+   * drop - the managers answer with the very same order a moment later
+   */
+  reorder: (order: {stories?: number[], albums?: number[]}) => void
+};
+
+export type StoriesContextValue = [
+  state: StoriesContextState,
+  actions: StoriesContextActions
+];
+
+type AlbumCacheItem = {
+  stories: StoryItem[],
+  loaded: boolean,
+  count: number
+};
+
+const createPositions = (positions: Map<PeerId, StoriesListPosition> = new Map()) => {
+  // const [positions, setPositions] = createStore({} as {[peerId: PeerId]: StoriesListPosition});
+  const onPosition = ({peerId, position}: BroadcastEvents['stories_position']) => {
+    if(!position) {
+      positions.delete(peerId);
+      // setPositions(peerId, reconcile(position));
+    } else {
+      positions.set(peerId, position);
+      // setPositions(peerId,  position);
+    }
+  };
+
+  return {positions, onPosition};
+};
+
+const {positions: globalPositions, onPosition} = createPositions();
+hotListen(import.meta.hot, rootScope, 'stories_position', onPosition);
+
+/**
+ * `stories_position` only fires when a position CHANGES, so a tab that attached to an
+ * already-running shared worker (a reload, a second tab) never learns the positions computed
+ * before it — every peer would then fall back to the sort key below and land in arrival order,
+ * with "My Story" wherever the server happened to put it. Read the worker's snapshot once, and
+ * never over an event that already came in: that one is newer than the snapshot.
+ */
+let globalPositionsPromise: Promise<void>;
+const loadGlobalPositions = () => globalPositionsPromise ??= rootScope.managers.appStoriesManager.getListPositions()
+.then((positions) => {
+  for(const peerId in positions) {
+    const id = +peerId as PeerId;
+    if(!globalPositions.has(id)) {
+      onPosition({peerId: id, position: positions[id]});
+    }
+  }
+}, () => {
+  globalPositionsPromise = undefined; // a failed read must not leave the list sorted by the fallback forever
+});
+
+// * another account has another list of stories: its positions are read anew
+hotListen(import.meta.hot, rootScope, 'account_switched', () => {
+  globalPositions.clear();
+  globalPositionsPromise = undefined;
+});
+
+export const createStoriesStore = (props: {
+  peers?: StoriesContextPeerState[],
+  index?: number,
+  peerId?: PeerId,
+  needUpdates?: boolean,
+  pinned?: boolean,
+  archive?: boolean,
+  manualLoad?: boolean,
+  onLoad?: (fullLoad: boolean) => void,
+  initialAlbumId?: number,
+  singleStory?: boolean,
+  /** the found stories, in the order found: a peer once for each story */
+  search?: StoriesSearch
+}): StoriesContextValue => {
+  const getNearestStory = (
+    next: boolean,
+    loop?: boolean,
+    _offsetIndex?: number,
+    _offsetPeer?: StoriesContextPeerState,
+    _offsetStoryIndex?: number
+  ): ChangeStoryParams => {
+    // * these are resolved in the body, not as parameter defaults: the production minifier
+    // * binds a closure variable read from a parameter default to the wrong symbol
+    const offsetIndex = _offsetIndex ?? state.index;
+    const offsetPeer = _offsetPeer ?? state.peers[offsetIndex];
+    const offsetStoryIndex = _offsetStoryIndex ?? offsetPeer?.index;
+
+    if(!offsetPeer) { // * the index doesn't address a peer (an empty or a rebuilt list)
+      return;
+    }
+
+    const offset = next ? 1 : -1;
+    const newStoryIndex = offsetStoryIndex + offset;
+    const isPeerEnd = next ? newStoryIndex >= offsetPeer.stories.length : newStoryIndex < 0;
+    const isLastPeer = next ? offsetIndex >= (state.peers.length - 1) : offsetIndex <= 0;
+    if(!isPeerEnd) {
+      return {
+        peer: offsetPeer,
+        index: newStoryIndex
+      };
+    } else if(!isLastPeer) {
+      const newPeer = state.peers[offsetIndex + offset];
+      return {
+        peer: newPeer,
+        index: newPeer.index
+      };
+    } else if(loop) {
+      const newPeer = state.peers[next ? 0 : state.peers.length - 1];
+      return {
+        peer: newPeer,
+        index: newPeer.index
+      };
+    }
+  };
+
+  const getNearestStories = (next: boolean, count: number, loop?: boolean): ChangeStoryParams[] => {
+    let nearestStory: ChangeStoryParams | undefined;
+    const out: ChangeStoryParams[] = [];
+    for(let i = 0; i < count; ++i) {
+      nearestStory = state.getNearestStory(
+        next,
+        loop,
+        nearestStory?.peer ? state.peers.indexOf(nearestStory.peer) : undefined,
+        undefined,
+        // * walk on from the story just reached — the stored index doesn't move, so without this
+        // * every iteration would return the very same story
+        nearestStory?.index
+      );
+
+      if(!nearestStory) {
+        break;
+      }
+
+      out.push(nearestStory);
+    }
+
+    return out;
+  };
+
+  const initialState: StoriesContextState = {
+    index: props.index || 0,
+    paused: true,
+    ended: false,
+    muted: true,
+    loop: false,
+    buffering: false,
+    hideInterface: false,
+    playAfterGesture: false,
+    ready: !!props.peers,
+    hasViewer: false,
+    startTime: 0,
+    get elapsedTime() {
+      return state.elapsedTimeOnPause || Date.now() - state.startTime;
+    },
+    elapsedTimeOnPause: 0,
+    storyDuration: 0,
+    width: 0,
+    height: 0,
+    pinned: props.pinned,
+    archive: props.archive,
+    stealthMode: {_: 'storiesStealthMode'},
+    peers: props.peers || [],
+    get peer() {
+      return state.peers[state.index];
+    },
+    getNearestStory,
+    getNearestStories,
+    albumId: props.initialAlbumId as number | undefined,
+    loaded: false,
+    canEdit: false,
+    foundCount: 0,
+    playbackRate: 1,
+    seeking: false
+  };
+
+  let loadState: string;
+  let loadPromise: Promise<boolean>;
+  let changeTimeout: number;
+  // * plain closure state: a `Set` is not wrappable, so keeping it in the store only pretends to be reactive
+  const freezedSorting = new Set<StoriesSortingFreezeType>();
+  const bufferingOwners = new Set<object>();
+  const albumCache = new Map<number | undefined, AlbumCacheItem>();
+  const [state, setState] = createStore(initialState);
+
+  let disposed = false;
+  onCleanup(() => {
+    disposed = true;
+    clearTimeout(changeTimeout);
+  });
+
+  const singlePeerId = props.peerId || (props.peers && props.peers[0].peerId);
+  const currentListType: StoriesListType = props.archive ? 'archive' : 'stories';
+  const {positions, onPosition} = createPositions(new Map(globalPositions));
+  const postponedPositions: Array<BroadcastEvents['stories_position']> = [];
+
+  // This store copied `globalPositions` when it was created, which for the sidebar's list is before
+  // the snapshot above has landed — take whatever it added, still without touching a live event.
+  const syncPositions = () => loadGlobalPositions().then(() => {
+    globalPositions.forEach((position, peerId) => {
+      if(!positions.has(peerId)) {
+        positions.set(peerId, position);
+      }
+    });
+  });
+
+  const getPeerInitialIndex = (peer: StoriesContextPeerState): number => {
+    const maxReadId = peer.maxReadId || 0;
+    const unreadIndex = peer.stories.findIndex((storyItem) => storyItem.id > maxReadId);
+    return Math.max(0, unreadIndex);
+  };
+
+  const checkForNearestSkipped = () => {
+    [
+      ...getNearestStories(true, 3, false),
+      ...getNearestStories(false, 3, false)
+    ].forEach((params) => {
+      const storyItem = params.peer.stories[params.index];
+      if(storyItem?._ === 'storyItemSkipped') {
+        rootScope.managers.appStoriesManager.getStoryById(params.peer.peerId, storyItem.id);
+      }
+    });
+  };
+
+  // * where the next page of found stories starts: what the last page gave, none after the last one
+  let searchOffset = '';
+  const loadFound = (reload: boolean): Promise<boolean> => {
+    if(reload) {
+      searchOffset = '';
+    } else if(state.loaded) {
+      return Promise.resolve(true);
+    }
+
+    return rootScope.managers.appStoriesManager.searchStories({
+      ...props.search,
+      offset: searchOffset,
+      limit: SEARCH_PAGE_LIMIT
+    }).catch((): Awaited<ReturnType<AppStoriesManager['searchStories']>> => ({count: 0, nextOffset: undefined, stories: []}))
+    .then(({count, nextOffset, stories}) => {
+      if(disposed) {
+        return true;
+      }
+
+      searchOffset = nextOffset;
+      const loaded = !nextOffset;
+      const peers = reload ? [] : state.peers.slice();
+      const keys = new Set(peers.map((peer) => `${peer.peerId}_${peer.stories[0].id}`));
+      for(const {peerId, story} of stories) {
+        const key = `${peerId}_${story.id}`;
+        if(!keys.has(key)) { // * a page can repeat a story of the one before
+          keys.add(key);
+          peers.push({peerId, stories: [story], index: 0, count: 1});
+        }
+      }
+
+      setState({
+        peers,
+        ready: true,
+        loaded,
+        foundCount: loaded ? peers.length : Math.max(count, peers.length)
+      });
+
+      props.onLoad?.(loaded);
+      return loaded;
+    });
+  };
+
+  const load = (reload = false) => {
+    if(loadPromise && !reload) return loadPromise;
+    const doLoad = () => {
+      const {peerId, pinned, archive} = props;
+      if(props.search) {
+        return loadFound(reload);
+      }
+
+      if(peerId) {
+        if(pinned || archive) {
+          const {peer} = state;
+          const offsetId = peer?.stories.length && !reload ? peer.stories[peer.stories.length - 1].id : 0;
+          const loadCount = 30;
+          let promise: ReturnType<AppStoriesManager['getPinnedStories']> | ReturnType<AppStoriesManager['getStoriesArchive']> | ReturnType<AppStoriesManager['getAlbumStories']>;
+          let albumsPromise: ReturnType<AppStoriesManager['getAlbums']>;
+          if(state.albumId !== undefined) {
+            promise = rootScope.managers.appStoriesManager.getAlbumStories(peerId, state.albumId, loadCount, offsetId);
+            albumsPromise = !offsetId ? rootScope.managers.appStoriesManager.getAlbums(peerId) : undefined;
+          } else if(pinned) {
+            promise = rootScope.managers.appStoriesManager.getPinnedStories(peerId, loadCount, offsetId);
+            albumsPromise = !offsetId ? rootScope.managers.appStoriesManager.getAlbums(peerId) : undefined;
+          } else {
+            promise = rootScope.managers.appStoriesManager.getStoriesArchive(peerId, loadCount, offsetId);
+          }
+          return Promise.all([promise, albumsPromise]).then(([{count, stories: storyItems}, albums]) => {
+            if(!offsetId && !reload) {
+              const peer: StoriesContextPeerState = {
+                index: 0,
+                peerId,
+                stories: storyItems,
+                count,
+                albums
+              };
+
+              addPeers([peer]);
+              setState({ready: true, loaded: storyItems.length < loadCount});
+            } else {
+              batch(() => {
+                setState('peers', 0, 'stories', offsetId ? (stories) => [...stories, ...storyItems] : storyItems);
+                setState('peers', 0, 'count', count);
+                setState('loaded', storyItems.length < loadCount);
+              })
+            }
+
+            const loaded = state.loaded;
+            props.onLoad?.(loaded);
+            return loaded;
+          });
+        }
+
+        return rootScope.managers.appStoriesManager.getPeerStories(peerId).then((peerStories) => {
+          addPeerStories([peerStories]);
+          setState('loaded', true);
+          props.onLoad?.(true);
+          return true;
+        });
+      }
+
+      // the positions come along for the ride: `addPeerStories` sorts by them, so they have to be
+      // in hand before the first peer is placed, not whenever the worker next happens to move one
+      return Promise.all([
+        rootScope.managers.appStoriesManager.getAllStories(
+          loadState ? true : undefined,
+          loadState,
+          archive
+        ),
+        syncPositions()
+      ]).then(([storiesAllStories]) => {
+        const previousLoadState = loadState;
+        loadState = storiesAllStories.state;
+        // * now that the next page is actually fetched, a server that keeps `has_more` on an
+        // * unchanged state must not spin us on the same page forever
+        const loaded = !storiesAllStories.pFlags.has_more || loadState === previousLoadState;
+        setState('loaded', loaded);
+        addPeerStories(storiesAllStories.peer_stories);
+
+        if(!loaded && !disposed) {
+          // pause(5000).then(load);
+          // * `load()` would hit the in-flight guard below and hand back this very promise — the next
+          // * page has to be forced, otherwise the list silently stops at the first one
+          load(true);
+        }
+
+        props.onLoad?.(loaded);
+        return loaded;
+      });
+    };
+    // * only the latest run may clear the guard: a forced reload starts while this one is still
+    // * settling, and a blind reset would let a third call fire a parallel request
+    const promise = loadPromise = doLoad().finally(() => {
+      if(loadPromise === promise) {
+        loadPromise = undefined;
+      }
+    });
+
+    return promise;
+  };
+
+  // * what stands over the viewer — a popup, the media viewer — holds the story still, and a play asked for under
+  // * it (a popup's own resume as it closes, with the next one already open) waits for it to go: nothing ever plays
+  // * behind what covers it
+  let covered = false, playWhenUncovered = false;
+
+  const actions: StoriesContextActions = {
+    set: (params) => {
+      if(!params) {
+        setState({ended: true});
+        return;
+      }
+
+      // * the caller can hold a peer that's no longer in the list, so fall back to looking it up by id
+      let peerIndex = state.peers.indexOf(params.peer);
+      if(peerIndex === -1) {
+        peerIndex = getPeerIndex(params.peer?.peerId);
+      }
+
+      if(peerIndex === -1) { // * never write a missing peer into `index`: `state.peer` would become undefined
+        return;
+      }
+      // actions.stop(); // ! was working
+
+      if(params.index !== undefined) {
+        setState('peers', peerIndex, 'index', params.index);
+      }
+
+      actions.stop();
+
+      if(state.peer !== params.peer) {
+        setState({index: peerIndex});
+      }
+
+      // actions.stop(); // ! doesn't work when animations are disabled
+
+      // setTimeout(() => {
+      checkForNearestSkipped();
+      // }, 1e3);
+    },
+
+    pause: (hideInterface) => {
+      playWhenUncovered = false;
+      setState({paused: true, playAfterGesture: !!hideInterface && !state.paused});
+      actions.toggleInterface(hideInterface);
+    },
+
+    // * while buffering it is kept to be done: the clock waits for the data either way (on pause or buffering)
+    play: (storyDuration = state.storyDuration) => {
+      if(!state.hasViewer) {
+        return;
+      }
+
+      if(covered) {
+        playWhenUncovered = true;
+        setState({storyDuration});
+        return;
+      }
+
+      setState({paused: false, storyDuration});
+      actions.toggleInterface(false);
+    },
+
+    stop: () => {
+      // clearTimeout(changeTimeout);
+      actions.pause();
+      setState({startTime: 0, elapsedTimeOnPause: 0});
+    },
+
+    restart: () => {
+      bufferingOwners.clear();
+      setState({buffering: false});
+      actions.stop();
+      actions.play();
+    },
+
+    toggle: (play = state.paused) => {
+      if(play) {
+        actions.play();
+      } else {
+        actions.pause();
+      }
+    },
+
+    previous: () => actions.goToNearestStory(false),
+    next: () => actions.goToNearestStory(true),
+    goToNearestStorySafe: (next: boolean) => {
+      if(next) {
+        actions.next();
+        return;
+      }
+
+      const story = state.getNearestStory(next);
+      if(!story || (state.storyDuration !== STORY_DURATION && (state.elapsedTime / state.storyDuration) > 0.5)) {
+        actions.restart();
+      } else {
+        actions.set(story);
+      }
+    },
+    goToNearestStory: (next: boolean) => {
+      const story = state.getNearestStory(next);
+      actions.set(story);
+    },
+
+    viewerReady: (ready) => {
+      setState({hasViewer: ready, ended: false});
+    },
+
+    resetIndexes: () => {
+      setState('peers', {}, (peer) => {
+        return {index: getPeerInitialIndex(peer)};
+      });
+    },
+
+    toggleMute: () => {
+      setState({muted: !state.muted});
+    },
+
+    toggleInterface: (hide) => {
+      setState({hideInterface: hide});
+    },
+
+    setCovered: (_covered) => {
+      if(covered === _covered) {
+        return;
+      }
+
+      if(_covered) {
+        const resume = !state.paused;
+        actions.pause();
+        covered = true;
+        playWhenUncovered = resume;
+        return;
+      }
+
+      covered = false;
+      if(playWhenUncovered) {
+        playWhenUncovered = false;
+        actions.play();
+      }
+    },
+
+    toggleSorting: (type, freeze) => {
+      if(freeze) freezedSorting.add(type);
+      else {
+        freezedSorting.delete(type);
+
+        if(!freezedSorting.size) {
+          postponedPositions.splice(0, Infinity).forEach((data) => onStoriesPosition(data, true));
+        } else if(type === 'viewer') {
+          forEachReverse(postponedPositions, (data, idx) => {
+            if(data.position && data.position.type !== currentListType) {
+              postponedPositions.splice(idx, 1);
+              onStoriesPosition(data, true);
+            }
+          });
+        }
+      }
+    },
+
+    load,
+
+    // * the clock waits while anyone needs data - a video, the other quality's file loading - and each
+    // * takes back only its own: one done never lets the clock run over another still waiting
+    setBuffering: (owner, buffering) => {
+      if(buffering) bufferingOwners.add(owner);
+      else bufferingOwners.delete(owner);
+      if(state.buffering !== !!bufferingOwners.size) {
+        setState({buffering: !!bufferingOwners.size});
+      }
+    },
+
+    setLoop: (loop) => {
+      setState({loop});
+    },
+
+    setAlbumId: (albumId) => {
+      if(state.albumId === albumId) return;
+      // save current album's data to cache
+      const peer = state.peers[0];
+      if(peer?.stories?.length) {
+        albumCache.set(state.albumId, {stories: peer.stories.slice(), loaded: state.loaded, count: peer.count});
+      }
+      // restore from cache if available
+      const cached = albumCache.get(albumId);
+      if(cached) {
+        batch(() => {
+          setState('albumId', albumId);
+          setState('peers', 0, 'stories', cached.stories);
+          setState('peers', 0, 'count', cached.count);
+          setState('loaded', cached.loaded);
+        });
+      } else {
+        batch(() => {
+          setState('albumId', albumId);
+          setState('peers', 0, 'stories', []);
+          setState('loaded', false);
+        });
+        load(true);
+      }
+    },
+
+    setPlaybackRate: (playbackRate) => {
+      setState({playbackRate});
+    },
+
+    setSeeking: (seeking) => {
+      setState({seeking});
+    },
+
+    seek: (progress) => {
+      setPosition(clamp(progress, 0, 1) * state.storyDuration);
+    },
+
+    // * a video played at another speed takes another time: what has gone of it stays gone
+    setStoryDuration: (storyDuration) => {
+      const previous = state.storyDuration;
+      if(!previous || !state.startTime) {
+        setState({storyDuration});
+        return;
+      }
+
+      setPosition(getElapsedTime() / previous * storyDuration, storyDuration);
+    },
+
+    // * how far the story has gone, 0 to 1: none before it started
+    getProgress: () => {
+      return state.startTime && state.storyDuration ? Math.min(1, getElapsedTime() / state.storyDuration) : undefined;
+    },
+
+    handleSwipe: (xDiff: number, setAlbumOverride?: (albumId: number | undefined) => void) => {
+      const albums = state.peers[0]?.albums;
+      if(!albums?.length) return false;
+
+      const direction = xDiff > 0 ? 1 : -1;
+      const currentAlbumId = state.albumId;
+      const currentIndex = currentAlbumId === undefined ? -1 :
+        albums.findIndex((a) => a.album_id === currentAlbumId);
+      const newIndex = currentIndex + direction;
+      if(newIndex < -1 || newIndex >= albums.length) return false;
+
+      const newAlbumId = newIndex === -1 ? undefined : albums[newIndex].album_id;
+      (setAlbumOverride ?? actions.setAlbumId)(newAlbumId);
+      return true;
+    },
+
+    reorder: ({stories, albums}) => {
+      const peer = state.peers[0];
+      if(!peer) {
+        return;
+      }
+
+      batch(() => {
+        if(stories) {
+          setState('peers', 0, 'stories', putInOrder(peer.stories, stories, (story) => story.id));
+        }
+
+        if(albums && peer.albums) {
+          setState('peers', 0, 'albums', putInOrder(peer.albums, albums, (album) => album.album_id));
+        }
+      });
+    }
+  };
+
+  untrackActions(actions);
+
+  const isRunning = () => !state.paused && !state.buffering;
+  const getElapsedTime = () => isRunning() ? Date.now() - state.startTime : state.elapsedTimeOnPause;
+
+  // * puts the story's clock at `elapsed`: a running one goes on from there, a paused one starts from
+  // * there when played
+  const setPosition = (elapsed: number, storyDuration = state.storyDuration) => {
+    if(!state.startTime) { // * not started: there is nothing to move
+      return;
+    }
+
+    batch(() => {
+      setState({storyDuration, elapsedTimeOnPause: elapsed, startTime: Date.now() - elapsed});
+      if(isRunning()) {
+        setChangeTimeout();
+      }
+    });
+  };
+
+  const setChangeTimeout = () => {
+    clearTimeout(changeTimeout);
+    changeTimeout = window.setTimeout(() => {
+      if(state.loop) {
+        actions.restart();
+      } else {
+        actions.next();
+      }
+    }, state.storyDuration - state.elapsedTimeOnPause);
+
+    setState({startTime: Date.now() - state.elapsedTimeOnPause});
+  };
+
+  createEffect( // * on pause or buffering
+    on(
+      createMemo(() => state.paused || state.buffering),
+      (paused) => {
+        if(paused) {
+          clearTimeout(changeTimeout);
+          setState({elapsedTimeOnPause: Date.now() - state.startTime});
+        } else {
+          setChangeTimeout();
+        }
+      },
+      {defer: true}
+    )
+  );
+
+  const listenerSetter = createListenerSetter();
+
+  // * size section
+  const calculateStoryHeight = () => {
+    return windowSize.height - 48 - 8 - 8 * 2 - 8;
+  };
+
+  const calculateStoryWidth = (height = calculateStoryHeight()) => {
+    const ratio = 9 / 16;
+    return Math.min(windowSize.width, height * ratio);
+  };
+
+  const calculateSize = () => {
+    const height = calculateStoryHeight();
+    return {width: calculateStoryWidth(height), height};
+  };
+
+  const onResize = () => {
+    setState(calculateSize());
+  };
+
+  createEffect(onResize);
+  // * size section end
+
+  const getPeerIndex = (peerId: PeerId, peers = state.peers) => {
+    return peers.findIndex((peer) => peer.peerId === peerId);
+  };
+
+  const userStoriesToPeer = (peerStories: PeerStories): StoriesContextPeerState => {
+    const peer: StoriesContextPeerState = {
+      // index: 0,
+      peerId: getPeerId(peerStories.peer),
+      stories: peerStories.stories,
+      maxReadId: peerStories.max_read_id,
+      count: peerStories.stories.length
+    };
+
+    peer.index = getPeerInitialIndex(peer);
+    return peer;
+  };
+
+  const addPeers = (addPeers: StoriesContextPeerState[]) => {
+    const modifyIndexes: {peerId: PeerId; index: number}[] = [];
+    let modifyCurrentIndex = state.index;
+
+    const peers = state.peers.slice();
+    const currentPeerId = state.peer?.peerId;
+    const currentIndex = getPeerIndex(currentPeerId, peers);
+    for(const peer of addPeers) {
+      // const sortIndex = positions.get(peer.peerId).index;
+      // if(!sortIndex) {
+      //   continue;
+      // }
+
+      // * looked up on every iteration: inserting a peer splices `peers`, so positions taken
+      // * before the loop go stale and would overwrite an unrelated peer
+      const previousPeerIdx = getPeerIndex(peer.peerId, peers);
+      const previousPeer = peers[previousPeerIdx];
+      const newIndex = clamp(previousPeer?.index || getPeerInitialIndex(peer), 0, peer.stories.length - 1);
+
+      if(peer.index !== newIndex) {
+        modifyIndexes.push({peerId: peer.peerId, index: newIndex});
+        // peer.index = newIndex;
+      }
+
+      if(previousPeerIdx !== -1) {
+        peers[previousPeerIdx] = peer;
+      }
+
+      insertInDescendSortedArray(peers, peer, (peer) => {
+        const position = positions.get(peer.peerId);
+        // 0 sinks a peer to the bottom of the list. With the positions read up front this only
+        // covers a peer whose story arrived before its position did, and the `stories_position`
+        // that follows puts it back — it must never be how a whole list gets ordered.
+        return position?.index ?? 0;
+      }, previousPeerIdx);
+    }
+
+    if(currentIndex !== -1) {
+      const newCurrentIndex = getPeerIndex(currentPeerId, peers);
+      if(newCurrentIndex !== currentIndex) {
+        modifyCurrentIndex = newCurrentIndex;
+      }
+    }
+
+    batch(() => {
+      setState('peers', reconcile(peers, {key: 'peerId', merge: true}));
+      setState({
+        // peers,
+        // * the current peer can drop out of the list entirely — same invariant as `deletePeer`,
+        // * `index` must never point outside it or `state.peer` reads undefined
+        index: clamp(modifyCurrentIndex, 0, Math.max(peers.length - 1, 0))
+      });
+
+      for(const {peerId, index} of modifyIndexes) {
+        const peerIndex = getPeerIndex(peerId, peers);
+        setState('peers', peerIndex, 'index', index);
+      }
+    });
+  };
+
+  const canAddPeer = (peerId: PeerId) => {
+    if(props.search) { // * the server alone says what was found
+      return false;
+    }
+
+    if(singlePeerId) {
+      return singlePeerId === peerId;
+    }
+
+    const position = positions.get(peerId);
+    if(!position) {
+      return false;
+    }
+
+    return position.type === currentListType;
+  };
+
+  const addPeerStories = (peerStories: PeerStories[]) => {
+    const peers = peerStories.map(userStoriesToPeer);
+    addPeers(peers);
+    setState({ready: true});
+  };
+
+  // The default is resolved in the body, not in the parameter list: the production
+  // minifier has been caught misbinding a parameter referenced from another
+  // parameter's default (see scripts/check-bundle-mangling.mjs, which fails on it).
+  const deletePeer = (peerId: PeerId, peerIndexArg?: number) => {
+    const peerIndex = peerIndexArg ?? getPeerIndex(peerId);
+    if(peerIndex === -1) {
+      return;
+    }
+
+    const isActive = state.index === peerIndex;
+    batch(() => {
+      const newPeers = state.peers.slice();
+      newPeers.splice(peerIndex, 1);
+      const newIndex = state.index > peerIndex ? state.index - 1 : state.index;
+      setState({
+        peers: newPeers,
+        // * always clamped into the list: an index past the end leaves `state.peer` undefined
+        index: clamp(newIndex, 0, Math.max(newPeers.length - 1, 0)),
+        ...(newPeers.length && newIndex < newPeers.length ? {} : {ended: true})
+      });
+
+      if(isActive) {
+        actions.restart();
+      }
+    });
+  };
+
+  // * keeps a peer's `index` on the same story after the list around it shifted. An insert AT the
+  // * current index pushes that story down, a delete AT it does not — the next story takes the slot
+  const shiftStoryIndex = (peerIndex: number, at: number, offset: number) => {
+    const peer = state.peers[peerIndex];
+    const index = peer?.index;
+    if(index === undefined || (offset > 0 ? at > index : at >= index)) {
+      return;
+    }
+
+    setState('peers', peerIndex, 'index', clamp(index + offset, 0, Math.max(peer.stories.length - 1, 0)));
+  };
+
+  const isStoryInAlbum = (story: StoryItem, albumId: number | undefined) => {
+    return albumId === undefined || story._ === 'storyItem' && !!story.albums?.includes(albumId);
+  };
+
+  let snapshotGeneration = 0;
+  const syncManagerSnapshot = (albumId: number | undefined, active: boolean) => {
+    if(singlePeerId === undefined) {
+      return;
+    }
+
+    // * only writes into the store need ordering — cache-only syncs land in their own album entry
+    const generation = active ? ++snapshotGeneration : undefined;
+
+    const promise = albumId === undefined ?
+      rootScope.managers.appStoriesManager.getPinnedStoriesCacheSnapshot(singlePeerId) :
+      rootScope.managers.appStoriesManager.getAlbumStoriesCacheSnapshot(singlePeerId, albumId)
+
+    promise.then((snapshot) => {
+      if(disposed) {
+        return;
+      }
+
+      if(active) {
+        // * a newer sync (or an album switch) started meanwhile — its result is the current one
+        if(generation !== snapshotGeneration || state.albumId !== albumId) {
+          return;
+        }
+
+        const currentStoryId = state.peers[0]?.stories[state.peers[0]?.index || 0]?.id;
+        const preservedIndex = currentStoryId === undefined ? -1 : snapshot.stories.findIndex((story) => story.id === currentStoryId);
+        const nextIndex = preservedIndex !== -1 ?
+          preservedIndex :
+          Math.min(state.peers[0]?.index || 0, Math.max(0, snapshot.stories.length - 1));
+
+        batch(() => {
+          setState('peers', 0, 'stories', reconcile(snapshot.stories, {key: 'id', merge: true}));
+          setState('peers', 0, 'count', snapshot.count);
+          setState('peers', 0, 'index', nextIndex);
+          setState('loaded', snapshot.loaded);
+          setState({ended: !snapshot.stories.length});
+        });
+      } else {
+        albumCache.set(albumId, {
+          stories: snapshot.stories.slice(),
+          loaded: snapshot.loaded,
+          count: snapshot.count
+        });
+      }
+    });
+  };
+
+  const shouldRefreshAlbumSnapshot = (albumId: number, storyId: number, story?: StoryItem) => {
+    return albumCache.get(albumId)?.stories.some((item) => item.id === storyId) || !!(story && isStoryInAlbum(story, albumId));
+  };
+
+  const syncPinnedAlbumsFromManager = (peerId: PeerId, storyId: number, story?: StoryItem) => {
+    if(!singlePeerId || !props.pinned || peerId !== singlePeerId) {
+      return false;
+    }
+
+    const isActivePeer = state.peers[0]?.peerId === peerId;
+
+    if(albumCache.has(undefined)) {
+      syncManagerSnapshot(undefined, false);
+    }
+
+    if(isActivePeer) {
+      if(state.albumId === undefined) {
+        syncManagerSnapshot(undefined, true);
+      } else if(
+        state.peers[0]?.stories.some((item) => item.id === storyId) ||
+        !!(story && isStoryInAlbum(story, state.albumId))
+      ) {
+        syncManagerSnapshot(state.albumId, true);
+      }
+    }
+
+    for(const albumId of albumCache.keys()) {
+      if(albumId === undefined || albumId === state.albumId) {
+        continue;
+      }
+
+      if(shouldRefreshAlbumSnapshot(albumId, storyId, story)) {
+        syncManagerSnapshot(albumId, false);
+      }
+    }
+
+    return isActivePeer;
+  };
+
+  // * found stories hold a peer once for each of its stories: the story picks which
+  const getStoryPeerIndex = (peerId: PeerId, id: number) => {
+    return props.search ?
+      state.peers.findIndex((peer) => peer.peerId === peerId && peer.stories[0]?.id === id) :
+      getPeerIndex(peerId);
+  };
+
+  // * updates section
+  const onStoryUpdate = ({peerId, story, modifiedPinned, modifiedArchive, modifiedPinnedToTop}: BroadcastEvents['story_update']) => {
+    const peerIndex = getStoryPeerIndex(peerId, story.id);
+    if(peerIndex === -1) {
+      return;
+    }
+
+    if(syncPinnedAlbumsFromManager(peerId, story.id, story)) {
+      return;
+    }
+
+    const peer = state.peers[peerIndex];
+    const storyIndex = peer.stories.findIndex((s) => s.id === story.id);
+    if(props.pinned && modifiedPinned) {
+      if(!(story as StoryItem.storyItem).pFlags.pinned) {
+        onStoryDeleted({peerId, id: story.id});
+      } else {
+        onStoryNew({peerId, story, cacheType: StoriesCacheType.Pinned, maxReadId: peer.maxReadId});
+      }
+
+      return;
+    }
+
+    // * change position of story
+    if(props.pinned && modifiedPinnedToTop) {
+      const pinnedIndex = (story as StoryItem.storyItem).pinnedIndex;
+      if( // * if story is unpinned and it should be far far away
+        pinnedIndex === undefined &&
+        !!peer.stories.length &&
+        story.id < peer.stories[peer.stories.length - 1].id &&
+        !state.loaded
+      ) {
+        onStoryDeleted({peerId, id: story.id});
+        return;
+      }
+
+      if(storyIndex === -1) {
+        onStoryNew({peerId, story, cacheType: StoriesCacheType.Pinned, maxReadId: peer.maxReadId});
+      } else {
+        setState('peers', peerIndex, 'stories', reconcile(((stories) => {
+          stories = stories.slice();
+          stories.splice(storyIndex, 1);
+          insertStory(stories, story, false, StoriesCacheType.Pinned);
+          return stories;
+        })(peer.stories), {key: 'id', merge: true}));
+      }
+      return;
+    }
+
+    if(storyIndex === -1) {
+      if(props.archive && singlePeerId && modifiedArchive) {
+        onStoryNew({peerId, story, cacheType: StoriesCacheType.Archive, maxReadId: peer.maxReadId});
+      }
+
+      return;
+    }
+
+    setState('peers', peerIndex, 'stories', storyIndex, reconcile(story));
+  };
+
+  const onStoriesStories = (peerStories: PeerStories) => {
+    const peerId = getPeerId(peerStories.peer);
+    if(!canAddPeer(peerId)) {
+      return;
+    }
+
+    addPeerStories([peerStories]);
+  };
+
+  const onStoryNew = ({peerId, story, cacheType, maxReadId}: BroadcastEvents['story_new']) => {
+    if(!canAddPeer(peerId)) {
+      return;
+    }
+
+    if(props.pinned && !(story as StoryItem.storyItem).pFlags?.pinned) {
+      return;
+    }
+
+    if(syncPinnedAlbumsFromManager(peerId, story.id, story)) {
+      return;
+    }
+
+    const peerIndex = getPeerIndex(peerId);
+    if(peerIndex === -1) {
+      const peer: StoriesContextPeerState = {
+        peerId,
+        stories: [story],
+        maxReadId,
+        count: 1
+      };
+      peer.index = getPeerInitialIndex(peer);
+      addPeers([peer]);
+      return;
+    }
+
+    const peer = state.peers[peerIndex];
+    const stories = peer.stories;
+    const storyIndex = stories.findIndex((s) => s.id === story.id);
+    if(storyIndex !== -1) {
+      setState('peers', peerIndex, 'stories', storyIndex, story);
+      return;
+    }
+
+    batch(() => {
+      let insertedAt: number;
+      setState('peers', peerIndex, 'stories', (stories) => {
+        stories = stories.slice();
+        insertedAt = insertStory(stories, story, false, cacheType);
+        return stories;
+      });
+
+      setState('peers', peerIndex, 'count', (count) => count + 1);
+      shiftStoryIndex(peerIndex, insertedAt, 1);
+    });
+  };
+
+  const onStoryDeleted = ({peerId, id}: {peerId: PeerId, id: number}) => {
+    if(syncPinnedAlbumsFromManager(peerId, id)) {
+      return;
+    }
+
+    const peerIndex = getStoryPeerIndex(peerId, id);
+    if(peerIndex === -1) {
+      return;
+    }
+
+    const peer = state.peers[peerIndex];
+    const stories = peer.stories;
+    const storyIndex = stories.findIndex((s) => s.id === id);
+    if(storyIndex === -1) {
+      return;
+    }
+
+    if(stories.length === 1) {
+      deletePeer(peerId, peerIndex);
+      if(props.search) setState('foundCount', (count) => Math.max(0, count - 1));
+      return;
+    }
+
+    batch(() => {
+      if(state.peer === peer && peer.index === storyIndex) {
+        actions.next();
+      }
+
+      setState('peers', peerIndex, 'stories', (stories) => {
+        stories = stories.slice();
+        stories.splice(storyIndex, 1);
+        return stories;
+      });
+
+      setState('peers', peerIndex, 'count', (count) => count - 1);
+      shiftStoryIndex(peerIndex, storyIndex, -1);
+    });
+  };
+
+  const onStoriesRead = ({peerId, maxReadId}: BroadcastEvents['stories_read']) => {
+    const peerIndex = getPeerIndex(peerId);
+    if(peerIndex === -1) {
+      return;
+    }
+
+    setState('peers', peerIndex, 'maxReadId', maxReadId);
+  };
+
+  // const onUserStoriesHidden = ({userId, hidden}: BroadcastEvents['user_stories_hidden']) => {
+  //   const peerId = userId.toPeerId(false);
+  //   const peerIndex = getPeerIndex(peerId);
+  //   if(peerIndex === -1) {
+  //     return;
+  //   }
+
+  //   if((props.archive && !hidden) || (!props.archive && hidden)) {
+  //     deletePeer(peerId);
+  //   }
+  // };
+
+  const onStoriesPosition = (data: BroadcastEvents['stories_position'], ignoreFreezed?: boolean) => {
+    const {peerId, position} = data;
+    if(freezedSorting.size && !ignoreFreezed) {
+      const previousPosition = positions.get(peerId);
+      if(previousPosition?.type === position?.type || (state.hasViewer && previousPosition && position)) {
+        findAndSplice(postponedPositions, (data) => data.peerId === peerId);
+        postponedPositions.push(data);
+        return;
+      }
+    }
+
+    onPosition(data);
+
+    if(!canAddPeer(peerId)) {
+      deletePeer(peerId);
+      return;
+    }
+
+    const peer = state.peers.find((p) => p.peerId === peerId);
+    if(!peer) {
+      return;
+    }
+
+    addPeers([peer]);
+  };
+
+  const onStealthMode = (data: BroadcastEvents['stories_stealth_mode']) => {
+    setState('stealthMode', reconcile(data));
+  };
+
+  listenerSetter.add(rootScope)('story_update', onStoryUpdate);
+  listenerSetter.add(rootScope)('story_deleted', onStoryDeleted);
+  // * a story found stays found past its 24 hours, and the feed's order and additions are not the search's
+  if(!props.archive && !props.pinned && !props.search) {
+    listenerSetter.add(rootScope)('story_expired', onStoryDeleted);
+  }
+  if(!props.singleStory) {
+    listenerSetter.add(rootScope)('story_new', onStoryNew);
+  }
+  if((!singlePeerId || props.needUpdates) && !props.search) {
+    listenerSetter.add(rootScope)('stories_stories', onStoriesStories);
+    listenerSetter.add(rootScope)('stories_read', onStoriesRead);
+    // listenerSetter.add(rootScope)('user_stories_hidden', onUserStoriesHidden);
+    listenerSetter.add(rootScope)('stories_position', onStoriesPosition);
+  }
+  listenerSetter.add(rootScope)('stories_stealth_mode', onStealthMode);
+
+  if(singlePeerId && props.pinned) {
+    listenerSetter.add(rootScope)('story_album_created', ({peerId, albums}) => {
+      if(peerId !== singlePeerId) return;
+      setState('peers', 0, 'albums', albums);
+    });
+
+    listenerSetter.add(rootScope)('story_album_deleted', ({peerId, albumId, albums}) => {
+      if(peerId !== singlePeerId) return;
+      albumCache.delete(albumId);
+      if(state.albumId === albumId) {
+        if(albumCache.has(undefined)) {
+          syncManagerSnapshot(undefined, false);
+        }
+        actions.setAlbumId(undefined);
+        albumCache.delete(albumId);
+      }
+      setState('peers', 0, 'albums', albums);
+    });
+
+    listenerSetter.add(rootScope)('story_albums_updated', ({peerId, albums}) => {
+      if(peerId !== singlePeerId) return;
+      // * by key, so that the chips of an order already shown stay where they are
+      setState('peers', 0, 'albums', reconcile(albums, {key: 'album_id'}));
+    });
+
+    listenerSetter.add(rootScope)('story_album_updated', ({peerId, albumId, albums}) => {
+      if(peerId !== singlePeerId) return;
+      setState('peers', 0, 'albums', albums);
+
+      if(albumCache.has(undefined)) {
+        syncManagerSnapshot(undefined, false);
+      }
+
+      if(state.albumId === albumId) {
+        syncManagerSnapshot(albumId, true);
+      } else if(albumCache.has(albumId)) {
+        syncManagerSnapshot(albumId, false);
+      }
+    });
+  }
+
+  // * updates section end
+
+  if(!props.manualLoad) {
+    if(!state.ready) {
+      actions.load();
+    } else if(state.peer?.index === undefined) { // * `props.index` can point past `props.peers`
+      actions.resetIndexes();
+    }
+  }
+
+  rootScope.managers.appStoriesManager.getStealthMode().then((data) => {
+    if(!disposed) {
+      onStealthMode(data);
+    }
+  });
+
+  if(singlePeerId) {
+    if(singlePeerId === rootScope.myId) {
+      setState({canEdit: true});
+    } else if(singlePeerId.isAnyChat()) {
+      rootScope.managers.appChatsManager.hasRights(singlePeerId.toChatId(), 'edit_stories').then((canEdit) => {
+        if(!disposed) {
+          setState({canEdit});
+        }
+      });
+    }
+  }
+
+  return [state, actions];
+};
+
+// const storiesStore = createStoriesStore();
+export const StoriesContext = createContext<StoriesContextValue>(/* storiesStore */);
+export const StoriesProvider: ParentComponent<Parameters<typeof createStoriesStore>[0]> = (props) => {
+  return (
+    <StoriesContext.Provider value={createStoriesStore(props)}>
+      {props.children}
+    </StoriesContext.Provider>
+  );
+}
+
+export const useStories = () => useContext(StoriesContext);

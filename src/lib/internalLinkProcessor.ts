@@ -1,0 +1,2123 @@
+import type AppMediaViewerBase from '@components/mediaViewer/base';
+import showSharedFolderInvitePopup from '@components/popups/sharedFolderInvite';
+import showJoinChatInvitePopup from '@components/popups/joinChatInvite';
+import {createPaymentPopup} from '@components/popups/payment';
+import confirmOpenUrl from '@components/popups/confirmOpenUrl';
+import {showPickUser3Popup, showSharingPicker2Popup} from '@components/popups/pickUser';
+import showStickersPopup from '@components/popups/stickers';
+import {toastNew, hideToast} from '@components/toast';
+import {MOUNT_CLASS_TO} from '@config/debug';
+import IS_GROUP_CALL_SUPPORTED from '@environment/groupCallSupport';
+import {CONFERENCE_CALL_SLUG_REGEXP} from '@lib/calls/constants';
+import addAnchorListener, {listenForMaskedAnchorAuxClicks} from '@helpers/addAnchorListener';
+import {PROXY_LINK_TYPES} from '@lib/richTextProcessor/wrapUrl';
+import assumeType from '@helpers/assumeType';
+import findUpAttribute from '@helpers/dom/findUpAttribute';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import {User, AttachMenuPeerType, MessagesBotApp, BotApp, ChatlistsChatlistInvite, Chat, InputInvoice} from '@layer';
+import {i18n, LangPackKey, _i18n} from '@lib/langPack';
+import {PHONE_NUMBER_REG_EXP} from '@lib/richTextProcessor';
+import {isWebAppNameValid} from '@lib/richTextProcessor/validators';
+import appImManager, {JoinConferenceOptions} from '@lib/appImManager';
+import {makeFullMid} from '@appManagers/utils/messages/fullMid';
+import {INTERNAL_LINK_TYPE, InternalLinkTypeMap, InternalLink} from '@lib/internalLink';
+import {TabManagers} from '@lib/managers';
+import {createStoriesViewerWithPeer} from '@components/stories/viewer';
+import {simulateClickEvent} from '@helpers/dom/clickEvent';
+import shake from '@helpers/dom/shake';
+import showPremiumPopup from '@components/popups/premium';
+import getPremiumLinkRef from '@helpers/getPremiumLinkRef';
+import rootScope from '@lib/rootScope';
+import showBoostPopup from '@components/popups/boost';
+import showGiftLinkPopup from '@components/popups/giftLink';
+import showStarsPopup, {showGiftStarsPicker} from '@components/popups/stars';
+import showSendGiftPopup from '@components/popups/sendGift';
+import showMyQrCodePopup from '@components/popups/myQrCode';
+import showSendGiftPicker from '@components/popups/sendGiftPicker';
+import type {RequestWebViewOptions} from '@appManagers/appAttachMenuBotsManager';
+import {prefetchStars} from '@stores/stars';
+import {getMiddleware} from '@helpers/middleware';
+import anchorCallback from '@helpers/dom/anchorCallback';
+import showStarGiftInfoPopup from '@components/popups/starGiftInfo';
+import noop from '@helpers/noop';
+import appSidebarRight from '@components/sidebarRight';
+import pause from '@helpers/schedulers/pause';
+import namedPromises from '@helpers/namedPromises';
+import {openInstantViewInAppBrowser} from '@components/browser';
+import SolidJSHotReloadGuardProvider, {registerHotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import appSidebarLeft from '@components/sidebarLeft';
+import {AppContactsTab} from '@components/solidJsTabs/tabs';
+import {AppNewChannelTab} from '@components/solidJsTabs/tabs';
+import showCreateContactPopup from '@components/popups/createContact';
+import createNewGroupTab from '@components/sidebarLeft/tabs/createNewGroupTab';
+import {AppEditProfileTab, AppSettingsTab, getEditProfileInitArgs} from '@components/solidJsTabs';
+import showBirthdayPopup, {saveMyBirthday} from '@components/popups/birthday';
+import {getStickerSetInputByShortName} from '@lib/appManagers/utils/stickers/getStickerSetInput';
+import {AppMyStoriesTab} from '@components/solidJsTabs/tabs';
+import showAddBotToChat from '@components/popups/addBotToChat';
+import {isJoinVoiceChatAnchor} from '@components/wrappers/joinVoiceChatAnchor';
+import getBotAddToChatScope from '@appManagers/utils/bots/getBotAddToChatScope';
+import parseBotAdminRights from '@appManagers/utils/bots/parseBotAdminRights';
+import isEphemeralMessage from '@appManagers/utils/messages/isEphemeralMessage';
+import parseChatSpecificTag from '@lib/richTextProcessor/parseChatSpecificTag';
+import searchByTag from '@lib/richTextProcessor/searchByTag';
+import {APP_TABS} from '@lib/appColumns';
+import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
+import openBankCardMenu from '@components/bankCardMenu';
+import confirmationPopup from '@components/confirmationPopup';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import wrapRichText from '@lib/richTextProcessor/wrapRichText';
+import {getManagersSession, isSessionLeaving} from '@lib/accounts/getCurrentAccount';
+import {isWalletReleased} from '@lib/wallet/release';
+import {tryDecodeURIComponent} from '@helpers/string/parseUriParams';
+import type {AppManagers} from '@lib/managers';
+
+/**
+ * For a lookup whose failure is only a miss: any error is one but MIDDLEWARE, the end of the account
+ * session it was asked in - the flow it belongs to stops there rather than go on as a miss on the
+ * account the tab shows now.
+ */
+const missUnlessSessionEnded = (err: ApiError): undefined => {
+  if(err?.type === 'MIDDLEWARE') {
+    throw err;
+  }
+
+  return undefined;
+};
+
+// what a free-messages link says comes this long after its chat opens (Android's 300 ms)
+const NO_PAID_TOKEN_TOAST_DELAY = 300;
+
+/**
+ * A link whose section we know but whose path we do not — the one thing worse
+ * than not opening it is doing nothing about it. tdesktop answers the same way
+ * (`Router::showUnsupportedMessage`).
+ */
+const showUnsupportedLinkToast = () => {
+  toastNew({langPackKey: 'Link.NotSupported'});
+};
+
+export class InternalLinkProcessor {
+  protected managers: TabManagers;
+  private processingAddAiStyleSlugs: Set<string> = new Set();
+  private tagSearchVersion = 0;
+
+  public showUsernameResolveError(err: ApiError) {
+    if(err.type === 'USERNAME_NOT_OCCUPIED') {
+      toastNew({langPackKey: 'NoUsernameFound'});
+    } else if(err.type === 'USERNAME_INVALID') {
+      toastNew({langPackKey: 'Alert.UserDoesntExists'});
+    }
+  }
+
+  /**
+   * Asks before a link goes where its address points - a masked link's real address, a tg:// link
+   * this client cannot open - and Open follows it as a plain link, within that press of the button.
+   */
+  private showOpenUrlAlert(element: HTMLAnchorElement) {
+    const a = element.cloneNode(true) as HTMLAnchorElement;
+    a.removeAttribute('onclick');
+    confirmOpenUrl(a);
+  }
+
+  public construct(managers: TabManagers) {
+    this.managers = managers;
+
+    // a middle click never reaches an anchor's inline `onclick`, so the alert below is wired to it
+    // separately — otherwise the masked link opens in a new tab with nothing asked
+    listenForMaskedAnchorAuxClicks();
+
+    addAnchorListener<{}>({
+      name: 'showMaskedAlert',
+      callback: ({element}) => this.showOpenUrlAlert(element)
+    });
+
+    // a tg:// link that nothing below handles (wrapUrl names this handler for it)
+    addAnchorListener<{}>({
+      name: 'unknownDeepLink',
+      noPathnameParams: true,
+      noUriParams: true,
+      callback: ({element}) => this.processUnknownDeepLink(element)
+    });
+
+    // * a proxy to connect to (t.me/proxy?…, t.me/socks?…, tg://proxy?…, tg://socks?…): a browser cannot
+    // * reach Telegram through one, so it is a link this client does not open, never the profile @proxy
+    PROXY_LINK_TYPES.forEach((name) => {
+      addAnchorListener({name, noPathnameParams: true, noUriParams: true, callback: showUnsupportedLinkToast});
+      addAnchorListener({name, protocol: 'tg', noPathnameParams: true, noUriParams: true, callback: showUnsupportedLinkToast});
+    });
+
+    // a bank card number in a text (wrapRichText) is a link to its menu, not to anywhere
+    (window as any).onBankCardClick = (element: HTMLElement, e: MouseEvent) => {
+      cancelEvent(e);
+      openBankCardMenu(element, e);
+    };
+
+    addAnchorListener<{uriParams: {command: string, bot: string}}>({
+      name: 'execBotCommand',
+      callback: ({element, uriParams}) => {
+        const {command, bot} = uriParams;
+        const chat = appImManager.chat;
+        let sendingParams = chat.input?.getEphemeralSendingSnapshot() || {
+          peerId: chat.peerId,
+          threadId: chat.threadId
+        };
+        const bubble = findUpClassName(element, 'bubble');
+        if(
+          bubble?.dataset.mid &&
+          bubble.dataset.peerId?.toPeerId() === chat.peerId
+        ) {
+          const message = chat.getMessage(+bubble.dataset.mid);
+          if(isEphemeralMessage(message)) {
+            sendingParams = {
+              ephemeral: true,
+              peerId: chat.peerId,
+              threadId: chat.threadId,
+              replyToMsgId: message.mid
+            };
+          }
+        }
+
+        /* const promise = bot ? this.openUsername(bot).then(() => this.chat.peerId) : Promise.resolve(this.chat.peerId);
+        promise.then((peerId) => {
+          this.managers.appMessagesManager.sendText(peerId, '/' + command);
+        }); */
+
+        return this.managers.appMessagesManager.sendText({
+          ...sendingParams,
+          text: '/' + command + (bot ? '@' + bot : '')
+        });
+      }
+    });
+
+    addAnchorListener<{uriParams: {hashtag: string}}>({
+      name: 'searchByHashtag',
+      callback: ({uriParams}) => {
+        const {hashtag} = uriParams;
+        if(!hashtag) {
+          return;
+        }
+
+        const search = parseChatSpecificTag(hashtag);
+        const version = ++this.tagSearchVersion;
+        return searchByTag({
+          query: search.query + ' ',
+          username: search.username,
+          activateSearch: (query) => appImManager.chat.initSearch({query, focus: true}),
+          resolveUsername: (username) => this.managers.appUsersManager.resolveUsername(username),
+          openPeer: (peer) => appImManager.setInnerPeer({
+            peerId: peer.id.toPeerId(peer._ !== 'user')
+          }),
+          isCurrent: () => version === this.tagSearchVersion,
+          onResolveError: (err) => {
+            appImManager.chat.resetSearch();
+            this.showUsernameResolveError(err as ApiError);
+          }
+        });
+      }
+    });
+
+    addAnchorListener<{}>({
+      name: 'setMediaTimestamp',
+      callback: ({element}) => {
+        const timestamp = +element.dataset.timestamp;
+        const bubble = findUpClassName(element, 'bubble');
+        if(bubble) {
+          appImManager.chat.bubbles.playMediaWithTimestamp(element, timestamp);
+          return;
+        }
+
+        if(findUpClassName(element, 'media-viewer-caption')) {
+          const appMediaViewer = (window as any).appMediaViewer as AppMediaViewerBase<any, any, any>;
+          return appMediaViewer.setMediaTimestamp(timestamp);
+        }
+      }
+    });
+
+    ([
+      ['addstickers', INTERNAL_LINK_TYPE.STICKER_SET],
+      ['addemoji', INTERNAL_LINK_TYPE.EMOJI_SET]
+    ] as [
+      'addstickers' | 'addemoji',
+      INTERNAL_LINK_TYPE.STICKER_SET | INTERNAL_LINK_TYPE.EMOJI_SET
+    ][]).forEach(([name, type]) => {
+      addAnchorListener<{pathnameParams: [typeof name, string]}>({
+        name,
+        callback: ({pathnameParams}) => {
+          if(!pathnameParams[1]) {
+            return;
+          }
+
+          const link: InternalLink = {
+            _: type,
+            set: pathnameParams[1]
+          };
+
+          return this.processInternalLink(link);
+        }
+      });
+
+      addAnchorListener<{
+        uriParams: {
+          set: string
+        }
+      }>({
+        name,
+        protocol: 'tg',
+        callback: ({uriParams}) => {
+          const link = this.makeLink(type, uriParams);
+          return this.processInternalLink(link);
+        }
+      });
+    });
+
+    // * t.me/invoice/asdasdad
+    // * t.me/$asdasdad
+    addAnchorListener<{pathnameParams: ['invoice', string] | string}>({
+      name: 'invoice',
+      callback: ({pathnameParams}) => {
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.INVOICE,
+          slug: pathnameParams.length > 1 ? pathnameParams[1] : pathnameParams[0].slice(1)
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    // t.me/addlist/adasdasd
+    addAnchorListener<{pathnameParams: ['folder', string]}>({
+      name: 'addlist',
+      callback: ({pathnameParams}) => {
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.ADD_LIST,
+          slug: pathnameParams[1]
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    // Support old t.me/joinchat/asd and new t.me/+asd
+    addAnchorListener<{pathnameParams: ['joinchat', string]}>({
+      name: 'joinchat',
+      callback: ({pathnameParams}) => {
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.JOIN_CHAT,
+          invite: pathnameParams[1] || decodeURIComponent(pathnameParams[0]).slice(1)
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    if(IS_GROUP_CALL_SUPPORTED) {
+      addAnchorListener<{
+        uriParams: Omit<InternalLink.InternalLinkVoiceChat, '_'>
+      }>({
+        name: 'voicechat',
+        protocol: 'tg',
+        callback: ({uriParams, element}) => {
+          const link = this.makeLink(INTERNAL_LINK_TYPE.VOICE_CHAT, uriParams);
+          // * straight to the handler: only here is it known whether the press was on the chat's own "join"
+          return this.processVoiceChatLink(link, {fromServiceMessage: isJoinVoiceChatAnchor(element)});
+        }
+      });
+
+      // t.me/call/<slug> — TdE2E conference invite link. tdesktop maps this
+      // to `tg://call?slug=<slug>` (local_url_handlers.cpp:1967) and then to
+      // `ResolveConferenceCall` (window_session_controller.cpp:977). Here we
+      // resolve the slug straight into `joinConference` since the controller
+      // already does the chain-head poll itself.
+      addAnchorListener<{pathnameParams: ['call', string]}>({
+        name: 'call',
+        callback: ({pathnameParams, element, event}) => {
+          if(!pathnameParams[1]) return;
+          const link: InternalLink = {
+            _: INTERNAL_LINK_TYPE.CONFERENCE_CALL,
+            slug: pathnameParams[1]
+          };
+          // Straight to the handler rather than through `processInternalLink`:
+          // this is the only place that still knows WHICH message the link was
+          // clicked in, and the join confirmation names its sender.
+          return this.processConferenceCallLink(link, {
+            inviterPeerId: this.getClickedMessageSenderPeerId(element, event)
+          });
+        }
+      });
+
+      // tg://call?slug=<slug>
+      addAnchorListener<{uriParams: {slug: string}}>({
+        name: 'call',
+        protocol: 'tg',
+        callback: ({uriParams}) => {
+          if(!uriParams.slug) return;
+          const link = this.makeLink(INTERNAL_LINK_TYPE.CONFERENCE_CALL, uriParams);
+          return this.processInternalLink(link);
+        }
+      });
+    }
+
+    type K1 = {thread?: string, comment?: string, t?: string, option?: string, single?: string};
+    type K2 = {thread?: string, comment?: string, start?: string, startgroup?: string, startchannel?: string, admin?: string, t?: string, text?: string, option?: string, single?: string, game?: string, free?: string};
+    type K3 = {startattach?: string, attach?: string, choose?: TelegramChoosePeerType};
+    type K4 = {startapp?: string, mode?: 'compact' | 'fullscreen'};
+    type K5 = {story?: string};
+    type K6 = {boost?: string};
+    type K7 = {voicechat?: string, videochat?: string, livestream?: string};
+    type K8 = {text?: string, free?: string};
+
+    addAnchorListener<{
+    //   pathnameParams: ['c', string, string],
+    //   uriParams: {thread?: number}
+    // } | {
+    //   pathnameParams: [string, string?],
+    //   uriParams: {comment?: number}
+      pathnameParams: ['c', string, string] | [string, string?],
+      uriParams: K1 | K2 | K3 | K4 | K5 | K6 | K7 | K8
+    }>({
+      name: 'im',
+      callback: async({pathnameParams, uriParams, element, masked}) => {
+        // t.me/s/<username> is the web page of a chat, and names it as t.me/<username> does (Android reads it so)
+        if(pathnameParams?.[0] === 's' && pathnameParams.length > 1) {
+          pathnameParams = pathnameParams.slice(1) as typeof pathnameParams;
+        }
+
+        let link: InternalLink;
+        if('voicechat' in uriParams || 'videochat' in uriParams || 'livestream' in uriParams) {
+          assumeType<K7>(uriParams);
+          link = {
+            _: INTERNAL_LINK_TYPE.VOICE_CHAT,
+            domain: pathnameParams[0],
+            ...uriParams
+          };
+        } else if('boost' in uriParams || pathnameParams?.[0] === 'boost') {
+          const channel = pathnameParams?.[0] === 'c' ? pathnameParams[1] : (uriParams as any).c;
+          link = {
+            _: INTERNAL_LINK_TYPE.BOOST,
+            domain: channel ? undefined : ('boost' in uriParams ? pathnameParams[0] : pathnameParams[1]),
+            channel
+          };
+        } else if(pathnameParams?.[1] === 's') {
+          link = {
+            _: INTERNAL_LINK_TYPE.STORY,
+            domain: pathnameParams[0],
+            story: pathnameParams[2]
+          };
+        } else if(pathnameParams?.[1] === 'c') {
+          link = {
+            _: INTERNAL_LINK_TYPE.STAR_GIFT_COLLECTION,
+            domain: pathnameParams[0],
+            id: pathnameParams[2]
+          };
+        } else if(pathnameParams?.[1] === 'a') {
+          link = {
+            _: INTERNAL_LINK_TYPE.STORY_ALBUM,
+            domain: pathnameParams[0],
+            id: pathnameParams[2]
+          };
+        } else if(PHONE_NUMBER_REG_EXP.test(pathnameParams[0])) {
+          link = {
+            _: INTERNAL_LINK_TYPE.USER_PHONE_NUMBER,
+            phone: pathnameParams[0],
+            text: (uriParams as K8).text,
+            free: (uriParams as K8).free
+          };
+        } else if(pathnameParams[0] === 'c') {
+          assumeType<K1>(uriParams);
+          pathnameParams.shift();
+          const thread = 'thread' in uriParams ? uriParams.thread : pathnameParams[2] && pathnameParams[1];
+          link = {
+            _: INTERNAL_LINK_TYPE.PRIVATE_POST,
+            channel: pathnameParams[0],
+            post: pathnameParams[2] || pathnameParams[1],
+            thread,
+            comment: uriParams.comment,
+            option: 'option' in uriParams ? uriParams.option : undefined,
+            stack: appImManager.getStackFromElement(element),
+            t: uriParams.t,
+            single: uriParams.single
+          };
+        } else if(pathnameParams[1] ? isWebAppNameValid(pathnameParams[1]) : (uriParams as K4).startapp !== undefined) {
+          assumeType<K4>(uriParams);
+          link = {
+            _: INTERNAL_LINK_TYPE.WEB_APP,
+            domain: pathnameParams[0],
+            appname: pathnameParams[1],
+            startapp: uriParams.startapp,
+            masked,
+            mode: uriParams.mode
+          };
+        } else {
+          assumeType<K2>(uriParams);
+          const thread = 'thread' in uriParams ? uriParams.thread : pathnameParams[2] && pathnameParams[1];
+          link = {
+            _: INTERNAL_LINK_TYPE.MESSAGE,
+            domain: pathnameParams[0],
+            post: pathnameParams[2] || pathnameParams[1],
+            thread,
+            comment: uriParams.comment,
+            start: 'start' in uriParams ? uriParams.start : undefined,
+            startgroup: 'startgroup' in uriParams ? uriParams.startgroup : undefined,
+            startchannel: 'startchannel' in uriParams ? uriParams.startchannel : undefined,
+            admin: 'admin' in uriParams ? uriParams.admin : undefined,
+            option: 'option' in uriParams ? uriParams.option : undefined,
+            stack: appImManager.getStackFromElement(element),
+            t: uriParams.t,
+            text: uriParams.text,
+            single: uriParams.single,
+            game: uriParams.game,
+            free: uriParams.free
+          };
+        }
+
+        if('startattach' in uriParams || 'attach' in uriParams) {
+          assumeType<K3>(uriParams);
+          link = {
+            _: INTERNAL_LINK_TYPE.ATTACH_MENU_BOT,
+            nestedLink: link,
+            ...uriParams
+          };
+        }
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    addAnchorListener<{
+      uriParams: {
+        domain: string,
+
+        // telegrampassport
+        scope?: string,
+        nonce?: string,
+        payload?: string,
+        bot_id?: string,
+        public_key?: string,
+        callback_url?: string,
+
+        // regular
+        start?: string,
+        startgroup?: string,
+        startchannel?: string,
+        admin?: string,
+        game?: string,
+        voicechat?: string,
+        videochat?: string,
+        livestream?: string,
+        post?: string,
+        thread?: string,
+        comment?: string,
+        phone?: string,
+        t?: string,
+        attach?: string,
+        startattach?: string,
+        choose?: TelegramChoosePeerType,
+        appname?: string,
+        startapp?: string,
+        compact?: string,
+        story?: string,
+        single?: string,
+        free?: string
+      }
+    }>({
+      name: 'resolve',
+      protocol: 'tg',
+      callback: ({uriParams, element, masked}) => {
+        let link: InternalLink;
+        // * a dApp's request addressed to the wallet by name
+        if(isWalletReleased() && uriParams.domain?.toLowerCase() === 'sendgrams' && uriParams.startapp?.startsWith('tonconnect-')) {
+          return this.processInternalLink(this.makeLink(INTERNAL_LINK_TYPE.TON_CONNECT, {url: element.href}));
+        }
+
+        if(uriParams.voicechat !== undefined || uriParams.videochat !== undefined || uriParams.livestream !== undefined) {
+          link = this.makeLink(INTERNAL_LINK_TYPE.VOICE_CHAT, uriParams as Required<typeof uriParams>);
+        } else if(uriParams.story) {
+          link = this.makeLink(INTERNAL_LINK_TYPE.STORY, uriParams as Required<typeof uriParams>);
+        } else if(uriParams.phone) {
+          link = this.makeLink(INTERNAL_LINK_TYPE.USER_PHONE_NUMBER, uriParams as Required<typeof uriParams>);
+        } else if(uriParams.domain === 'telegrampassport') {
+
+        } else if((uriParams.appname || uriParams.startapp) !== undefined) {
+          link = this.makeLink(INTERNAL_LINK_TYPE.WEB_APP, {
+            masked,
+            ...uriParams as Required<typeof uriParams>
+          });
+        } else {
+          link = this.makeLink(INTERNAL_LINK_TYPE.MESSAGE, {
+            ...uriParams,
+            stack: appImManager.getStackFromElement(element)
+          });
+        }
+
+        if(uriParams.attach !== undefined || uriParams.startattach !== undefined) {
+          const nestedLink = link;
+          link = this.makeLink(INTERNAL_LINK_TYPE.ATTACH_MENU_BOT, uriParams as Required<typeof uriParams>);
+          link.nestedLink = nestedLink;
+        }
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    addAnchorListener<{
+      uriParams: {
+        channel: string,
+        post: string,
+        thread?: string,
+        comment?: string,
+        single?: string
+      }
+    }>({
+      name: 'privatepost',
+      protocol: 'tg',
+      callback: ({uriParams}) => {
+        const link = this.makeLink(INTERNAL_LINK_TYPE.PRIVATE_POST, uriParams);
+        return this.processInternalLink(link);
+      }
+    });
+
+    // tg://invoice?slug=asdasd
+    addAnchorListener<{
+      uriParams: {
+        slug: string
+      }
+    }>({
+      name: 'invoice',
+      protocol: 'tg',
+      callback: ({uriParams}) => {
+        const link = this.makeLink(INTERNAL_LINK_TYPE.INVOICE, uriParams);
+        return this.processInternalLink(link);
+      }
+    });
+
+    // tg://addlist?slug=asd
+    addAnchorListener<{
+      uriParams: {
+        slug: string
+      }
+    }>({
+      name: 'addlist',
+      protocol: 'tg',
+      callback: ({uriParams}) => {
+        const link = this.makeLink(INTERNAL_LINK_TYPE.ADD_LIST, uriParams);
+        return this.processInternalLink(link);
+      }
+    });
+
+    ['joinchat' as const, 'join' as const].forEach((name) => {
+      addAnchorListener<{
+        uriParams: {
+          invite: string
+        }
+      }>({
+        name,
+        protocol: 'tg',
+        callback: ({uriParams}) => {
+          const link = this.makeLink(INTERNAL_LINK_TYPE.JOIN_CHAT, uriParams);
+          return this.processInternalLink(link);
+        }
+      });
+    });
+
+    // tg://boost?channel=123 tg://boost?domain=username
+    addAnchorListener<{
+      uriParams: {
+        channel?: string,
+        domain?: string
+      }
+    }>({
+      name: 'boost',
+      protocol: 'tg',
+      callback: ({uriParams}) => {
+        const link = this.makeLink(INTERNAL_LINK_TYPE.BOOST, uriParams);
+        return this.processInternalLink(link);
+      }
+    });
+
+    // t.me/boost/adasdasd
+    addAnchorListener<{pathnameParams: ['boost', string]}>({
+      name: 'boost',
+      callback: ({pathnameParams}) => {
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.BOOST,
+          domain: pathnameParams[1]
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    // tg://premium_offer?ref=premium tg://premium_offer
+    addAnchorListener<{
+      uriParams: {
+        ref?: string
+      }
+    }>({
+      name: 'premium_offer',
+      protocol: 'tg',
+      callback: ({uriParams}) => {
+        const link = this.makeLink(INTERNAL_LINK_TYPE.PREMIUM_FEATURES, uriParams);
+        return this.processInternalLink(link);
+      }
+    });
+
+    // t.me/GetPremium?ref=twitter = tg://premium_offer?ref=tme_getpremium_twitter
+    addAnchorListener<{
+      uriParams: {
+        ref?: string
+      }
+    }>({
+      name: 'premium_offer',
+      noPathnameParams: true,
+      callback: ({uriParams}) => {
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.PREMIUM_FEATURES,
+          ref: getPremiumLinkRef(uriParams.ref)
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    // t.me/giftcode/slug
+    addAnchorListener<{pathnameParams: ['giftcode', string]}>({
+      name: 'giftcode',
+      callback: ({pathnameParams, element}) => {
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.GIFT_CODE,
+          slug: pathnameParams[1],
+          stack: appImManager.getStackFromElement(element)
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    // tg://giftcode?slug=...
+    addAnchorListener<{
+      uriParams: {
+        slug: string
+      }
+    }>({
+      name: 'giftcode',
+      protocol: 'tg',
+      callback: ({uriParams, element}) => {
+        const link = this.makeLink(INTERNAL_LINK_TYPE.GIFT_CODE, uriParams);
+        link.stack = appImManager.getStackFromElement(element);
+        return this.processInternalLink(link);
+      }
+    });
+
+    // t.me/m/slug
+    addAnchorListener<{pathnameParams: ['m', string]}>({
+      name: 'm',
+      callback: ({pathnameParams}) => {
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.BUSINESS_CHAT,
+          slug: pathnameParams[1]
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    // tg://message?slug=...
+    addAnchorListener<{
+      uriParams: {
+        slug: string
+      }
+    }>({
+      name: 'message',
+      protocol: 'tg',
+      callback: ({uriParams}) => {
+        const link = this.makeLink(INTERNAL_LINK_TYPE.BUSINESS_CHAT, uriParams);
+        return this.processInternalLink(link);
+      }
+    });
+
+    // * the wallet's links (Grams to send, TON Connect, a TON address's menu) are known only once it is released:
+    // * till then they stay what they were — a username, an unknown tg:// link, a plain one
+    if(isWalletReleased()) {
+      // t.me/sendgrams?to=@user&amount=…&text=…&encrypted=1 and tg://sendgrams?to=…
+      type SendGramsParams = {to?: string, amount?: string, text?: string, comment?: string, encrypted?: string, startapp?: string, id?: string, v?: string, r?: string};
+      const onSendGrams = ({uriParams, element}: {uriParams: SendGramsParams, element?: HTMLAnchorElement}) => {
+        // * with TON Connect's fields (id, v, r or a `tonconnect-` start parameter) the wallet's link is a dApp's
+        if(uriParams.startapp?.startsWith('tonconnect-') || uriParams.id !== undefined || uriParams.v !== undefined || uriParams.r !== undefined) {
+          return this.processInternalLink(this.makeLink(INTERNAL_LINK_TYPE.TON_CONNECT, {url: element.href}));
+        }
+
+        // * a link that names two recipients or two amounts means neither (iOS)
+        try {
+          const search = new URL(element.href).searchParams;
+          if(search.getAll('to').length > 1 || search.getAll('amount').length > 1) {
+            return;
+          }
+        } catch(err) {}
+
+        const link = this.makeLink(INTERNAL_LINK_TYPE.WALLET_SEND, {
+          to: uriParams.to,
+          amount: uriParams.amount,
+          text: uriParams.text || uriParams.comment,
+          encrypted: uriParams.encrypted
+        });
+        return this.processInternalLink(link);
+      };
+
+      addAnchorListener<{uriParams: SendGramsParams}>({
+        name: 'sendgrams',
+        callback: onSendGrams
+      });
+
+      addAnchorListener<{uriParams: SendGramsParams}>({
+        name: 'sendgrams',
+        protocol: 'tg',
+        callback: onSendGrams
+      });
+
+      // * a connected app's request is shown as it arrives in the service chat (iOS, tdesktop): TON Connect's code is
+      // * loaded for the first one only
+      rootScope.addEventListener('wallet_tonconnect_request', (action) => {
+        if(action.accepted || action.declined) return;
+        import('@components/wallet/tonConnect').then(({queueTonConnectRequest}) => queueTonConnectRequest(action));
+      });
+
+      // tc://?v=2&id=…&r=… and tg://ton-connect?…: a dApp connecting to the wallet
+      const onTonConnect = ({element}: {element?: HTMLAnchorElement}) => {
+        return this.processInternalLink(this.makeLink(INTERNAL_LINK_TYPE.TON_CONNECT, {url: element.href}));
+      };
+
+      addAnchorListener<{}>({
+        name: 'tonconnect',
+        protocol: 'tc',
+        noPathnameParams: true,
+        noUriParams: true,
+        callback: onTonConnect
+      });
+
+      addAnchorListener<{}>({
+        name: 'ton-connect',
+        protocol: 'tg',
+        noPathnameParams: true,
+        noUriParams: true,
+        callback: onTonConnect
+      });
+
+      // * a TON address in a message (tg://sendgrams?to=<address>): the menu of what can be done with it
+      addAnchorListener<{uriParams: {to?: string}}>({
+        name: 'openTonAddress',
+        noPathnameParams: true,
+        callback: ({uriParams, element, event}) => {
+          const address = uriParams.to || element.textContent;
+          import('@components/wallet/addressMenu').then(({default: openTonAddressMenu}) => {
+            return openTonAddressMenu({address, element, event});
+          });
+        }
+      });
+
+      // ton://transfer/<address>?amount=…&text=…
+      addAnchorListener<{}>({
+        name: 'transfer',
+        protocol: 'ton',
+        noPathnameParams: true,
+        noUriParams: true,
+        callback: ({element}) => {
+          const link = this.makeLink(INTERNAL_LINK_TYPE.WALLET_SEND, {tonLink: element.href});
+          return this.processInternalLink(link);
+        }
+      });
+    }
+
+    // tg://stars_topup?amount=100
+    addAnchorListener<{
+      uriParams: {
+        balance: string,
+        purpose: string
+      }
+    }>({
+      name: 'stars_topup',
+      protocol: 'tg',
+      callback: ({uriParams}) => {
+        const link = this.makeLink(INTERNAL_LINK_TYPE.STARS_TOPUP, uriParams);
+        return this.processInternalLink(link);
+      }
+    });
+
+    // t.me/share/url?url=...&text=...
+    addAnchorListener<{pathnameParams: ['share', 'url'], uriParams: {url?: string, text?: string}}>({
+      name: 'share',
+      callback: ({pathnameParams, uriParams}) => {
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.SHARE,
+          url: uriParams.url,
+          text: uriParams.text
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    addAnchorListener<{
+      uriParams: {
+        url?: string,
+        text?: string
+      }
+    }>({
+      name: 'msg_url',
+      protocol: 'tg',
+      callback: ({uriParams}) => {
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.SHARE,
+          url: uriParams.url,
+          text: uriParams.text
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    // t.me/nft/asdasd-1
+    addAnchorListener<{pathnameParams: ['nft', string]}>({
+      name: 'nft',
+      callback: ({pathnameParams}) => {
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.UNIQUE_STAR_GIFT,
+          slug: pathnameParams.slice(1).join('/') // support unescaped slash
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    // tg://nft?slug=...
+    addAnchorListener<{
+      uriParams: {
+        slug: string
+      }
+    }>({
+      name: 'nft',
+      protocol: 'tg',
+      callback: ({uriParams}) => {
+        const link = this.makeLink(INTERNAL_LINK_TYPE.UNIQUE_STAR_GIFT, uriParams);
+        return this.processInternalLink(link);
+      }
+    });
+
+    // tg://iv?url=...
+    addAnchorListener<{
+      uriParams: {
+        url: string
+      },
+    }>({
+      name: 'iv',
+      protocol: 'tg',
+      noCancelEvent: true,
+      callback: ({element, event}) => {
+        if((event as MouseEvent).ctrlKey || (event as MouseEvent).metaKey) {
+          return;
+        }
+
+        cancelEvent(event);
+        const link = this.makeLink(INTERNAL_LINK_TYPE.INSTANT_VIEW, {url: element.href});
+        return this.processInternalLink(link);
+      }
+    });
+
+    // tg://new/
+    // tg://new/group
+    // tg://new/contact
+    // tg://new/channel
+    addAnchorListener<{
+      pathnameParams: [InternalLink.InternalLinkNew['type'] | '']
+    }>({
+      name: 'new',
+      protocol: 'tg',
+      callback: ({pathnameParams}) => {
+        const [type = ''] = pathnameParams;
+        switch(type) {
+          case 'contact':
+            return showCreateContactPopup();
+          case 'channel':
+            return appSidebarLeft.createTab(AppNewChannelTab).open({});
+          case 'group':
+            return createNewGroupTab(appSidebarLeft);
+          case '':
+            // the screen every "new" starts from
+            return appSidebarLeft.createTab(AppContactsTab).open();
+          default:
+            return showUnsupportedLinkToast();
+        }
+      }
+    });
+
+    addAnchorListener<{
+      pathnameParams: string[],
+      uriParams: {highlight?: string}
+    }>({
+      name: 'settings',
+      protocol: 'tg',
+      callback: ({pathnameParams, uriParams}) => {
+        // the table is written with trailing slashes in places
+        // (`tg://settings/privacy/phone-number/`) and the generated index strips
+        // them, so a path has to arrive here the same way it was addressed there
+        const path = pathnameParams.join('/').replace(/\/$/, '');
+        switch(path) {
+          case '':
+            // reuse the open Settings instead of stacking a second one
+            return (appSidebarLeft.getTab(AppSettingsTab) || appSidebarLeft.createTab(AppSettingsTab)).open();
+          case 'edit':
+          case 'edit/set-photo':
+          case 'edit/first-name':
+          case 'edit/last-name':
+          case 'edit/bio':
+          case 'edit/username':
+          case 'edit/channel':
+          case 'profile-photo': {
+            // `noSame` hands back the editor when it is already open, and a tab
+            // inits once — so the field is pointed at afterwards, from outside,
+            // the way every other settings link points at its control.
+            const tab = appSidebarLeft.createTab(AppEditProfileTab);
+            return tab.open(getEditProfileInitArgs()).then(async() => {
+              // pointing at a field while the tab is still sliding in scrolls it
+              await tab.shown;
+
+              if(path === 'profile-photo' || path === 'edit/set-photo') {
+                shake(tab.container.querySelector('.avatar-edit'));
+                return;
+              }
+
+              const [{findSettingsLink}, {focusControl, highlightSettingsEntry}] = await Promise.all([
+                import('@lib/settingsSearch/link'),
+                import('@lib/settingsSearch/highlight')
+              ]);
+
+              // which label a path names is the link table's business, the same
+              // table the search copies links from
+              const key = findSettingsLink(path)?.highlight;
+              if(!key) {
+                return;
+              }
+
+              // the personal channel is a row opening a picker, not a field to
+              // type in, so it is flashed the way the search points at it
+              if(path === 'edit/channel') {
+                highlightSettingsEntry(tab, key);
+                return;
+              }
+
+              focusControl(key, {root: tab.container, middleware: tab.middlewareHelper.get()});
+            });
+          }
+          case 'edit/birthday':
+            return this.managers.appProfileManager.getProfile(rootScope.myId).then((userFull) => {
+              showBirthdayPopup({
+                initialDate: userFull.birthday,
+                fromProfile: true,
+                onSave: saveMyBirthday
+              });
+            });
+          case 'edit/add-account':
+            // tdesktop points at the control instead of starting the flow
+            // (`SettingsControl{InformationId(), "edit/add-account"}`); ours lives
+            // in the chat list's menu, so that is the menu we open.
+            return appImManager.selectTab(APP_TABS.CHATLIST).then(() => {
+              return this.highlightMenuItem(
+                appSidebarLeft.sidebarEl.querySelector('.sidebar-header .btn-menu-toggle'),
+                'MultiAccount.AddAccount'
+              );
+            });
+          case 'edit/log-out': {
+            // tdesktop shows Settings with the log-out control highlighted
+            // (`ShowLogOutMenu`) — a link must not open the confirmation itself.
+            // Ours lives in the header menu, so the menu is opened and the item
+            // inside it is the one that flashes.
+            const settingsTab = appSidebarLeft.getTab(AppSettingsTab) || appSidebarLeft.createTab(AppSettingsTab);
+            return settingsTab.open().then(async() => {
+              // a menu opened over a tab that is still sliding in would jump
+              await settingsTab.shown;
+              return this.highlightMenuItem(
+                settingsTab.header.querySelector('.btn-menu-toggle'),
+                'EditAccount.Logout'
+              );
+            });
+          }
+          // case 'edit/change-number':
+          // case 'edit/your-color':
+
+          // an alias of `tg://chats/emoji-status`, the way tdesktop keeps it
+          case 'emoji-status':
+            return this.showEmojiStatusPicker();
+
+          // destinations that are a screen of their own: tdesktop opens the
+          // Premium and Credits sections, and ours live in popups
+          case 'premium':
+            return showPremiumPopup();
+          case 'stars':
+            return showStarsPopup();
+          case 'stars/gift':
+            return showGiftStarsPicker();
+          case 'send-gift':
+            return showSendGiftPicker();
+          case 'send-gift/self':
+            return showSendGiftPopup({peerId: rootScope.myId});
+
+          // the own QR code, as tdesktop and Android open it; `/share` points at its Share button (tdesktop), where
+          // Android presses it
+          case 'qr-code':
+            return showMyQrCodePopup();
+          case 'qr-code/share':
+            return showMyQrCodePopup(rootScope.myId, {highlightShare: true});
+
+          // destinations outside Settings, which the section table cannot address
+          case 'saved-messages':
+            return appImManager.setPeer({peerId: appImManager.myId});
+          case 'my-profile/posts/all-stories':
+            return appSidebarLeft.createTab(AppMyStoriesTab).open(AppMyStoriesTab.getInitArgs());
+          case 'my-profile/archived-posts':
+            return appSidebarLeft.createTab(AppMyStoriesTab).open({
+              ...AppMyStoriesTab.getInitArgs(),
+              isArchive: true
+            });
+          case 'ton':
+            return showStarsPopup({ton: true});
+
+          // tdesktop, Android and iOS open the change-email screen itself, which
+          // is what the Login Email row does — not the row to point at
+          case 'login_email':
+            return Promise.all([
+              this.managers.passwordManager.getState(),
+              import('@components/sidebarLeft/tabs/changeLoginEmail')
+            ]).then(([passwordState, {openChangeLoginEmailTab}]) => {
+              return openChangeLoginEmailTab(appSidebarLeft, passwordState);
+            });
+
+          default:
+            // Every section the settings search indexes is addressable — see
+            // @lib/settingsSearch/link. Imported lazily to keep the index out of
+            // the startup bundle.
+            return import('@lib/settingsSearch/navigate').then(async({openSettingsDeepLink}) => {
+              if(!await openSettingsDeepLink(path, uriParams.highlight, appSidebarLeft)) {
+                showUnsupportedLinkToast();
+              }
+            }).catch((err) => console.error('settings link failed', path, err));
+        }
+      }
+    });
+
+    // tg://contacts/
+    // tg://contacts/search
+    // tg://contacts/sort
+    // tg://contacts/new
+    // tg://contacts/invite
+    // tg://contacts/manage
+    addAnchorListener<{
+      pathnameParams: [InternalLink.InternalLinkContacts['type'] | '']
+    }>({
+      name: 'contacts',
+      protocol: 'tg',
+      callback: ({pathnameParams}) => {
+        const [type = ''] = pathnameParams;
+        switch(type) {
+          case 'new':
+            return showCreateContactPopup();
+          case 'search':
+          case '':
+            return appSidebarLeft.createTab(AppContactsTab).open();
+          case 'sort':
+            return appSidebarLeft.createTab(AppContactsTab).open({highlight: 'sort'});
+          // case 'invite':
+          // case 'manage':
+          default:
+            return showUnsupportedLinkToast();
+        }
+      }
+    });
+
+    // tg://chats/search
+    // tg://chats/emoji-status
+    addAnchorListener<{
+      pathnameParams: [InternalLink.InternalLinkChats['type'] | '']
+    }>({
+      name: 'chats',
+      protocol: 'tg',
+      callback: ({pathnameParams}) => {
+        const [type] = pathnameParams;
+        switch(type) {
+          case 'search':
+            return this.openChatListSearch();
+          case 'emoji-status':
+            return this.showEmojiStatusPicker();
+          // tdesktop's `chats` section answers to these two paths and nothing
+          // else — a bare `tg://chats` included
+          default:
+            return showUnsupportedLinkToast();
+        }
+      }
+    });
+
+    // t.me/addstyle/<slug>
+    addAnchorListener<{pathnameParams: ['addstyle', string]}>({
+      name: 'addstyle',
+      callback: ({pathnameParams}) => {
+        if(!pathnameParams[1]) {
+          return;
+        }
+
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.ADD_AI_STYLE,
+          slug: pathnameParams[1]
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    // t.me/contact/<token>?free=<code>
+    addAnchorListener<{pathnameParams: ['contact', string], uriParams: {free?: string}}>({
+      name: 'contact',
+      callback: ({pathnameParams, uriParams}) => {
+        // the path keeps the token percent-encoded; a broken escape leaves it as it came, a dead link
+        const token = tryDecodeURIComponent(pathnameParams[1] || '');
+
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.CONTACT_TOKEN,
+          token,
+          free: uriParams.free
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    // tg://contact?token=<token>&free=<code>
+    addAnchorListener<{uriParams: {token?: string, free?: string}}>({
+      name: 'contact',
+      protocol: 'tg',
+      callback: ({uriParams}) => {
+        const link = this.makeLink(INTERNAL_LINK_TYPE.CONTACT_TOKEN, {token: uriParams.token || '', free: uriParams.free});
+        return this.processInternalLink(link);
+      }
+    });
+  }
+
+  /** What `tg://chats/emoji-status` — and its `tg://settings` alias — opens. */
+  private showEmojiStatusPicker() {
+    const managers = bindManagersToSession(this.managers);
+    // iOS opens the picker itself, from where it always opens — for us
+    // that is the status button in the chat list header.
+    const statusBtn = appSidebarLeft.sidebarEl.querySelector<HTMLElement>('.sidebar-emoji-status');
+
+    // no button means no premium — the same promo the control itself
+    // shows when it is used without it (tdesktop: ShowPremiumPreviewBox).
+    // Nothing to reach, so nothing is closed to reach it.
+    if(!statusBtn) {
+      return showPremiumPopup({feature: 'emoji_status'});
+    }
+
+    return appImManager.selectTab(APP_TABS.CHATLIST).then(async() => {
+      // the button belongs to the chat list's own header, so whatever is
+      // stacked over the list has to go — the natural way, letting a tab
+      // that asks before closing ask
+      if(!await appSidebarLeft.closeEverythingInsideNaturally()) {
+        return;
+      }
+
+      // the button opens the picker on its own, and plays its animation
+      // when the status changes; only a collapsed column hides it, and a
+      // hidden anchor would leave the picker in the corner of the screen
+      if(statusBtn.offsetParent) {
+        simulateClickEvent(statusBtn);
+        return;
+      }
+
+      const {openEmojiStatusPicker} = await import('@components/sidebarLeft/emojiStatusPicker');
+      openEmojiStatusPicker({
+        managers,
+        anchorElement: statusBtn.closest('.sidebar-header')
+      });
+    });
+  }
+
+  /**
+   * Puts the caret in the chat list's search — what tdesktop's `chats/search`
+   * does (`searchMessages(QString(), Dialogs::Key())`): the field, empty, with
+   * nothing left over it.
+   */
+  private async openChatListSearch() {
+    await appImManager.selectTab(APP_TABS.CHATLIST);
+
+    if(!await appSidebarLeft.closeEverythingInsideNaturally()) {
+      return;
+    }
+
+    appSidebarLeft.initSearch().open();
+  }
+
+  /** Points at a control that lives in the menu behind `toggle`. */
+  private async highlightMenuItem(toggle: HTMLElement, key: LangPackKey) {
+    const {highlightMenuControl} = await import('@lib/settingsSearch/highlight');
+    highlightMenuControl(toggle, key);
+  }
+
+  private makeLink<T extends INTERNAL_LINK_TYPE>(type: T, uriParams: Omit<InternalLinkTypeMap[T], '_'>) {
+    return {
+      _: type,
+      ...uriParams
+    } as any as InternalLinkTypeMap[T];
+  }
+
+  /**
+   * A link's `?free=<code>`, spent on the user it names, as Android does: their chat opens whatever the answer, and a
+   * moment later says whether their message fee is gone for us. A link of one's own only opens the own chat.
+   */
+  private async importNoPaidMessagesToken(managers: AppManagers, user: User.user, token: string) {
+    const peerId = user.id.toPeerId(false);
+    if(user.pFlags.self) {
+      return appImManager.setInnerPeer({peerId});
+    }
+
+    // the account the link was opened in: once the tab has left it, the link goes no further
+    const session = getManagersSession(managers);
+    let error: ApiError;
+    try {
+      await managers.appUsersManager.importNoPaidMessagesToken(user.id, token);
+    } catch(err) {
+      error = err as ApiError;
+    }
+
+    if(isSessionLeaving(session)) return;
+    await appImManager.setInnerPeer({peerId});
+    // the toast speaks of the chat, so it comes once the chat is there
+    await pause(NO_PAID_TOKEN_TOAST_DELAY);
+    if(isSessionLeaving(session)) return;
+    if(error) {
+      toastNew({langPackKey: error.type?.startsWith('USER_') ? 'NoPaidMessagesToken.UserInvalid' : 'NoPaidMessagesToken.Invalid'});
+      return;
+    }
+
+    toastNew({
+      langPackKey: 'NoPaidMessagesToken.Imported',
+      langPackArguments: [await wrapPeerTitle({peerId, onlyFirstName: true})]
+    });
+  }
+
+  /**
+   * `t.me/<username>?free=<code>`: the code removes the message fee of the user it names; the rest of the link is not
+   * looked at. A name that is not a user's is "no account", as on Android.
+   */
+  private async useNoPaidMessagesToken(link: InternalLink.InternalLinkMessage) {
+    const managers = bindManagersToSession(this.managers);
+    let peer;
+    try {
+      peer = await managers.appUsersManager.resolveUsername(link.domain);
+    } catch(err) {
+      this.showUsernameResolveError(err as ApiError);
+      return;
+    }
+
+    if(peer?._ !== 'user') {
+      toastNew({langPackKey: 'NoUsernameFound'});
+      return;
+    }
+
+    await this.importNoPaidMessagesToken(managers, peer, link.free);
+  }
+
+  public processMessageLink = async(link: InternalLink.InternalLinkMessage) => {
+    const managers = bindManagersToSession(this.managers);
+    if(link.free) {
+      return this.useNoPaidMessagesToken(link);
+    }
+
+    if(link.game) {
+      return this.shareGame(link);
+    }
+
+    if(link.startgroup !== undefined || link.startchannel !== undefined) {
+      const requestedRights = parseBotAdminRights(link.admin);
+      const scope = getBotAddToChatScope(link, requestedRights);
+      return managers.appUsersManager.resolveUsername(link.domain).then(async(peer) => {
+        if(peer._ === 'user' && peer.pFlags.bot) {
+          await showAddBotToChat({
+            botId: peer.id as BotId,
+            scope,
+            startParam: link.startgroup,
+            requestedRights
+          });
+          return;
+        }
+
+        await appImManager.openUsername({userName: link.domain});
+      }, (err: ApiError) => {
+        this.showUsernameResolveError(err);
+      });
+    }
+
+    const postId = link.post ? +link.post : undefined;
+    const commentId = link.comment ? +link.comment : undefined;
+    const threadId = link.thread ? +link.thread : undefined;
+
+    return appImManager.openUsername({
+      userName: link.domain,
+      lastMsgId: postId,
+      pollOption: link.option,
+      commentId,
+      startParam: link.start,
+      stack: link.stack,
+      threadId,
+      mediaTimestamp: link.t && +link.t,
+      text: link.text,
+      wholeAlbum: link.single === undefined
+    });
+  };
+
+  /**
+   * `t.me/<bot>?game=<short_name>`: the game goes to a chat the user picks - a forum's topic, never
+   * Saved Messages - once they confirm it, and that chat opens (tdesktop's `ShowShareGameBox`). A name
+   * that is not a bot's opens as it would without the game.
+   */
+  private async shareGame(link: InternalLink.InternalLinkMessage): Promise<unknown> {
+    const managers = bindManagersToSession(this.managers);
+    const bot = await managers.appUsersManager.resolveUserByUsername(link.domain).catch(missUnlessSessionEnded);
+    if(!bot || !bot.pFlags.bot) {
+      return this.processMessageLink({...link, game: undefined});
+    }
+
+    let chosen: Awaited<ReturnType<typeof showSharingPicker2Popup>>;
+    try {
+      chosen = await showSharingPicker2Popup({
+        chatRightsActions: ['send_games'],
+        exceptSelf: true,
+        useTopics: true
+      });
+
+      await confirmationPopup({
+        descriptionLangKey: 'SendGameToText',
+        // * a channel's direct-message conversation is named by its other side, as the picker's row is
+        descriptionLangArgs: [await wrapPeerTitle({peerId: chosen.peerId, threadId: chosen.threadId ?? chosen.monoforumThreadId})],
+        button: {langKey: 'OK'}
+      });
+    } catch{
+      return;
+    }
+
+    // * confirmed for the account it was asked on: nothing is sent or opened once the tab is on another
+    if(isSessionLeaving(getManagersSession(managers))) {
+      return;
+    }
+
+    const {peerId, threadId, monoforumThreadId} = chosen;
+    managers.appGamesManager.shareGame({
+      peerId,
+      threadId,
+      monoforumThreadId,
+      botId: bot.id,
+      shortName: link.game
+    }).catch((err: ApiError) => {
+      // * no message stands for the game until the server sends it, so the chat cannot show that it
+      // * failed: it is said here, as tdesktop does; a slow mode wait has its own popup (appImManager)
+      if(err?.type === 'MIDDLEWARE' || err?.type?.startsWith('SLOWMODE_WAIT')) {
+        return;
+      }
+
+      toastNew({langPackKey: 'Error.AnError'});
+    });
+
+    return appImManager.setInnerPeer({peerId, threadId, monoforumThreadId});
+  }
+
+  public processPrivatePostLink = async(link: InternalLink.InternalLinkPrivatePost) => {
+    const managers = bindManagersToSession(this.managers);
+    const chatId = link.channel.toChatId();
+    const userId = link.channel.toUserId();
+
+    const {chat, isBotforum, user} = await namedPromises({
+      chat: managers.appChatsManager.getChat(chatId),
+      isBotforum: managers.appUsersManager.isBotforum(userId),
+      user: managers.appUsersManager.getUser(userId)
+    });
+
+    if(!chat && !isBotforum) {
+      try {
+        await managers.appChatsManager.resolveChannel(chatId);
+      } catch(err) {
+        toastNew({langPackKey: 'LinkNotFound'});
+        throw err;
+      }
+    }
+
+    const postId = +link.post;
+    const threadId = link.thread ? +link.thread : undefined;
+
+    return appImManager.op({
+      peer: chat || user,
+      lastMsgId: postId,
+      threadId,
+      pollOption: link.option,
+      stack: link.stack,
+      mediaTimestamp: link.t && +link.t,
+      wholeAlbum: link.single === undefined
+    });
+  };
+
+  public processStickerSetLink = (link: InternalLink.InternalLinkStickerSet | InternalLink.InternalLinkEmojiSet) => {
+    return showStickersPopup(getStickerSetInputByShortName(link.set), link._ === INTERNAL_LINK_TYPE.EMOJI_SET);
+  };
+
+  public processJoinChatLink = (link: InternalLink.InternalLinkJoinChat) => {
+    return this.managers.appChatInvitesManager.checkChatInvite(link.invite).then(async(chatInvite) => {
+      if(chatInvite._ === 'chatInviteAlready' ||
+        chatInvite._ === 'chatInvitePeek'/*  && chatInvite.expires > tsNow(true) */) {
+        // `open` (not `setInnerPeer`) so a forum routes through `op` and opens the topics tab
+        // in the left sidebar instead of just dropping into the chat view (same as bug with
+        // openChatFromInvite).
+        appImManager.open({
+          peerId: chatInvite.chat.id.toPeerId(true)
+        });
+        return;
+      }
+
+      if(chatInvite.subscription_pricing && !chatInvite.pFlags.can_refulfill_subscription) {
+        const inputInvoice: InputInvoice = {
+          _: 'inputInvoiceChatInviteSubscription',
+          hash: link.invite
+        };
+
+        const popup = await createPaymentPopup({
+          inputInvoice,
+          chatInvite,
+          noPaymentForm: true
+        });
+
+        popup.addEventListener('finish', (result) => {
+          if(result === 'paid') {
+            this.processJoinChatLink(link);
+          }
+        });
+
+        return popup;
+      }
+
+      return showJoinChatInvitePopup(link.invite, chatInvite as any);
+    }, (err: ApiError) => {
+      if(err.type === 'INVITE_HASH_EXPIRED') {
+        toastNew({langPackKey: 'InviteExpired'});
+      }
+    });
+  };
+
+  /**
+   * A chat's video chat or live stream: t.me/<chat>?videochat (?voicechat, ?livestream), tg://resolve?domain=…&videochat,
+   * and tg://voicechat?chat_id=…&id=…, the address the "video chat" of a call's service message carries. The chat is
+   * opened first; a link then joins only the call running there, the one it names, never a new one, and only once
+   * asked (`joinCallFromLink`, as tdesktop's joinVoiceChatFromLink). Only the service message's own anchor joins as
+   * the chat's Join button does (tdesktop GroupCallClickHandler): the same address can come from anywhere.
+   */
+  public processVoiceChatLink = async(
+    link: InternalLink.InternalLinkVoiceChat,
+    options?: {fromServiceMessage?: boolean}
+  ) => {
+    let peerId: PeerId;
+    if(link.chat_id !== undefined) {
+      if(!IS_GROUP_CALL_SUPPORTED || !link.id) {
+        return;
+      }
+
+      peerId = link.chat_id.toPeerId(true);
+    } else if(link.domain) {
+      let peer: User | Chat;
+      try {
+        peer = await this.managers.appUsersManager.resolveUsername(link.domain);
+      } catch(err) {
+        this.showUsernameResolveError(err as ApiError);
+        return;
+      }
+
+      // * a call is a chat's: a user's link is the user's (tdesktop shows the peer)
+      if(peer._ === 'user') {
+        return appImManager.openUsername({userName: link.domain});
+      }
+
+      peerId = peer.id.toPeerId(true);
+    } else {
+      return;
+    }
+
+    if(appImManager.chat.peerId !== peerId) {
+      await appImManager.setInnerPeer({peerId});
+    }
+
+    if(options?.fromServiceMessage) {
+      return appImManager.joinGroupCall(peerId, link.id);
+    }
+
+    // * ?voicechat=<hash>: a speaker invite, which the join hands over (tdesktop PeerByLinkInfo::voicechatHash)
+    const inviteHash = link.livestream ?? link.videochat ?? link.voicechat;
+    return appImManager.joinCallFromLink(peerId, link.id, inviteHash || undefined);
+  };
+
+  // t.me/call/<slug> handler. Hand the slug to `appImManager.joinConference`,
+  // the single conference-join policy entry point — it owns the support gate,
+  // the "already in a call" guard and the dead-link error UX (so re-clicking
+  // the link while already in the call doesn't rejoin). tdesktop equivalent:
+  // SessionNavigation::resolveConferenceCall → startOrJoinConferenceCall.
+  public processConferenceCallLink = (
+    link: InternalLink.InternalLinkConferenceCall,
+    options?: JoinConferenceOptions
+  ) => {
+    // The slug is an opaque token the server minted; a malformed one is a dead
+    // link, and it gets the same notice as an expired one.
+    if(typeof(link.slug) !== 'string' || !CONFERENCE_CALL_SLUG_REGEXP.test(link.slug)) {
+      toastNew({langPackKey: 'InviteExpired'});
+      return Promise.resolve();
+    }
+
+    return appImManager.joinConference({_: 'inputGroupCallSlug', slug: link.slug}, options);
+  };
+
+  /**
+   * Sender of the message a link was clicked in. tdesktop threads the clicked
+   * item through the click handler's context and names its sender in the
+   * conference join confirmation (window_session_controller.cpp:1023); here
+   * the click is the only thread back to that message.
+   *
+   * A surface that already knows its message says so on the anchor it builds
+   * (`getWebPageActionOnClick`) — that covers the buttons which have no
+   * rendered message around them, like the pinned bar's Join call. Otherwise
+   * the link is text inside a bubble, and the bubble is what identifies it.
+   */
+  private getClickedMessageSenderPeerId(element?: HTMLElement, event?: Event) {
+    const stamped = element?.dataset?.fromId ||
+      findUpAttribute(event?.target as HTMLElement, 'data-from-id')?.dataset.fromId;
+    if(stamped) {
+      return stamped.toPeerId();
+    }
+
+    const bubble = findUpClassName(element, 'bubble') ||
+      findUpClassName(event?.target as HTMLElement, 'bubble');
+    const chat = appImManager.chat;
+    if(!bubble || !chat || bubble.dataset.peerId !== '' + chat.peerId) {
+      return;
+    }
+
+    return chat.getMessage(makeFullMid(chat.peerId, +bubble.dataset.mid))?.fromId;
+  }
+
+  public processAddAiStyleLink = async(link: InternalLink.InternalLinkAddAiStyle) => {
+    if(this.processingAddAiStyleSlugs.has(link.slug)) return;
+    this.processingAddAiStyleSlugs.add(link.slug);
+
+    try {
+      const {module: {default: showViewTonePopup}, tone, tones} = await namedPromises({
+        module: import('@components/popups/aiEditorPopup/viewTonePopup'),
+        tone: this.managers.aiTonesManager.getToneBySlug(link.slug),
+        tones: this.managers.aiTonesManager.getTones()
+      });
+      if(!tone) throw new Error();
+
+      const savedTones = tones.filter((t) => t._ === 'aiComposeTone').length;
+      const isSaved = !tone.pFlags.creator && tones.some((t) => t._ === 'aiComposeTone' && t.id.toString() === tone.id.toString());
+
+      showViewTonePopup({
+        tone,
+        isSaved,
+        savedTones,
+        HotReloadGuard: SolidJSHotReloadGuardProvider
+      });
+    } catch{
+      toastNew({
+        langPackKey: 'AiEditor.StyleNotFound'
+      });
+    } finally {
+      this.processingAddAiStyleSlugs.delete(link.slug);
+    }
+  };
+
+  public processUserPhoneNumberLink = (link: InternalLink.InternalLinkUserPhoneNumber) => {
+    const managers = bindManagersToSession(this.managers);
+    return managers.appUsersManager.resolvePhone(link.phone).then((user): Promise<unknown> => {
+      // `t.me/+<phone>?free=<code>`: the code removes the message fee of the user the number names
+      if(link.free) {
+        return this.importNoPaidMessagesToken(managers, user as User.user, link.free);
+      }
+
+      return appImManager.setInnerPeer({
+        peerId: user.id.toPeerId(false),
+        text: link.text
+      });
+    }).catch((err: ApiError) => {
+      if(err.type === 'PHONE_NOT_OCCUPIED') {
+        toastNew({langPackKey: 'Alert.UserDoesntExists'});
+      }
+    });
+  };
+
+  public processInvoiceLink = (link: InternalLink.InternalLinkInvoice) => {
+    const managers = bindManagersToSession(this.managers);
+    return managers.appPaymentsManager.getInputInvoiceBySlug(link.slug).then((inputInvoice) => {
+      return managers.appPaymentsManager.getPaymentForm(inputInvoice).then((paymentForm) => {
+        // const message: Message.message = {
+        //   _: 'message',
+        //   date: 0,
+        //   id: 0,
+        //   peerId: 0,
+        //   peer_id: undefined,
+        //   message: '',
+        //   media: {
+        //     _: 'messageMediaInvoice',
+        //     currency: paymentForm.invoice.currency,
+        //     description: paymentForm.description,
+
+        //   }
+        // };
+        return createPaymentPopup({inputInvoice, paymentForm});
+      }, (err) => {
+        if((err as ApiError).type === 'SLUG_INVALID') {
+          toastNew({langPackKey: 'PaymentInvoiceLinkInvalid'});
+        }
+
+        throw err;
+      });
+    });
+  };
+
+  public processAttachMenuBotLink = async(link: InternalLink.InternalLinkAttachMenuBot) => {
+    const botUsername = link.attach || link.domain || (link.nestedLink as InternalLink.InternalLinkMessage).domain;
+    const user = await this.managers.appUsersManager.resolveUserByUsername(botUsername).catch(() => undefined as User.user);
+
+    let processInternalLinkResult: any;
+    if(link.attach !== undefined) {
+      processInternalLinkResult = this.processInternalLink(link.nestedLink);
+    }
+
+    let errorLangPackKey: LangPackKey;
+    if(!user) {
+      errorLangPackKey = 'Alert.UserDoesntExists';
+    } else if(!user.pFlags.bot_attach_menu) {
+      errorLangPackKey = 'BotCantAddToAttachMenu';
+    }/*  else if(user.pFlags.attach_menu_enabled) {
+      errorLangPackKey = 'BotAlreadyAddedToAttachMenu';
+    } */
+
+    if(errorLangPackKey) {
+      toastNew({langPackKey: errorLangPackKey});
+      return;
+    }
+
+    processInternalLinkResult && await processInternalLinkResult;
+    const attachMenuBot = await appImManager.toggleBotInAttachMenu(user.id, true);
+
+    if(link.choose) {
+      type ChooseType = typeof link['choose'];
+      const choose = link.choose.split('+') as ChooseType[];
+      const verifyMap: {
+        [type in ChooseType]: AttachMenuPeerType['_']
+      } = {
+        bots: 'attachMenuPeerTypeBotPM',
+        users: 'attachMenuPeerTypePM',
+        groups: 'attachMenuPeerTypeChat',
+        channels: 'attachMenuPeerTypeBroadcast'
+      };
+
+      const filteredTypes = choose.filter((type) => {
+        const peerTypePredicate = verifyMap[type];
+        return attachMenuBot.peer_types.some((peerType) => peerType._ === peerTypePredicate);
+      });
+
+      const chosenPeerId = await showPickUser3Popup(filteredTypes);
+      await appImManager.setInnerPeer({peerId: chosenPeerId});
+    }
+
+    appImManager.chat.openWebApp({attachMenuBot, startParam: link.startattach});
+  };
+
+  public processWebAppLink = async(link: InternalLink.InternalLinkWebApp) => {
+    const managers = bindManagersToSession(this.managers);
+    const user = await managers.appUsersManager.resolveUserByUsername(link.domain).catch(() => undefined as User.user);
+    if(!user) {
+      toastNew({langPackKey: 'Alert.UserDoesntExists'});
+      return;
+    }
+
+    const botId = user.id;
+    const commonOptions: Partial<RequestWebViewOptions> = {
+      compact: link.mode === 'compact',
+      fullscreen: link.mode === 'fullscreen',
+      startParam: link.startapp,
+      botId
+    };
+
+    if(!link.appname) {
+      if(!user.pFlags.bot_has_main_app) {
+        toastNew({langPackKey: 'Alert.BotAppDoesntExist'});
+        return;
+      }
+
+      if(link.masked) {
+        await appImManager.confirmBotWebViewInner({
+          botId
+        });
+      }
+
+      appImManager.chat.openWebApp({
+        ...commonOptions,
+        main: true
+      });
+
+      return;
+    }
+
+    let messagesBotApp: MessagesBotApp;
+    try {
+      messagesBotApp = await managers.appAttachMenuBotsManager.getBotApp(botId, link.appname);
+    } catch(err) {
+      if((err as ApiError).type === 'BOT_APP_INVALID') {
+        toastNew({langPackKey: 'Alert.BotAppDoesntExist'});
+        return;
+      } else {
+        throw err;
+      }
+    }
+
+    const attachMenuBot = user.pFlags.bot_attach_menu && await appImManager.toggleBotInAttachMenu(botId, true);
+
+    let haveWriteAccess: boolean;
+    if(attachMenuBot) {
+
+    } else if(link.masked || messagesBotApp.pFlags.inactive) {
+      haveWriteAccess = await appImManager.confirmBotWebViewInner({
+        botId,
+        requestWriteAccess: messagesBotApp.pFlags.request_write_access,
+        showDisclaimer: user.pFlags.bot_attach_menu && messagesBotApp.pFlags.inactive
+      });
+    }
+
+    appImManager.chat.openWebApp({
+      ...commonOptions,
+      attachMenuBot,
+      writeAllowed: haveWriteAccess,
+      app: messagesBotApp.app as BotApp.botApp,
+      noConfirmation: !attachMenuBot,
+      hasSettings: messagesBotApp.pFlags.has_settings
+    });
+  };
+
+  public processListLink = async(link: InternalLink.InternalLinkAddList) => {
+    let chatlistInvite: ChatlistsChatlistInvite;
+    try {
+      chatlistInvite = await this.managers.filtersStorage.checkChatlistInvite(link.slug);
+    } catch(err) {
+      if((err as ApiError).type === 'INVITE_SLUG_EXPIRED') {
+        toastNew({langPackKey: 'SharedFolder.Link.Expired'});
+        return;
+      }
+
+      throw err;
+    }
+
+    showSharedFolderInvitePopup({
+      chatlistInvite,
+      slug: link.slug
+    });
+  };
+
+  public processStoryLink = async(link: InternalLink.InternalLinkStory) => {
+    const managers = bindManagersToSession(this.managers);
+    const event = window.event;
+    const bubble = findUpClassName(event.target as HTMLElement, 'bubble');
+    if(bubble && bubble.classList.contains('story')) {
+      simulateClickEvent(bubble.querySelector('.media-container').querySelector('img, video'));
+      return;
+    }
+
+    let peer: User.user | Chat;
+    try {
+      peer = await managers.appUsersManager.resolveUsername(link.domain);
+    } catch(err) {
+      if((err as ApiError).type === 'USERNAME_NOT_OCCUPIED') {
+        toastNew({langPackKey: 'NoUsernameFound'});
+      } else {
+        console.error(err);
+      }
+
+      return;
+    }
+
+    const peerId = peer.id.toPeerId(peer._ !== 'user');
+    // * `t.me/<name>/s/live` names the peer's current live stream, not a story id — open the peer's
+    // * stories, as tdesktop does
+    if(link.story === 'live') {
+      const peerStories = await managers.appStoriesManager.getPeerStories(peerId);
+      if(!peerStories?.stories.length) {
+        toastNew({langPackKey: 'NoStoryFound'});
+        return;
+      }
+
+      createStoriesViewerWithPeer({peerId});
+      return;
+    }
+
+    const storyItem = await managers.appStoriesManager.getStoryById(peerId, +link.story);
+    if(!storyItem) {
+      toastNew({langPackKey: 'NoStoryFound'});
+      return;
+    }
+
+    createStoriesViewerWithPeer({
+      peerId,
+      id: +link.story
+    });
+  };
+
+  public processBoostLink = async(link: InternalLink.InternalLinkBoost) => {
+    let peerId = link.channel ? link.channel.toPeerId(true) : undefined;
+    if(peerId === undefined) {
+      const chat = await this.managers.appUsersManager.resolveUsername(link.domain) as Chat;
+      peerId = chat.id.toPeerId(true);
+    }
+
+    showBoostPopup(peerId);
+  };
+
+  public processPremiumFeaturesLink = async(link: InternalLink.InternalLinkPremiumFeatures) => {
+    if(rootScope.premium) {
+      toastNew({langPackKey: 'Premium.Offset.AlreadyHave'});
+      return;
+    }
+
+    // * a bare tg://premium_offer is reported as tdesktop reports it
+    showPremiumPopup({ref: link.ref || 'deeplink'});
+  };
+
+  public processGiftCodeLink = (link: InternalLink.InternalLinkGiftCode) => {
+    showGiftLinkPopup(link.slug, link.stack);
+  };
+
+  public processBusinessChatLink = async(link: InternalLink.InternalLinkBusinessChat) => {
+    const resolved = await this.managers.appBusinessManager.resolveBusinessChatLink(link.slug);
+    appImManager.setInnerPeer({
+      peerId: resolved.peerId,
+      text: resolved.message,
+      entities: resolved.entities
+    });
+  };
+
+  public processWalletSendLink = (link: InternalLink.InternalLinkWalletSend) => {
+    return import('@components/wallet').then(({default: showWalletPopup}) => {
+      showWalletPopup({send: {
+        to: link.to,
+        amount: link.amount,
+        comment: link.text,
+        // * as Android reads a flag: present and not "0" or "false"
+        encrypted: !!link.encrypted && !/^(0|false)$/i.test(link.encrypted),
+        tonLink: link.tonLink
+      }});
+    });
+  };
+
+  public processTonConnectLink = (link: InternalLink.InternalLinkTonConnect) => {
+    return import('@components/wallet/tonConnect').then(({openTonConnectLink}) => openTonConnectLink(link.url));
+  };
+
+  public processStarsTopupLink = async(link: InternalLink.InternalLinkStarsTopup) => {
+    const middlewareHelper = getMiddleware();
+    const balance = +(await prefetchStars(middlewareHelper.get()));
+    middlewareHelper.destroy();
+
+    const purpose = link.purpose || 'topup';
+
+    const itemPrice = +link.balance;
+    if(balance >= itemPrice) {
+      toastNew({
+        langPackKey: 'Stars.TopUp.Enough',
+        langPackArguments: [
+          anchorCallback(() => {
+            hideToast();
+            const popup = showStarsPopup({
+              onTopup: () => {
+                popup.hide();
+              },
+              purpose
+            });
+          })
+        ]
+      });
+      return;
+    }
+
+    const popup = showStarsPopup({
+      itemPrice,
+      onTopup: () => {
+        popup.hide();
+      },
+      purpose
+    });
+  };
+
+  public processShareLink = async(link: InternalLink.InternalLinkShare) => {
+    const managers = bindManagersToSession(rootScope.managers);
+    const {peerId, threadId, monoforumThreadId} = await showSharingPicker2Popup();
+    // The shared text becomes a draft of the chosen chat — any chat, the way
+    // tdesktop's `MainWidget::shareUrl` does it. `setInnerPeer({text})` is the
+    // `?text=` deep-link path, which only prefills private chats.
+    const text = [link.url, link.text].filter(Boolean).join('\n');
+    if(text) {
+      await managers.appDraftsManager.setDraft(peerId, threadId || monoforumThreadId, text);
+    }
+
+    appImManager.setInnerPeer({peerId, threadId, monoforumThreadId});
+  };
+
+  public processUniqueStarGiftLink = async(link: InternalLink.InternalLinkUniqueStarGift) => {
+    const gift = await this.managers.appGiftsManager.getGiftBySlug(link.slug).catch(noop);
+    if(!gift) {
+      toastNew({langPackKey: 'Error.AnError'});
+      return;
+    }
+
+    showStarGiftInfoPopup({gift});
+  };
+
+  public processStarGiftCollectionLink = async(link: InternalLink.InternalLinkStarGiftCollection) => {
+    const peer = await this.managers.appUsersManager.resolveUsername(link.domain);
+    const peerId = peer.id.toPeerId(peer._ !== 'user');
+    if(appImManager.chat.peerId !== peerId) {
+      await appImManager.setInnerPeer({peerId});
+      await pause(500);
+    }
+    appSidebarRight.toggleSidebar(true, true);
+    const sharedMediaTab = appSidebarRight.sharedMediaTab;
+    await sharedMediaTab.setSearchTab('gifts');
+    if(appSidebarRight.sharedMediaTab !== sharedMediaTab) return;
+    sharedMediaTab.searchSuper.stargiftsActions?.setFilters({chosenCollection: Number(link.id)});
+  };
+
+  public processStoryAlbumLink = async(link: InternalLink.InternalLinkStoryAlbum) => {
+    const peer = await this.managers.appUsersManager.resolveUsername(link.domain);
+    const peerId = peer.id.toPeerId(peer._ !== 'user');
+    const albumId = +link.id;
+
+    if(peerId === rootScope.myId) {
+      const existing = appSidebarRight.getTab(AppMyStoriesTab);
+      if(existing) {
+        (existing as any).setAlbum(albumId);
+        return;
+      }
+
+      await appSidebarRight.createTab(AppMyStoriesTab).open({...AppMyStoriesTab.getInitArgs(), initialAlbumId: albumId});
+      appSidebarRight.toggleSidebar(true, true);
+    } else {
+      if(appImManager.chat.peerId !== peerId) {
+        await appImManager.setInnerPeer({peerId});
+        await pause(500);
+      }
+      appSidebarRight.toggleSidebar(true, true);
+      const sharedMediaTab = appSidebarRight.sharedMediaTab;
+      await sharedMediaTab.setSearchTab('stories');
+      if(appSidebarRight.sharedMediaTab !== sharedMediaTab) return;
+      sharedMediaTab.searchSuper.storiesSetAlbum(albumId);
+    }
+  };
+
+  /**
+   * Someone's "My QR code" link: the server makes its owner a contact and names them; a token that
+   * has expired, or a user who is gone, is a dead link (tdesktop's `resolveContactToken`). With
+   * `?free=<code>` the code is spent on them before their chat opens, as Android does.
+   */
+  public processContactTokenLink = async(link: InternalLink.InternalLinkContactToken) => {
+    const managers = bindManagersToSession(this.managers);
+    const user = link.token ?
+      await managers.appUsersManager.importContactToken(link.token).catch(missUnlessSessionEnded) :
+      undefined;
+    if(!user || user._ !== 'user' || user.pFlags.deleted) {
+      toastNew({langPackKey: 'ContactLinkInvalid'});
+      return;
+    }
+
+    if(link.free) {
+      return this.importNoPaidMessagesToken(managers, user, link.free);
+    }
+
+    return appImManager.setInnerPeer({peerId: user.id.toPeerId(false)});
+  };
+
+  /**
+   * A tg:// link this client does not know: the server is asked about it, and what it has to say is
+   * shown (tdesktop's `HandleUnknown`; its offer to update the app is for an installed one). When it
+   * has nothing to say, the link may still be another Telegram app's: it is offered to the system the
+   * way a plain link went before, on a press of Open: after the lookup the click that brought it here
+   * no longer counts as the user's, and the browser would block it.
+   */
+  public processUnknownDeepLink = async(element: HTMLAnchorElement) => {
+    const managers = bindManagersToSession(this.managers);
+    // tdesktop asks with what follows `tg://` up to the query
+    const path = element.href.replace(/^tg:(?:\/\/)?/i, '').split(/[?#]/)[0];
+    const info = await managers.apiManager.getDeepLinkInfo(path).catch(missUnlessSessionEnded);
+    if(info && info._ === 'help.deepLinkInfo') {
+      return confirmationPopup({
+        button: {langKey: 'OK', isCancel: true},
+        description: wrapRichText(info.message, {entities: info.entities})
+      }).catch(noop);
+    }
+
+    this.showOpenUrlAlert(element);
+  };
+
+  public processInstantViewLink = (link: InternalLink.InternalLinkInstantView) => {
+    openInstantViewInAppBrowser({
+      cachedPage: link.url,
+      HotReloadGuardProvider: SolidJSHotReloadGuardProvider
+    });
+  };
+
+  public processInternalLink(link: InternalLink) {
+    const map: {
+      [key in InternalLink['_']]?: (link: any) => any
+    } = {
+      [INTERNAL_LINK_TYPE.MESSAGE]: this.processMessageLink,
+      [INTERNAL_LINK_TYPE.PRIVATE_POST]: this.processPrivatePostLink,
+      [INTERNAL_LINK_TYPE.EMOJI_SET]: this.processStickerSetLink,
+      [INTERNAL_LINK_TYPE.STICKER_SET]: this.processStickerSetLink,
+      [INTERNAL_LINK_TYPE.JOIN_CHAT]: this.processJoinChatLink,
+      [INTERNAL_LINK_TYPE.VOICE_CHAT]: this.processVoiceChatLink,
+      [INTERNAL_LINK_TYPE.USER_PHONE_NUMBER]: this.processUserPhoneNumberLink,
+      [INTERNAL_LINK_TYPE.INVOICE]: this.processInvoiceLink,
+      [INTERNAL_LINK_TYPE.ATTACH_MENU_BOT]: this.processAttachMenuBotLink,
+      [INTERNAL_LINK_TYPE.WEB_APP]: this.processWebAppLink,
+      [INTERNAL_LINK_TYPE.ADD_LIST]: this.processListLink,
+      [INTERNAL_LINK_TYPE.STORY]: this.processStoryLink,
+      [INTERNAL_LINK_TYPE.BOOST]: this.processBoostLink,
+      [INTERNAL_LINK_TYPE.PREMIUM_FEATURES]: this.processPremiumFeaturesLink,
+      [INTERNAL_LINK_TYPE.GIFT_CODE]: this.processGiftCodeLink,
+      [INTERNAL_LINK_TYPE.BUSINESS_CHAT]: this.processBusinessChatLink,
+      [INTERNAL_LINK_TYPE.STARS_TOPUP]: this.processStarsTopupLink,
+      [INTERNAL_LINK_TYPE.SHARE]: this.processShareLink,
+      [INTERNAL_LINK_TYPE.UNIQUE_STAR_GIFT]: this.processUniqueStarGiftLink,
+      [INTERNAL_LINK_TYPE.STAR_GIFT_COLLECTION]: this.processStarGiftCollectionLink,
+      [INTERNAL_LINK_TYPE.STORY_ALBUM]: this.processStoryAlbumLink,
+      [INTERNAL_LINK_TYPE.INSTANT_VIEW]: this.processInstantViewLink,
+      [INTERNAL_LINK_TYPE.CONFERENCE_CALL]: this.processConferenceCallLink,
+      [INTERNAL_LINK_TYPE.ADD_AI_STYLE]: this.processAddAiStyleLink,
+      [INTERNAL_LINK_TYPE.CONTACT_TOKEN]: this.processContactTokenLink,
+      [INTERNAL_LINK_TYPE.WALLET_SEND]: this.processWalletSendLink,
+      [INTERNAL_LINK_TYPE.TON_CONNECT]: this.processTonConnectLink
+    };
+
+    const processor = map[link._];
+    if(!processor) {
+      console.warn('Not supported internal link:', link);
+      return;
+    }
+
+    return processor(link);
+  }
+}
+
+// made once: a hot update keeps it and moves it onto the edited class (see @helpers/hotRegistry)
+const internalLinkProcessor = new InternalLinkProcessor();
+MOUNT_CLASS_TO && (MOUNT_CLASS_TO.internalLinkProcessor = internalLinkProcessor);
+registerHotReloadGuard({internalLinkProcessor});
+export default internalLinkProcessor;
+
+if(import.meta.hot) import.meta.hot.accept();

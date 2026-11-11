@@ -1,0 +1,418 @@
+/// <reference types="vitest/config" />
+import {defineConfig, searchForWorkspaceRoot} from 'vite';
+import solidPlugin from 'vite-plugin-solid';
+// @ts-ignore no type declarations
+import handlebars from 'vite-plugin-handlebars';
+import basicSsl from '@vitejs/plugin-basic-ssl';
+// import devtools from 'solid-devtools/vite'
+import autoprefixer from 'autoprefixer';
+import {resolve} from 'path';
+import {existsSync, copyFileSync, readFileSync, realpathSync} from 'fs';
+import {createHash} from 'crypto';
+import {Plugin, ServerOptions} from 'vite';
+import {vitestWorkers} from './scripts/testQueue';
+import devChecks from './scripts/dev-checks.mjs';
+import settingsSearchPlugin from './scripts/settings-search-plugin.mjs';
+import watchTransformCache from './scripts/watch-transform-cache.mjs';
+import hotReloadPlugin from './scripts/hot-reload-plugin.mjs';
+import widgetSandboxPlugin, {widgetSandboxQuickjsPlugin} from './scripts/widget-sandbox-plugin.mjs';
+import path from 'path';
+import {createRequire} from 'module';
+import {fileURLToPath} from 'url';
+
+// CommonJS, which a config evaluated as an ES module (`--configLoader runner`) cannot import
+const require = createRequire(import.meta.url);
+const {watchLangFile} = require('./watch-lang.js') as typeof import('./watch-lang.js');
+const {watchScssTypes} = require('./scss-types.js') as typeof import('./scss-types.js');
+
+const rootDir = path.dirname(fileURLToPath(import.meta.url));
+const certsDir = path.join(rootDir, 'certs');
+const ENV_LOCAL_FILE_PATH = path.join(rootDir, '.env.local');
+const LANG_PACK_LOCAL_FILE_PATH = path.join(rootDir, 'src', 'langPackLocalVersion.ts');
+const NODE_MODULES_PATH = path.join(rootDir, 'node_modules');
+const SERVER_FS_ALLOW = new Set([searchForWorkspaceRoot(rootDir)]);
+
+if(existsSync(NODE_MODULES_PATH)) {
+  // Worktrees reuse the main checkout's node_modules through a symlink. Vite
+  // resolves dependency IDs to their physical path, so ?url imports need that
+  // exact dependency root in the allow list as well.
+  SERVER_FS_ALLOW.add(realpathSync(NODE_MODULES_PATH));
+}
+
+const isDEV = process.env.NODE_ENV === 'development';
+const generateDevCssModuleScopedName = (name: string, filename: string) => {
+  const relativePath = path.relative(rootDir, filename).split(path.sep).join('/');
+  const fileHash = createHash('sha1').update(relativePath).digest('hex').slice(0, 10);
+  return `_${name}_${fileHash}`;
+};
+
+if(!existsSync(LANG_PACK_LOCAL_FILE_PATH)) {
+  copyFileSync(path.join(rootDir, 'src', 'langPackLocalVersion.example.ts'), LANG_PACK_LOCAL_FILE_PATH);
+}
+
+if(isDEV) {
+  if(!existsSync(ENV_LOCAL_FILE_PATH)) {
+    copyFileSync(path.join(rootDir, '.env.local.example'), ENV_LOCAL_FILE_PATH);
+  }
+
+  // A Playwright suite's server (TWEB_E2E) only serves the tree: the lang watcher would hash the
+  // strings on every start and, after a lang.ts edit, run format-lang and rewrite files under the
+  // run, and nobody edits SCSS through it.
+  if(!process.env.TWEB_E2E) {
+    watchLangFile();
+    // the dev server is what runs while the SCSS is being edited, so it is what keeps the generated
+    // `*.module.d.scss.ts` in step — otherwise the editor (and `typecheck:watch`) reports a class
+    // that was just renamed as missing until someone remembers to regenerate.
+    watchScssTypes();
+  }
+}
+
+const handlebarsPlugin = handlebars({
+  context: {
+    title: 'Echogram Web',
+    description: 'Echogram is a cloud-based mobile and desktop messaging app with a focus on security and speed.',
+    url: 'https://web.telegram.org/k/',
+    origin: 'https://web.telegram.org/'
+  }
+});
+
+const USE_SSL = false;
+const USE_SIGNED_CERTS = USE_SSL && true;
+const USE_SELF_SIGNED_CERTS = USE_SSL && false;
+
+// * mkdir certs; cd certs
+// * mkcert web.telegram.org
+// * chmod 644 web.telegram.org-key.pem
+// * nano /etc/hosts
+// * 127.0.0.1 web.telegram.org
+const host = USE_SSL ? 'web.telegram.org' : 'localhost';
+
+// HTTP/2 for `pnpm start`. Vite serves dev modules unbundled — one request per module —
+// and over http/1.1 the browser's ~6-connections-per-origin cap serialises the hundreds
+// of module requests into a slow waterfall (lots of "pending"). Enabling https flips the
+// dev server to HTTP/2, which multiplexes them all over one connection and kills the
+// waterfall. Use mkcert, NOT a self-signed cert: tweb's ServiceWorker refuses to register
+// on an untrusted cert. One-time setup:  mkcert -install && (cd certs && mkcert localhost)
+// Auto-enabled once the cert exists; off under TWEB_PREVIEW (the merged preview config
+// must stay on http for its tooling) and off until the cert is present (no cert → today's
+// plain-http dev, unchanged).
+const DEV_HTTP2_KEY = path.join(certsDir, 'localhost-key.pem');
+const DEV_HTTP2_CERT = path.join(certsDir, 'localhost.pem');
+const USE_DEV_HTTP2 = !USE_SSL && !process.env.TWEB_PREVIEW && !process.env.VITEST &&
+  existsSync(DEV_HTTP2_KEY) && existsSync(DEV_HTTP2_CERT);
+
+const serverOptions: ServerOptions = {
+  host,
+  port: USE_SSL ? 443 : 8080,
+  fs: {
+    allow: [...SERVER_FS_ALLOW],
+    // Vite's defaults plus tmp/: it holds auth seeds and other credentials, and bundles that boot
+    // already authorized, while a dev server behind a proxy answers any path under the root. The dep
+    // caches some configs keep in tmp/ must stay servable, and a deny pattern can't be negated —
+    // hence the extglob.
+    deny: [
+      '.env', '.env.*', '*.{crt,pem,key,p12,pfx,cer,der}', '.npmrc', '.yarnrc.yml', '**/.git/**',
+      '**/tmp/*', '**/tmp/!(vite-preview-cache|vite-e2e-cache)/**'
+    ]
+  },
+  watch: {
+    // NB: anchor on rootDir. A worktree checkout's own path contains
+    // ".claude/worktrees/<name>/", so a bare '**/.claude/**' glob would also match
+    // the worktree's OWN src and silently disable all HMR there. Anchoring ignores
+    // only this checkout's .claude (and, from the main repo, the worktrees inside it).
+    ignored: [
+      resolve(rootDir, '.claude') + '/**',
+      // chokidar knows nothing about .gitignore, and the pnpm store both holds
+      // its own content-addressed tree and symlinks back into .claude/worktrees
+      // (projects/<hash> -> ../../../.claude/worktrees/<name>) — which it DOES
+      // follow, so the ignore above is undone: over half the watched dirs sat
+      // in here (642 of 1157 when measured), i.e. a whole foreign worktree's
+      // worth of fs watches on top of the store's own tree.
+      resolve(rootDir, '.pnpm-store') + '/**',
+      // Scratch, and — since start-preview.sh builds a static bundle for remote
+      // requests into tmp/preview-dist — written to constantly. Watching it
+      // means every rebuild (this preview's or ANOTHER preview's) full-reloads
+      // the pages of every dev server in the repo: observed as
+      // `page reload tmp/preview-dist/<other id>/index.html`.
+      resolve(rootDir, 'tmp') + '/**',
+      // nothing imports the generated `*.module.scss` types, but a rewritten one still wakes the
+      // watcher — and anything listening for updates (the popup sandbox reloads on them) reacts
+      '**/*.module.d.scss.ts'
+    ]
+  },
+  sourcemapIgnoreList(sourcePath, sourcemapPath) {
+    return sourcePath.includes('node_modules') ||
+      sourcePath.includes('logger') ||
+      sourcePath.includes('eventListenerBase');
+  },
+  https: USE_SIGNED_CERTS ? {
+    key: path.join(certsDir, host + '-key.pem'),
+    cert: path.join(certsDir, host + '.pem')
+  } : USE_DEV_HTTP2 ? {
+    key: readFileSync(DEV_HTTP2_KEY),
+    cert: readFileSync(DEV_HTTP2_CERT)
+  } : undefined
+};
+
+const SOLID_SRC_PATH = 'src/solid/packages/solid';
+const SOLID_BUILT_PATH = 'src/vendor/solid';
+const USE_SOLID_SRC = false;
+const SOLID_PATH = USE_SOLID_SRC ? SOLID_SRC_PATH : SOLID_BUILT_PATH;
+const USE_OWN_SOLID = existsSync(resolve(rootDir, SOLID_PATH));
+
+const NO_MINIFY = false;
+const BASIC_SSL_CONFIG: Parameters<typeof basicSsl>[0] = USE_SELF_SIGNED_CERTS ? {
+  name: host,
+  certDir: certsDir
+} : undefined;
+
+const ADDITIONAL_ALIASES = {
+  'solid-transition-group': resolve(rootDir, 'src/vendor/solid-transition-group'),
+  '@components': resolve(rootDir, 'src/components'),
+  '@helpers': resolve(rootDir, 'src/helpers'),
+  '@hooks': resolve(rootDir, 'src/hooks'),
+  '@stores': resolve(rootDir, 'src/stores'),
+  '@lib': resolve(rootDir, 'src/lib'),
+  '@appManagers': resolve(rootDir, 'src/lib/appManagers'),
+  '@richTextProcessor': resolve(rootDir, 'src/lib/richTextProcessor'),
+  '@environment': resolve(rootDir, 'src/environment'),
+  '@customEmoji': resolve(rootDir, 'src/lib/customEmoji'),
+  '@config': resolve(rootDir, 'src/config'),
+  '@vendor': resolve(rootDir, 'src/vendor'),
+  '@layer': resolve(rootDir, 'src/layer'),
+  '@types': resolve(rootDir, 'src/types'),
+  // Vite-only on purpose: tsc does not follow it into the vendored sources (written for strictNullChecks),
+  // and sees the API through src/lib/widgetSandbox/vendor.d.ts instead.
+  'widget-sandbox': resolve(rootDir, 'src/vendor/widget-sandbox/src'),
+  '@': resolve(rootDir, 'src')
+};
+
+if(USE_OWN_SOLID) {
+  console.log('using own solid', SOLID_PATH, 'built', !USE_SOLID_SRC);
+} else {
+  console.log('using original solid');
+}
+
+// V8 compiles a function the first time it runs, so the first opening of a chat, a sidebar tab or
+// a popup compiled its code in the middle of its animation — after every page load, since the code
+// cache holds only what ran at startup. This comment makes Chrome 136+ compile every function of a
+// chunk off the main thread while the chunk streams in (other browsers ignore it), for ~20 MB more
+// of JS heap. V8 reads it only above the first line of code, and vite:build-import-analysis puts
+// `__vite__mapDeps` in front of a chunk in its generateBundle, so it goes on after that — not as
+// output.banner / postBanner. Workers have their own build and stay without it.
+function compileHintsPlugin(): Plugin {
+  const hint = '//# allFunctionsCalledOnLoad\n';
+  return {
+    name: 'compile-hints',
+    apply: 'build',
+    // the hint goes on after the file names are hashed, and the service worker serves a cached
+    // file by its name without asking the server: a chunk must change its name with the hint
+    augmentChunkHash: () => hint,
+    generateBundle: {
+      order: 'post',
+      handler(_options, bundle) {
+        for(const chunk of Object.values(bundle)) {
+          if(chunk.type !== 'chunk') continue;
+          chunk.code = hint + chunk.code;
+          // the code moved one line down, and so does every mapping
+          const mapAsset = bundle[chunk.fileName + '.map'];
+          if(mapAsset?.type === 'asset') {
+            const map = JSON.parse(String(mapAsset.source));
+            map.mappings = ';' + map.mappings;
+            mapAsset.source = JSON.stringify(map);
+          }
+        }
+      }
+    }
+  };
+}
+
+// Vite's preload helper waits for a lazy chunk's CSS with listeners it leaves on the <link> for good,
+// and makes them inside `__vitePreload`, so their closures hold its scope: the `() => import(...)`
+// it was called with, and through that whatever the caller's scope held — the first popup, tab or
+// menu to load each stylesheet stayed in memory with its whole DOM (~4k nodes in a short session).
+// The wait moves into a function of its own, whose listeners hold only the link and its URL.
+function preloadHelperCssWaitPlugin(): Plugin {
+  const waitRe = /new Promise\(\(res, rej\) => \{\s*link\.addEventListener\("load", res\);\s*link\.addEventListener\("error", \(\) => rej\([^;]*?\)\);\s*\}\)/;
+  return {
+    name: 'preload-helper-css-wait',
+    apply: 'build',
+    transform(code, id) {
+      if(!id.includes('vite/preload-helper')) return;
+      if(!waitRe.test(code)) {
+        throw new Error('preload-helper-css-wait: the CSS wait in Vite\'s preload helper changed, update the plugin');
+      }
+
+      return {
+        code: code.replace(waitRe, '__waitForPreloadedCss(link, dep)') + `
+function __waitForPreloadedCss(link, dep) {
+  return new Promise((res, rej) => {
+    link.addEventListener("load", res);
+    link.addEventListener("error", () => rej(new Error(\`Unable to preload CSS for \${dep}\`)));
+  });
+}`,
+        map: null
+      };
+    }
+  };
+}
+
+export default defineConfig({
+  plugins: [
+    // devtools({
+    //   /* features options - all disabled by default */
+    //   autoname: true // e.g. enable autoname
+    // }),
+    process.env.VITEST || process.env.TWEB_PREVIEW ? undefined : devChecks(rootDir),
+    process.env.VITEST ? undefined : settingsSearchPlugin(),
+    watchTransformCache(),
+    hotReloadPlugin(),
+    solidPlugin(),
+    widgetSandboxPlugin(rootDir),
+    handlebarsPlugin as any,
+    compileHintsPlugin(),
+    preloadHelperCssWaitPlugin(),
+    USE_SELF_SIGNED_CERTS ? basicSsl(BASIC_SSL_CONFIG) : undefined,
+    // Only emit the bundle treemap (stats.html) when explicitly analyzing (ANALYZE=1):
+    // it adds build time and writes a ~1.3MB file that otherwise gets globbed into the
+    // dep scan. Run `ANALYZE=1 pnpm build` to generate it.
+    process.env.ANALYZE ? import('rollup-plugin-visualizer').then(({visualizer}) => visualizer({
+      gzipSize: true,
+      template: 'treemap'
+    })) : undefined
+  ].filter(Boolean),
+  test: {
+    // include: ['**/*.{test,spec}.?(c|m)[jt]s?(x)'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      // git worktrees live here with their own copies of every test file —
+      // without this, `pnpm test <pattern>` runs each match N+1 times at once
+      '**/.claude/**',
+      // ...and the pnpm store links straight back into those worktrees
+      // (.pnpm-store/v11/projects/<hash> -> ../../../.claude/worktrees/<name>),
+      // so the very same files get collected a second time under a path the
+      // `.claude` glob never sees — a foreign branch's tests (and its root
+      // e2e/ Playwright specs, which vitest cannot run at all) then fail this
+      // checkout's `pnpm test`.
+      '**/.pnpm-store/**',
+      '**/cypress/**',
+      '**/.{idea,git,cache,output,temp}/**',
+      '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build}.config.*',
+      '**/solid/**',
+      // Playwright browser specs live here and must not be run by vitest (jsdom).
+      // Anchored to the ROOT e2e/ dir (playwright.config.ts `testDir: './e2e'`) —
+      // a `**/e2e/**` glob also swallowed src/lib/calls/e2e/tests/, silently
+      // dropping the whole TdE2E suite (blockchain, call, crypto, keys, …) from
+      // `pnpm test`.
+      'e2e/**',
+      // scratch: a test file parked there is no part of the suite, and one
+      // that no longer resolves fails `pnpm test --run` and with it the build
+      'tmp/**'
+    ],
+    // coverage: {
+    //   provider: 'v8',
+    //   reporter: ['text', 'lcov'],
+    //   include: ['src/**/*.ts', 'store/src/**/*.ts', 'web/src/**/*.ts'],
+    //   exclude: ['**/*.d.ts', 'src/server/*.ts', 'store/src/**/server.ts']
+    // },
+    environment: 'jsdom',
+    // The suite runs in parallel forks, so a CPU-bound test (2048-bit prime
+    // checks, bulk AES) competes with every other file for the same cores.
+    // Vitest's 5s/10s defaults leave those no headroom on a loaded machine; a
+    // genuinely hung test still fails, just later.
+    testTimeout: 15_000,
+    hookTimeout: 30_000,
+    // otherwise, solid would be loaded twice:
+    // deps: {registerNodeLoader: true},
+    pool: 'forks',
+    // a full run waits for its turn in the machine-wide queue of heavy test runs (scripts/test-queue.sh)
+    maxWorkers: vitestWorkers(),
+    globals: true,
+    setupFiles: ['./src/tests/setup.ts']
+  },
+  server: serverOptions,
+  // REACT_APP_* is what Echogram stores in .env. VITE_* stays available for the rest of the build.
+  envPrefix: ['VITE_', 'REACT_APP_'],
+  base: '',
+  // Pin the dep-optimizer's scan to the real entry (index.html → src/index.ts).
+  // Otherwise Vite auto-globs every *.html (stats.html, public/*.html, the icomoon
+  // demo.html) as scan entries, and a parse error in any of them (e.g. the stale
+  // public/*.js build artifacts with merge-conflict markers) aborts the whole scan
+  // and disables dependency pre-bundling — making cold dev loads slow and reload-prone.
+  optimizeDeps: {
+    // Worker entry points are scanned too. A dep reached ONLY through a worker
+    // (aes-js + libsodium-wrappers behind the conference's encrypt.worker, and
+    // the mtproto worker's own set) is otherwise first seen when the worker is
+    // constructed: vite re-optimizes right then, the browser hash changes, and
+    // the worker's in-flight import of the previous `?v=` hash gets a 504. A
+    // page survives that with a full reload — a worker just fails to load with
+    // an empty error event, which is what killed every conference call with
+    // "An error occurred".
+    // The widget sandbox's are named otherwise: its engine worker's parse5, first seen as the first widget started, reloaded
+    // the page.
+    entries: ['index.html', 'src/**/*.worker.{ts,js}', 'src/vendor/widget-sandbox/src/host/{engine-worker,snapshot-worker,worker}.ts'],
+    // the widget sandbox's worker imports its QuickJS build's wasm with `?url`, which pre-bundling would break
+    exclude: ['@telegram/widget-sandbox-quickjs']
+  },
+  build: {
+    target: 'es2020',
+    // `es2020` says nothing about browsers, so lightningcss falls back to a target old enough to
+    // lower every logical property into a pair of `:lang()` rules — 13680 of them, emitted after
+    // the block they came from and with a higher specificity, so a physical `left`/`margin-left`
+    // authored alongside `inset-inline-*` silently loses (that is what pinned the emoji panel to
+    // the window edge in a built bundle only). These are the versions that support logical
+    // properties natively, so lightningcss leaves them alone; RTL runs off `documentElement.dir`,
+    // which index.ts sets on every language, not off `:lang()`.
+    cssTarget: ['chrome87', 'edge87', 'firefox78', 'safari14.1'],
+    sourcemap: true,
+    assetsDir: '',
+    copyPublicDir: false,
+    emptyOutDir: true,
+    minify: NO_MINIFY ? false : undefined,
+    rolldownOptions: {
+      output: {
+        sourcemapIgnoreList: serverOptions.sourcemapIgnoreList
+      }
+      // input: {
+      //   main: './index.html',
+      //   sw: './src/index.service.ts'
+      // }
+    }
+    // cssCodeSplit: true
+  },
+  worker: {
+    format: 'es',
+    // a build makes the workers with these alone: the engine worker's QuickJS is this checkout's, as the page's is
+    plugins: () => [widgetSandboxQuickjsPlugin(rootDir)]
+  },
+  css: {
+    devSourcemap: true,
+    // Vite's default CSS Modules name hashes the entire stylesheet and its line
+    // numbers. Every SCSS edit would therefore rename all classes while
+    // imperative DOM (for example ProseMirror node views) kept the old names.
+    modules: isDEV ? {
+      generateScopedName: generateDevCssModuleScopedName
+    } : undefined,
+    postcss: {
+      plugins: [
+        autoprefixer({}) // add options if needed
+      ]
+    }
+  },
+  resolve: {
+    // conditions: ['development', 'browser'],
+    alias: USE_OWN_SOLID ? {
+      'rxcore': resolve(rootDir, SOLID_PATH, 'web/core'),
+      // Vite 8 no longer sniffs aliased package formats. Point directly at the
+      // browser builds so Solid's `module` field cannot select server.js.
+      'solid-js/jsx-runtime': resolve(rootDir, SOLID_PATH, 'dist', isDEV ? 'dev.js' : 'solid.js'),
+      'solid-js/html': resolve(rootDir, SOLID_PATH, 'html/dist/html.js'),
+      'solid-js/h': resolve(rootDir, SOLID_PATH, 'h/dist/h.js'),
+      'solid-js/web': resolve(rootDir, SOLID_PATH, 'web/dist', isDEV ? 'dev.js' : 'web.js'),
+      'solid-js/store': resolve(rootDir, SOLID_PATH, 'store/dist', isDEV ? 'dev.js' : 'store.js'),
+      'solid-js': resolve(rootDir, SOLID_PATH, 'dist', isDEV ? 'dev.js' : 'solid.js'),
+      ...ADDITIONAL_ALIASES
+    } : ADDITIONAL_ALIASES
+  }
+});

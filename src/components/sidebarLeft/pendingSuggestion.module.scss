@@ -1,0 +1,93 @@
+// @import "../scss/mixins";
+@use "../../scss/variables" as *;
+
+.suggestion {
+  // a plate with margins on every width: .row-clickable rounds only above handhelds
+  border-radius: $border-radius-medium;
+
+  &Subtitle {
+    font-size: var(--font-size-16);
+    line-height: var(--line-height-16);
+  }
+
+  &Container {
+    overflow: hidden;
+    margin: .5rem;
+
+    :global(.has-vertical-folders) & {
+      margin-bottom: 0;
+    }
+  }
+
+  &.danger {
+    background-color: var(--light-filled-danger-color) !important;
+
+    .suggestionTitle {
+      color: var(--danger-color);
+    }
+  }
+
+  &.secondary {
+    background-color: var(--light-filled-secondary-text-color) !important;
+  }
+}
+
+.close {
+  font-size: 1.0625rem;
+  padding: .375rem;
+  position: absolute;
+  inset-inline-end: .25rem;
+  top: .25rem;
+  z-index: 1;
+}
+
+.connectionReview {
+  border-radius: var(--border-radius);
+  background-color: var(--light-filled-danger-color);
+  padding: .75rem 1rem .5rem;
+  text-align: center;
+
+  &Title {
+    color: var(--danger-color);
+    font-size: var(--font-size-16);
+    font-weight: var(--font-weight-bold);
+    line-height: var(--line-height-16);
+  }
+
+  &Text {
+    color: var(--secondary-text-color);
+    font-size: var(--font-size-14);
+    line-height: var(--line-height-14);
+    margin-top: .25rem;
+  }
+
+  &Actions {
+    display: flex;
+    gap: .25rem;
+    margin-top: .25rem;
+  }
+
+  &Button {
+    min-width: 0;
+    flex: 1 1 0;
+    height: 2.25rem;
+    font-size: var(--font-size-14);
+  }
+
+  &Reject {
+    color: var(--danger-color);
+  }
+}
+
+// .container {
+//   display: flex;
+//   flex-direction: column;
+// }
+
+// .title {
+
+// }
+
+// .subtitle {
+
+// }

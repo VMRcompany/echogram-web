@@ -1,0 +1,70 @@
+import replaceContent from '@helpers/dom/replaceContent';
+import OverlayClickHandler from '@helpers/overlayClickHandler';
+import {getOverlayRoot} from '@helpers/appWindow';
+import {FormatterArguments, i18n, LangPackKey} from '@lib/langPack';
+import {hotListen} from '@helpers/hotModule';
+
+const toastsContainer = document.createElement('div');
+toastsContainer.classList.add('toasts-container');
+// Live region so screen readers announce toast text as it appears.
+toastsContainer.setAttribute('role', 'status');
+toastsContainer.setAttribute('aria-live', 'polite');
+
+const toastEl = document.createElement('div');
+toastEl.classList.add('toast');
+let timeout: number;
+
+// a click anywhere hides the toast; a keyboard press still reaches its control
+const x = new OverlayClickHandler('toast', false, true);
+hotListen(import.meta.hot, x, 'toggle', (open: boolean) => {
+  if(!open) {
+    hideToast();
+  }
+});
+
+export function hideToast() {
+  x.close();
+
+  toastEl.classList.remove('is-visible');
+  timeout && clearTimeout(+timeout);
+
+  timeout = window.setTimeout(() => {
+    toastEl.remove();
+    timeout = undefined;
+  }, 200);
+}
+
+export function toast(content: string | Node, onClose?: () => void, duration = 3000) {
+  x.close();
+
+  replaceContent(toastEl, content);
+
+  if(!toastEl.parentElement) {
+    if(!toastsContainer.parentNode) {
+      getOverlayRoot().append(toastsContainer);
+    }
+
+    toastsContainer.append(toastEl);
+    void toastEl.offsetLeft; // reflow
+  }
+
+  toastEl.classList.add('is-visible');
+
+  timeout && clearTimeout(+timeout);
+  x.open(toastEl);
+
+  timeout = window.setTimeout(hideToast, duration);
+
+  if(onClose) {
+    x.addEventListener('toggle', onClose, {once: true});
+  }
+}
+
+export function toastNew(options: Partial<{
+  langPackKey: LangPackKey,
+  langPackArguments: FormatterArguments,
+  onClose: () => void,
+  duration: number
+}>) {
+  toast(i18n(options.langPackKey, options.langPackArguments), options.onClose, options.duration);
+}

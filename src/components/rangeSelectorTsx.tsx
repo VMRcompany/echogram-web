@@ -1,0 +1,195 @@
+import {createSignal, onMount, onCleanup, createEffect, JSX} from 'solid-js';
+import attachGrabListeners, {GrabEvent} from '@helpers/dom/attachGrabListeners';
+import keepLeftToRight from '@helpers/dom/keepLeftToRight';
+import onRangeInlineArrowKey from '@helpers/dom/onRangeInlineArrowKey';
+import {isElementRTL} from '@helpers/dom/isDocumentRTL';
+import clamp from '@helpers/number/clamp';
+import classNames from '@helpers/string/classNames';
+
+export interface RangeSelectorProps {
+  step: number;
+  min?: number;
+  max?: number;
+  withTransition?: boolean;
+  useTransform?: boolean;
+  vertical?: boolean;
+  useProperty?: boolean;
+  offsetAxisValue?: number;
+  /** A media playback bar: runs left to right in any language, as it follows the tape */
+  keepLTR?: boolean;
+  value?: number;
+  /** Takes no input, pointer or keys, while set */
+  disabled?: boolean;
+  onMouseDown?: (event: GrabEvent) => void;
+  onMouseUp?: (event: GrabEvent) => void;
+  onScrub?: (value: number) => void;
+  /** The slider is an unlabelled <input type=range>; hand it out so callers can name it. */
+  inputRef?: (el: HTMLInputElement) => void;
+  children?: JSX.Element;
+}
+
+export default function RangeSelector(props: RangeSelectorProps) {
+  const [mousedown, setMousedown] = createSignal(false);
+  const [rect, setRect] = createSignal<DOMRect>();
+  const [value, setValue] = createSignal(props.value || 0);
+  let containerRef: HTMLDivElement;
+  let filledRef: HTMLDivElement;
+  let seekRef: HTMLInputElement;
+  let removeListeners: () => void;
+
+  const min = props.min ?? 0;
+  const max = props.max ?? 0;
+  const step = props.step;
+  const withTransition = props.withTransition || false;
+  const useTransform = props.useTransform || false;
+  const useProperty = props.useProperty || false;
+  const vertical = props.vertical || false;
+  const offsetAxisValue = props.offsetAxisValue || 0;
+  const keepLTR = props.keepLTR || false;
+
+  const stepStr = '' + step;
+  const index = stepStr.indexOf('.');
+  const decimals = index === -1 ? 0 : stepStr.length - index - 1;
+
+  const setFilled = (val: number) => {
+    let percents = (val - min) / (max - min);
+    percents = clamp(percents, 0, 1);
+
+    // using scaleX and width even with vertical because it will be rotated
+    if(useTransform) {
+      filledRef.style.transform = `scaleX(${percents})`;
+    } else if(useProperty) {
+      containerRef.style.setProperty('--progress', '' + percents);
+    } else {
+      filledRef.style.width = (percents * 100) + '%';
+    }
+  };
+
+  const setProgress = (val: number) => {
+    seekRef.value = '' + val;
+    setFilled(+seekRef.value); // clamp
+    setValue(+seekRef.value);
+  };
+
+  const onInput = () => {
+    const val = +seekRef.value;
+    setFilled(val);
+    setValue(val);
+    props.onScrub?.(val);
+  };
+
+  const onMouseMove = (event: GrabEvent) => {
+    // * a grab held while the slider was disabled moves nothing more
+    if(!mousedown() || props.disabled) return;
+    scrub(event);
+  };
+
+  // * whether the grab in progress runs right to left: the slider's own direction, an island's included
+  let rtl = false;
+  const onMouseDown = (event: GrabEvent) => {
+    if(props.disabled) return;
+    setRect(containerRef.getBoundingClientRect());
+    rtl = !vertical && isElementRTL(containerRef);
+    setMousedown(true);
+    scrub(event);
+    containerRef.classList.add('is-focused');
+    props.onMouseDown?.(event);
+  };
+
+  const onMouseUp = (event: GrabEvent) => {
+    if(!mousedown()) return;
+    setMousedown(false);
+    containerRef.classList.remove('is-focused');
+    props.onMouseUp?.(event);
+  };
+
+  const scrub = (event: GrabEvent, snapValue?: (value: number) => number) => {
+    const currentRect = rect();
+    if(!currentRect) return 0;
+
+    let rectMax = vertical ? currentRect.height : currentRect.width;
+
+    if(offsetAxisValue) {
+      rectMax -= offsetAxisValue;
+    }
+
+    let offsetAxisValue_ = clamp(
+      vertical ?
+        -(event.y - currentRect.bottom) :
+        event.x - currentRect.left - offsetAxisValue / 2,
+      0,
+      rectMax
+    );
+
+    if(rtl) {
+      offsetAxisValue_ = rectMax - offsetAxisValue_;
+    }
+
+    let val = min + (offsetAxisValue_ / rectMax * (max - min));
+
+    if((val - min) < ((max - min) / 2)) {
+      val -= step / 10;
+    }
+
+    val = +val.toFixed(decimals);
+    val = clamp(val, min, max);
+    if(snapValue) val = snapValue(val);
+
+    setProgress(val);
+    props.onScrub?.(val);
+
+    return val;
+  };
+
+  onMount(() => {
+    // Set initial value
+    if(props.value) {
+      setProgress(props.value);
+    }
+
+    removeListeners = attachGrabListeners(containerRef, onMouseDown, onMouseMove, onMouseUp);
+  });
+
+  onCleanup(() => {
+    removeListeners?.();
+  });
+
+  // Update value when props change
+  createEffect(() => {
+    if(props.value !== undefined) {
+      setProgress(props.value);
+    }
+  });
+
+  return (
+    <div
+      ref={(el) => {
+        containerRef = el;
+        if(keepLTR) keepLeftToRight(el);
+      }}
+      class={classNames(
+        'progress-line',
+        useTransform && 'use-transform',
+        withTransition && 'with-transition'
+      )}
+    >
+      <div ref={filledRef!} class="progress-line__filled" />
+      <input
+        ref={(el) => {
+          seekRef = el;
+          props.inputRef?.(el);
+        }}
+        class="progress-line__seek"
+        type="range"
+        step={step}
+        min={min}
+        max={max}
+        value={value()}
+        disabled={props.disabled}
+        onInput={onInput}
+        onKeyDown={vertical ? undefined : onRangeInlineArrowKey}
+      />
+      {props.children}
+    </div>
+  );
+}

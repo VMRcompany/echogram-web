@@ -1,0 +1,97 @@
+@use "../../scss/mixins" as *;
+
+.popup {
+  --popup-min-width: 26.25rem;
+  --popup-max-width: 26.25rem;
+
+  &Container {
+    padding: 1rem;
+  }
+
+  &Button {
+    margin-top: 1rem;
+  }
+}
+
+.limitLine {
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+  --limit-background: var(--primary-button-color);
+  --hint-height: 3rem;
+  --hint-icon-gap: .5rem;
+  --hint-icon-size: 1.5rem;
+}
+
+.limitLineNegative {
+  --limit-background: var(--danger-color);
+}
+
+.hint {
+  font-family: var(--font-rounded);
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-24);
+  line-height: 1;
+}
+
+.nextLevelStars {
+  font-size: var(--font-size);
+  opacity: 0.6;
+}
+
+.badge {
+  font-weight: var(--font-weight-bold);
+  font-size: 11px;
+  line-height: 16px;
+  text-transform: uppercase;
+  background-color: var(--secondary-button-color);
+  padding-inline: 0.25rem;
+  color: #fff;
+  border-radius: 0.3125rem;
+  margin-inline-end: 0.25rem;
+  display: inline-block;
+  // the chip is capitals, and so is the band of the sentence it stands in: centre it on that
+  // band instead of hanging it off the descender line, which is where `text-bottom` puts it.
+  // No keyword lands there, hence the nudge — it is paint only, the line box keeps its height.
+  vertical-align: baseline;
+  position: relative;
+  top: -.125rem;
+
+  &.active {
+    background-color: var(--primary-button-color);
+  }
+}
+
+.description {
+  // the notice keeps its own distance from the title below it
+  margin-bottom: 1rem;
+
+  :global {
+    .s-enter-active,
+    .s-exit-active {
+      transition-property: opacity, scale;
+      transition-duration: 0.1s;
+      transition-timing-function: ease-out;
+    }
+
+    .s-enter,
+    .s-exit-to {
+      opacity: 0;
+      scale: 0.9;
+      transform-origin: top center;
+    }
+  }
+}
+
+.previewButton {
+  :global(:where(.a11y)) & {
+    color: inherit;
+  }
+
+  :global(.high-contrast) & {
+    color: var(--link-color);
+  }
+  cursor: pointer;
+  margin-inline-start: .25rem;
+  display: inline-flex;
+  align-items: center;
+}

@@ -1,0 +1,110 @@
+@use "sass:string";
+@use "../../shared" as *;
+@use "../../variables" as *;
+
+.popup-forward {
+  $parent: ".popup";
+  --popup-width: 420px;
+  --popup-height: 80%;
+
+  #{$parent} {
+    &-footer-button.btn-primary {
+      box-shadow: 0px -6px 12px 0px rgba(var(--surface-color-rgb, 1));
+    }
+  }
+
+  &-footer {
+    @include animation-level(2) {
+      transition: transform var(--transition-standard-in);
+    }
+
+    &:has(.popup-forward-footer-content.is-hidden) {
+      transform: translateY(100%);
+    }
+  }
+
+  &-footer-item {
+    position: absolute !important;
+    inset-inline: var(--popup-footer-padding);
+    bottom: var(--popup-footer-padding);
+    width: auto;
+    margin: 0;
+  }
+
+  &-auto-height {
+    height: auto !important;
+
+    .sidebar-left-section {
+      min-height: auto !important;
+    }
+  }
+
+  .selector {
+    // * room for the footer's button
+    &-height-container {
+      padding-bottom: calc(#{$button-height} + var(--section-padding-bottom));
+    }
+
+    &.active {
+      height: auto;
+      overflow: hidden;
+      display: flex;
+      width: 100%;
+      flex-direction: row;
+    }
+  }
+
+  .tabs-container {
+    // --section-padding-inline: 0;
+    height: 100%;
+
+    .selector:not(.active) {
+      display: none;
+    }
+  }
+
+  &-top-peers {
+    position: relative;
+    z-index: 2;
+  }
+
+  .collapsable {
+    interpolate-size: allow-keywords;
+    max-height: max-content;
+
+    // folding up is growth in place, the box's padding with it: reduced animations keep all of it
+    @include animation-level(1) {
+      transition: max-height .3s ease, padding-block .3s ease, opacity .3s ease;
+    }
+
+    &.is-collapsed {
+      max-height: 0;
+      // max-height does not take a padding away: a section would leave its gap below behind
+      padding-block: 0;
+      opacity: 0;
+      overflow: clip;
+      pointer-events: none;
+    }
+  }
+
+  &-folder-tabs {
+    margin-bottom: var(--section-padding-bottom);
+
+    &-container {
+      z-index: 1;
+      position: sticky;
+    }
+
+    &-gradient {
+      &-container {
+        position: absolute;
+        top: -2rem;
+        inset-inline: 0;
+      }
+    }
+  }
+
+  .simple-message-input-container {
+    box-shadow: 0px -1px 4px 1px var(--section-box-shadow-color);
+  }
+}

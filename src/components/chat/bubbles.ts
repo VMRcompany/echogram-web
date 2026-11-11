@@ -1,0 +1,15941 @@
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import toastError from '@components/toastError';
+import makeMediaPreviewsAccessible from '@helpers/dom/mediaPreviewAccessibility';
+import type {AppImManager, ChatSavedPosition, ChatSetInnerPeerOptions, ChatSetPeerOptions} from '@lib/appImManager';
+import type {HistoryResult, MyEphemeralMessage, MyMessage} from '@appManagers/appMessagesManager';
+import type {MyDocument} from '@appManagers/appDocsManager';
+import type Chat from '@components/chat/chat';
+import type {BubbleElementAddons} from '@components/chat/types';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import {logger} from '@lib/logger';
+import rootScope from '@lib/rootScope';
+import BubbleGroups from '@components/chat/bubbleGroups';
+import createDateBubble from '@components/chat/dateBubble';
+import showDatePickerPopup from '@components/popups/datePicker';
+import confirmationPopup from '@components/confirmationPopup';
+import showStickersPopup from '@components/popups/stickers';
+import ProgressivePreloader from '@components/preloader';
+import Scrollable, {SliceSides} from '@components/scrollable';
+import StickyIntersector from '@components/stickyIntersector';
+import animationIntersector from '@components/animationIntersector';
+import mediaSizes from '@helpers/mediaSizes';
+import {IS_ANDROID, IS_APPLE, IS_FIREFOX, IS_MOBILE, IS_SAFARI} from '@environment/userAgent';
+import I18n, {FormatterArguments, i18n, langPack, LangPackKey, UNSUPPORTED_LANG_PACK_KEY, _i18n} from '@lib/langPack';
+import {fireMessageEffectByBubble, MessageRender} from '@components/chat/messageRender';
+import LazyLoadQueue from '@components/lazyLoadQueue';
+import ListenerSetter from '@helpers/listenerSetter';
+import showChatToast from '@components/chat/chatToast';
+import {AudioElement, DeferredMediaElement, isAudioElement} from '@components/audio';
+import {ChannelParticipant, Chat as MTChat, ChatParticipant, Document, Game, Message, MessageEntity,  MessageMedia,  MessageReplyHeader, Photo, PhotoSize, ReactionCount, SponsoredMessage, User, UserFull, WebPage, WebPageAttribute, Reaction, DocumentAttribute, InputStickerSet, TextWithEntities, FactCheck, WebDocument, MessageExtendedMedia, PeerSettings, LangPackString, ForumTopic, MessageAction, StarGift} from '@layer';
+import {BOT_START_PARAM, NULL_PEER_ID, REPLIES_PEER_ID, SEND_WHEN_ONLINE_TIMESTAMP, SERVICE_PEER_ID, STARS_CURRENCY} from '@appManagers/constants';
+import {FocusDirection, ScrollStartCallbackDimensions} from '@helpers/fastSmoothScroll';
+import useHeavyAnimationCheck, {getHeavyAnimationPromise, dispatchHeavyAnimationEvent, interruptHeavyAnimation} from '@hooks/useHeavyAnimationCheck';
+import {doubleRaf, fastRaf, fastRafPromise} from '@helpers/schedulers';
+import sequentialDom from '@helpers/sequentialDom';
+import throttleWith from '@helpers/schedulers/throttleWith';
+import withTimeout from '@helpers/schedulers/withTimeout';
+import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
+import memoizeAsyncWithTTL from '@helpers/memoizeAsyncWithTTL';
+import RepliesElement from '@components/chat/replies';
+import DEBUG from '@config/debug';
+import Modes from '@config/modes';
+import {SliceEnd} from '@helpers/slicedArray';
+import PeerTitle, {createPeerTitleElement} from '@components/peerTitle';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import {countFirstScreen, estimateBubbleHeight, FirstScreenPlace, getAlbumBubbleMessage, getBubbleHeightAtLeast, GetWidgetHeight, joinHistories, keepFrom, keepRange, measureTextWidth, MessageTextMetrics} from '@components/chat/firstScreenHistory';
+import findUpTag from '@helpers/dom/findUpTag';
+import {hideToast, toastNew} from '@components/toast';
+import {getMiddleware, Middleware, MiddlewareHelper} from '@helpers/middleware';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import {attachClickEvent, CLICK_EVENT_NAME, simulateClickEvent} from '@helpers/dom/clickEvent';
+import ensureButtonSemantics from '@helpers/dom/ensureButtonSemantics';
+import htmlToDocumentFragment from '@helpers/dom/htmlToDocumentFragment';
+import reflowScrollableElement from '@helpers/dom/reflowScrollableElement';
+import setInnerHTML, {setDirection} from '@helpers/dom/setInnerHTML';
+import highlightText, {findTextRect, TextHighlightMatch} from '@helpers/dom/textHighlight';
+import whichChild from '@helpers/dom/whichChild';
+import {animateSingle, cancelAnimationByKey, getAnimationInstance} from '@helpers/animation';
+import assumeType from '@helpers/assumeType';
+import debounce, {DebounceReturnType} from '@helpers/schedulers/debounce';
+import forgetSettledRequest from '@helpers/forgetSettledRequest';
+import windowSize from '@helpers/windowSize';
+import {formatPhoneNumber} from '@helpers/formatPhoneNumber';
+import SetTransition from '@components/singleTransition';
+import handleHorizontalSwipe from '@helpers/dom/handleHorizontalSwipe';
+import findUpAttribute from '@helpers/dom/findUpAttribute';
+import findUpAsChild from '@helpers/dom/findUpAsChild';
+import IS_CALL_SUPPORTED from '@environment/callSupport';
+import IS_GROUP_CALL_SUPPORTED from '@environment/groupCallSupport';
+import Button from '@components/button';
+import getVisibleRect from '@helpers/dom/getVisibleRect';
+import {InternalLink, INTERNAL_LINK_TYPE} from '@lib/internalLink';
+import ReactionsElement, {REACTIONS_ELEMENTS} from '@components/chat/reactions';
+import type ReactionElement from '@components/chat/reaction';
+import LottiePlayer from '@lib/lottie/lottiePlayer';
+import pause from '@helpers/schedulers/pause';
+import ScrollSaver from '@helpers/scrollSaver';
+import mergeEphemeralHistoryForRender from '@components/chat/mergeEphemeralHistoryForRender';
+import placeEphemeralBadge, {
+  shouldKeepSenderNameAcrossGroup,
+  shouldRenderSenderNameWithEphemeralBadge
+} from '@components/chat/placeEphemeralBadge';
+import {getAppWindow, onAppWindowChange, onBeforeAppWindowChange} from '@helpers/appWindow';
+import getObjectKeysAndSort from '@helpers/object/getObjectKeysAndSort';
+import forEachReverse from '@helpers/array/forEachReverse';
+import formatNumber from '@helpers/number/formatNumber';
+import getViewportSlice from '@helpers/dom/getViewportSlice';
+import SuperIntersectionObserver, {IntersectionCallback} from '@helpers/dom/superIntersectionObserver';
+import generateFakeIcon from '@components/generateFakeIcon';
+import copyFromElement from '@helpers/dom/copyFromElement';
+import {getCodeBlockClickTarget, toggleCodeBlockWrap} from '@helpers/dom/codeBlockClick';
+import setAttachmentSize, {EXPAND_TEXT_WIDTH} from '@helpers/setAttachmentSize';
+import wrapWebPageDescription from '@components/wrappers/webPageDescription';
+import wrapWebPageTitle from '@components/wrappers/webPageTitle';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import {wrapBusinessIntroLines} from '@components/chat/businessIntroPlaceholder';
+import wrapRichText from '@lib/richTextProcessor/wrapRichText';
+import countEmojiOnly from '@lib/richTextProcessor/countEmojiOnly';
+import {MESSAGE_LINK_ENTITY_SELECTOR} from '@lib/richTextProcessor/filterDisabledEntities';
+import wrapMessageActionTextNew from '@components/wrappers/messageActionTextNew';
+import isMentionUnread from '@appManagers/utils/messages/isMentionUnread';
+import getReadMaxIdIfUnread from '@appManagers/utils/messages/getReadMaxIdIfUnread';
+import isOwnMessage from '@appManagers/utils/messages/isOwnMessage';
+import getMediaFromMessage from '@appManagers/utils/messages/getMediaFromMessage';
+import {getFakeUserIdForJustName, getPeerColorIndexById, getPeerColorIndexByPeer} from '@appManagers/utils/peers/getPeerColorById';
+import getPeerId from '@appManagers/utils/peers/getPeerId';
+import {AppManagers} from '@lib/managers';
+import idleController from '@helpers/idleController';
+import overlayCounter from '@helpers/overlayCounter';
+import ReadMetricsTracker from '@helpers/readMetricsTracker';
+import {cancelContextMenuOpening} from '@helpers/dom/attachContextMenuListener';
+import contextMenuController from '@helpers/contextMenuController';
+import {AckedResult} from '@lib/superMessagePort';
+import middlewarePromise from '@helpers/middlewarePromise';
+import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
+import noop from '@helpers/noop';
+import getGroupedText from '@appManagers/utils/messages/getGroupedText';
+import paymentsWrapCurrencyAmount, {GRAM_CURRENCY_SYMBOL, formatNanoton, nanotonToJsNumber} from '@helpers/paymentsWrapCurrencyAmount';
+import {createPaymentPopup} from '@components/popups/payment';
+import isInDOM from '@helpers/dom/isInDOM';
+import getStickerEffectThumb from '@appManagers/utils/stickers/getStickerEffectThumb';
+import attachMediaPeekListeners, {getMediaPeekDocSource, getMessageMediaPeekSource} from '@components/mediaPeek';
+import {findRegisteredMediaPeekElement, getRegisteredMediaPeekSource} from '@components/mediaPeek/sources';
+import {makeMediaSize, MediaSize} from '@helpers/mediaSize';
+import wrapSticker from '@components/wrappers/sticker';
+import computeStickerSetPreviewGrid from '@helpers/stickerSetPreviewGrid';
+import wrapAlbum from '@components/wrappers/album';
+import wrapDocument from '@components/wrappers/document';
+import wrapGroupedDocuments from '@components/wrappers/groupedDocuments';
+import wrapPhoto from '@components/wrappers/photo';
+import wrapVideo, {USE_VIDEO_OBSERVER} from '@components/wrappers/video';
+import isRTL from '@helpers/string/isRTL';
+import NBSP from '@helpers/string/nbsp';
+import DotRenderer from '@components/dotRenderer';
+import toHHMMSS from '@helpers/string/toHHMMSS';
+import {BatchProcessor} from '@helpers/sortedList';
+import wrapUrl from '@lib/richTextProcessor/wrapUrl';
+import {isMaskedUrlTrusted} from '@lib/richTextProcessor/isWhitelistedUrl';
+import getMessageThreadId from '@appManagers/utils/messages/getMessageThreadId';
+import wrapMediaSpoiler, {attachLinkSpoilerRevealButton, hasMediaSpoiler, onMediaSpoilerClick, wrapSensitiveStickerSpoiler} from '@components/wrappers/mediaSpoiler';
+import liteMode from '@helpers/liteMode';
+import getSelectionElementFromTarget from '@components/chat/getSelectionElementFromTarget';
+import getMediaDurationFromMessage from '@appManagers/utils/messages/getMediaDurationFromMessage';
+import getParticipantRank from '@appManagers/utils/chats/getParticipantRank';
+import getParticipantPeerId from '@appManagers/utils/chats/getParticipantPeerId';
+import {canHaveMemberTags, getMemberTagRole} from '@appManagers/utils/chats/memberTag';
+import createBubbleNameRank, {BubbleNameRank} from '@components/chat/bubbleParts/bubbleNameRank';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
+import SwipeHandler, {getEvent} from '@components/swipeHandler';
+import getSelectedText from '@helpers/dom/getSelectedText';
+import {render} from 'solid-js/web';
+import {createRoot, createEffect, createSignal, Signal, onCleanup, batch, on} from 'solid-js';
+import {StoryPreview, wrapStoryMedia} from '@components/stories/preview';
+import wrapReply from '@components/wrappers/reply';
+import {modifyAckedPromise} from '@helpers/modifyAckedResult';
+import callbackify from '@helpers/callbackify';
+import {avatarNew, findUpAvatar} from '@components/avatarNew';
+import Icon from '@components/icon';
+import SendingStatusIcon, {SendingStatusIconState, setSendingStatusIconState} from '@components/sendingStatusIcon';
+import wrapCallBubble from '@components/wrappers/callBubble';
+import wrapUnsupportedMessagePlate from '@components/chat/bubbleParts/unsupportedMessagePlate';
+import {FullMid, makeFullMid, splitFullMid} from '@appManagers/utils/messages/fullMid';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import setBlankToAnchor from '@lib/richTextProcessor/setBlankToAnchor';
+import addAnchorListener, {UNSAFE_ANCHOR_LINK_TYPES} from '@helpers/addAnchorListener';
+import {formatDaysDuration, formatMonthsDuration} from '@helpers/date';
+import {JSX} from 'solid-js';
+import Giveaway, {getGiftAssetName, onGiveawayClick} from '@components/chat/giveaway';
+import showGiftLinkPopup from '@components/popups/giftLink';
+import getParents from '@helpers/dom/getParents';
+import positionElementByIndex from '@helpers/dom/positionElementByIndex';
+import shouldDisplayGiftCodeAsGift from '@helpers/shouldDisplayGiftCodeAsGift';
+import anchorCallback from '@helpers/dom/anchorCallback';
+import SimilarChannels from '@components/chat/similarChannels';
+import clearMessageId from '@appManagers/utils/messageId/clearMessageId';
+import {ChatType, getNonHistoryStore, isHistoryMessage} from './chatType';
+import {isSavedDialog} from '@appManagers/utils/dialogs/isDialog';
+import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
+import isForwardOfForward from '@appManagers/utils/messages/isForwardOfForward';
+import {ReactionLayoutType, stashFlightSource} from '@components/chat/reaction';
+import {dropReactionFlights, holdReactionFlight} from '@components/chat/reactionFlight';
+import reactionsEqual from '@appManagers/utils/reactions/reactionsEqual';
+import getMainGroupedMessage from '@appManagers/utils/messages/getMainGroupedMessage';
+import cancelClickOrNextIfNotClick from '@helpers/dom/cancelClickOrNextIfNotClick';
+import TranslatableMessage from '@components/translatableMessage';
+import getUnreadReactions from '@appManagers/utils/messages/getUnreadReactions';
+import isUnreadByReadCursor from '@appManagers/utils/messages/isUnreadByReadCursor';
+import {setPeerLanguageLoaded} from '@stores/peerLanguage';
+import ButtonIcon from '@components/buttonIcon';
+import showAboutAdPopup from '@components/popups/aboutAd';
+import numberThousandSplitter, {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
+import wrapGeo from '@components/wrappers/geo';
+import safePlay from '@helpers/dom/safePlay';
+import flatten from '@helpers/array/flatten';
+import WebPageBox, {WebPageFooterButton} from '@components/wrappers/webPage';
+import {makeContactPhoneFormatter} from '@components/wrappers/formatUserPhone';
+import parseVcard, {isVcardPhoneType} from '@helpers/parseVcard';
+import showContactDetailsPopup from '@components/popups/contactDetails';
+import {copyPhoneNumber} from '@helpers/copyContact';
+import showCreateContactPopup from '@components/popups/createContact';
+import wrapPeerColorPattern from '@components/wrappers/peerColorPattern';
+import showTooltip from '@components/tooltip';
+import wrapTextWithEntities from '@lib/richTextProcessor/wrapTextWithEntities';
+import clearfix from '@helpers/dom/clearfix';
+import {usePeer} from '@stores/peers';
+import {setAppSettings} from '@stores/appSettings';
+import safeWindowOpen from '@helpers/dom/safeWindowOpen';
+import findAndSplice from '@helpers/array/findAndSplice';
+import partition from '@helpers/array/partition';
+import filterUnique from '@helpers/array/filterUnique';
+import generatePhotoForExtendedMediaPreview from '@appManagers/utils/photos/generatePhotoForExtendedMediaPreview';
+import icon from '@components/icon';
+import {MediaSearchContext} from '@components/appMediaPlaybackController';
+import {wrapRoundVideoBubble} from '@components/chat/bubbleParts/roundVideoBubble';
+import {createMessageSpoilerOverlay, updateMessageSpoilerOverlays} from '@components/messageSpoilerOverlay';
+import {getReplyQuote} from '@lib/richQuote';
+import {getRichQuoteTextOffset} from '@components/chat/richQuoteSelection';
+import {expandTextMatchDetails} from '@components/instantView/details';
+import SolidJSHotReloadGuardProvider, {hotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
+import formatStarsAmount from '@appManagers/utils/payments/formatStarsAmount';
+import {Sparkles} from '@components/sparkles';
+import addPaidServiceMessage from '@components/chat/bubbleParts/paidServiceMessage';
+import namedPromises from '@helpers/namedPromises';
+import {getCurrentNewMediaPopup} from '@components/popups/newMedia';
+import showStarGiftInfoPopup from '@components/popups/starGiftInfo';
+import {StarGiftBubble, UniqueStarGiftWebPageBox} from '@components/chat/bubbles/starGift';
+import {PremiumGiftBubble} from '@components/chat/bubbles/premiumGift';
+import WalletChatCard from '@components/wallet/chatCard';
+import {isWalletReleased} from '@lib/wallet/release';
+import {ChatThemeGiftBubble} from '@components/chat/bubbles/chatThemeGift';
+import {ChatWallPaperBubble} from '@components/chat/bubbles/chatWallPaper';
+import {UnknownUserBubble} from '@components/chat/bubbles/unknownUser';
+import {
+  HIDDEN_LINK_ENTITY_TYPES,
+  shouldHideMessageLinks,
+  shouldHidePeerMessageLinks
+} from '@components/chat/bubbles/hiddenLinks';
+import ejectBubble from '@components/chat/bubbles/ejectBubble';
+import {generateGradient, generateTail, getGuestChatViaFromId, getMid, isGuestChatMessage, isMessage, isMessageForVerificationBot, isVerificationBot} from '@components/chat/utils';
+import {advanceOutgoingMessageGradient, holdOutgoingMessageGradient, measureOutgoingMessageGradientHold} from '@helpers/outgoingMessageGradient';
+import OutgoingGradientUnion from '@components/chat/outgoingGradientUnion';
+import {ChecklistBubble} from '@components/chat/bubbles/checklist';
+import {getRestrictionReason} from '@helpers/restrictions';
+import {isMessageSensitive} from '@appManagers/utils/messages/isMessageRestricted';
+import {getPriceChangedActionMessageLangParams} from '@lib/lang';
+import addSuggestedPostServiceMessage, {checkIfNotMePosted} from '@components/chat/bubbleParts/suggestPostServiceMessage';
+import addSuggestedPostReplyMarkup, {canHaveSuggestedPostReplyMarkup} from '@components/chat/bubbleParts/suggestedPostReplyMarkup';
+import type {SeparatorIntersectorRoot} from '@components/chat/bubbleParts/chatThreadSeparator';
+import BotforumNewTopic from '@components/chat/bubbleParts/botforumNewTopic';
+import wrapServiceMediaBubble from '@components/chat/bubbleParts/serviceMediaBubble';
+import addContinueLastTopicReplyMarkup from '@components/chat/bubbleParts/continueLastTopicReplyMarkup';
+import {createInlineReplyMarkup} from '@components/chat/bubbleParts/replyMarkupLayout';
+import {wrapTopicIcon} from '@components/wrappers/messageActionTextNewUnsafe';
+import {getTransition} from '@config/transitions';
+import {SuggestBirthdayBubble} from '@components/chat/bubbles/suggestBirthday';
+import {AdminLog} from '@appManagers/appChatsManager';
+import {renderComponent} from '@helpers/solid/renderComponent';
+import {NoneToVoidFunction} from '@types';
+import type {CommittedFilters} from '@components/sidebarRight/tabs/adminRecentActions/filters';
+import deepEqual from '@helpers/object/deepEqual';
+import {setPeerColorToElement} from '@components/peerColors';
+import {showStarGiftOfferButtons, StarGiftOfferBubble, StarGiftOfferReplyMarkup} from '@components/chat/bubbles/starGiftOffer';
+import {wrapSolidComponent} from '@helpers/solid/wrapSolidComponent';
+import wrapDice from '@components/chat/bubbleParts/dice';
+import animateSomethingWithScroll from '@helpers/animateSomethingWithScroll';
+import onQuoteClick from '@helpers/dom/onQuoteClick';
+import showBoostPopup from '@components/popups/boost';
+import {NoForwardsRequestContent, NoForwardsRequestReplyMarkup} from '@components/chat/bubbles/noForwardsRequest';
+import tsNow from '@helpers/tsNow';
+import wrapMessageForReply from '@components/wrappers/messageForReply';
+import canSeeMessageMedia from '@lib/appManagers/utils/messages/canSeeMessageMedia';
+import {PollMessageContentProps, PollMessageContentControls} from './bubbleParts/pollMessageContent';
+import {createMutable} from 'solid-js/store';
+import compareUint8Arrays from '@helpers/bytes/compareUint8Arrays';
+import {linkToPollOption} from './bubbleParts/pollMessageContent/pollToOptionLink';
+import {getSimulatedEvent} from '@helpers/dom/dispatchEvent';
+import {richMessageToPage} from '@lib/richMessage';
+import {getWidgetSource, isWidgetRenderingEnabled, whenWidgetRenderingEnabled} from '@lib/widgetSandbox/payload';
+import {getWidgetHeightAtLeast, getWidgetKey, onWidgetHeightRemembered, WIDGET_MIN_WIDTH} from '@lib/widgetSandbox/sizing';
+import {getManagersSession} from '@lib/accounts/getCurrentAccount';
+import {RichMessageBubble, isRichMessageButtonTarget, isRichMessageTarget} from '@components/chat/bubbles/richMessage';
+import {isPagingSlideshowTarget} from '@components/slideshow';
+import {isWidgetHorizontalDragTarget} from '@lib/widgetSandbox/gestures';
+import {keepWidgetHeights} from '@lib/widgetSandbox/heights';
+import isEphemeralMessage from '@appManagers/utils/messages/isEphemeralMessage';
+import isAnchoredEphemeralMessage from '@appManagers/utils/messages/isAnchoredEphemeralMessage';
+import canReplyToEphemeralMessage from '@appManagers/utils/messages/canReplyToEphemeralMessage';
+import isEphemeralMessageId from '@appManagers/utils/messageId/isEphemeralMessageId';
+import {
+  CommunityChangedServiceBubble
+} from '@components/chat/bubbles/communityChanged';
+import {
+  createSolidMessageBody,
+  makeSolidMessageBodySnapshot,
+  SolidMessageBodyController
+} from '@components/chat/bubbleParts/solidMessageBody';
+import {
+  getSolidMessageBodyStructure,
+  hasMessageTextSpoilers
+} from '@components/chat/bubbleParts/solidMessageShell';
+import createWidgetEditHandler, {createPendingWidgetEditHandler} from '@components/chat/bubbleParts/widgetEdit';
+import useReducedMotion from '@stores/reducedMotion';
+import wheelDeltaToPixels from '@helpers/dom/wheelDeltaToPixels';
+import {TEXT_LINK_ATTRIBUTE} from '@helpers/dom/linkPress';
+import {EMOJI_TEXT_COLOR} from '@components/emoticonsDropdown/constants';
+import SendFlights, {SEND_FLIGHT_SCROLL, type SendFlight} from '@components/chat/sendFlights';
+import captureBubbleTransition, {
+  BubbleChange,
+  BubbleTransition,
+  finishGrowth,
+  followGrowth,
+  noteGrowth
+} from '@components/chat/bubbleTransitions';
+
+// TODO: fix new message won't be rendered if an old one is rendering in the moment
+
+// how a scroll goes when it is not the usual one
+type ScrollTiming = {duration: number, transition: (value: number) => number};
+
+export type BubbleContext = {
+  bubble: HTMLElement,
+  bubbleContainer: HTMLElement,
+  bubbles: ChatBubbles,
+  attachmentDiv?: HTMLElement,
+  isInUnread: boolean,
+  isOutgoing: boolean,
+  middleware: Middleware,
+  messageMessage: string,
+  messageMedia?: MessageMedia,
+  loadPromises: Promise<any>[],
+  isOut: boolean,
+  canHaveTail: boolean,
+  isStandaloneMedia: boolean,
+  mediaRequiresMessageDiv: boolean,
+  pollMessageContentControls?: Partial<PollMessageContentControls>,
+
+  // * something extra
+  releaseDice?: (value: number) => void
+};
+
+export {makeFullMid, splitFullMid};
+export type {FullMid};
+
+export const USER_REACTIONS_INLINE = false;
+export const TEST_BUBBLES_DELETION = false;
+const USE_MEDIA_TAILS = false;
+type MESSAGE_ACTION_TYPE = Message.messageService['action']['_'];
+type IGNORE_ACTION_KEY = MESSAGE_ACTION_TYPE;
+type IGNORE_ACTION_VALUE = true | ((message: Message.messageService) => boolean);
+const IGNORE_ACTIONS_ARRAY: [IGNORE_ACTION_KEY, IGNORE_ACTION_VALUE][] = [
+  ['messageActionHistoryClear', true],
+  ['messageActionChatCreate', (message) => message.pFlags.out],
+  ['messageActionChannelMigrateFrom', true],
+  ['messageActionChatMigrateTo', true],
+  ['messageActionContactSignUp', true]
+];
+const IGNORE_ACTIONS = new Map(IGNORE_ACTIONS_ARRAY);
+
+export const SERVICE_AS_REGULAR: Set<MESSAGE_ACTION_TYPE> = new Set();
+
+if(IS_CALL_SUPPORTED) {
+  SERVICE_AS_REGULAR.add('messageActionPhoneCall');
+}
+
+// tdesktop renders a conference call as the same call bubble a 1-on-1 call gets
+// (HistoryView::Call), not as service text. Gated like the 1-on-1 one: a browser
+// that cannot join the call falls back to the plain service message.
+if(IS_GROUP_CALL_SUPPORTED) {
+  SERVICE_AS_REGULAR.add('messageActionConferenceCall');
+}
+
+const isStoryMentionMessage = (message: Message.message) => !!(message.media as MessageMedia.messageMediaStory)?.pFlags?.via_mention;
+const isSelfDestructingMediaMessage = (message: Message.message) => !!(message.media as MessageMedia.messageMediaPhoto)?.ttl_seconds;
+// * a rich message keeps its content when its media is one this client cannot show
+const isUnsupportedMessage = (message: Message.message) => message.media?._ === 'messageMediaUnsupported' && !message.rich_message;
+
+/**
+ * Whether a message is drawn as a service line, neither incoming nor outgoing: a service message but a call, a
+ * story mention, self-destructing media that cannot be seen
+ */
+function isDrawnAsService(message: Message.message | Message.messageService) {
+  if(message._ !== 'message') {
+    const action = (message as Message.messageService).action;
+    return !action || !SERVICE_AS_REGULAR.has(action._);
+  }
+
+  return isStoryMentionMessage(message) || (isSelfDestructingMediaMessage(message) && !canSeeMessageMedia(message));
+}
+
+/** Whether a message is not drawn at all: a service line the chat leaves out (a cleared history, a sign-up) */
+function isNeverDrawn(message: Message.message | Message.messageService) {
+  if(!isDrawnAsService(message)) {
+    return false;
+  }
+
+  const action = (message as Message.messageService).action;
+  if(!action) {
+    return false;
+  }
+
+  const ignoreAction = IGNORE_ACTIONS.get(action._);
+  if(ignoreAction && (ignoreAction === true || ignoreAction(message as Message.messageService))) {
+    return true;
+  }
+
+  return langPack.hasOwnProperty(action._) && !langPack[action._];
+}
+
+// Service actions whose inline photo (suggested profile photo, or a group/channel
+// avatar change) is shown via wrapServiceMediaBubble. `filter`/`useSearch` drive
+// the media-viewer opened on click; `suggest` adds the receiving-side accept flow.
+// (Keys include the tweb pseudo-types saveMessages renames messageActionChatEditPhoto
+// into for broadcast / video variants — hence Set<string>/string keys.)
+const PHOTO_BUBBLE_ACTIONS: {[action: string]: {
+  filter: 'inputMessagesFilterPhotoVideo' | 'inputMessagesFilterChatPhotos',
+  useSearch?: boolean,
+  suggest?: boolean
+}} = {
+  messageActionSuggestProfilePhoto: {filter: 'inputMessagesFilterPhotoVideo', useSearch: false, suggest: true},
+  messageActionChatEditPhoto: {filter: 'inputMessagesFilterChatPhotos'},
+  messageActionChannelEditPhoto: {filter: 'inputMessagesFilterChatPhotos'},
+  messageActionChatEditVideo: {filter: 'inputMessagesFilterChatPhotos'},
+  messageActionChannelEditVideo: {filter: 'inputMessagesFilterChatPhotos'}
+};
+
+// const TEST_SCROLL_TIMES: number = undefined;
+// let TEST_SCROLL = TEST_SCROLL_TIMES;
+
+let queueId = 0;
+
+type GenerateLocalMessageType<IsService> = IsService extends true ? Message.messageService : Message.message;
+
+const SPONSORED_MESSAGE_ID_OFFSET = 1;
+export const STICKY_OFFSET = 3;
+const SCROLLED_DOWN_THRESHOLD = 300;
+// * generous enough for slow media on a bad connection, short enough that a promise which will
+// * never settle cannot brick the chat
+const MEDIA_PROMISES_TIMEOUT = 10000;
+
+// * where a chat opens, which its first frame is counted around (`ChatBubbles.getFirstScreen`): its end, a message
+// * jumped to, the first unread message, the message it was left at with where that stood
+type FirstScreen =
+  {at: 'end'} |
+  {at: 'message', mid: number} |
+  {at: 'unread', readMaxId: number} |
+  {at: 'position', mid: number, top: number};
+
+// * which of the messages a render puts in go in out of sight: above or below what the screen shows. Of an opening
+// * chat's first screen more go out of sight while it renders (`watch`), as its widgets report their heights
+type RenderSight = {
+  isOutOfSight: (mid: number) => boolean,
+  watch?: (mid: number, onOutOfSight: () => void) => () => void
+};
+
+// * all of them: history loaded by scrolling, the rest of an opening chat's page
+const OUT_OF_SIGHT: RenderSight = {isOutOfSight: () => true};
+
+// * how each kind of chat lays out the text of a message, at the width and the text size it was laid out at: an opening
+// * chat counts by it how many of its messages fill its screen. Not the heights of the bubbles it showed: one
+// * goes stale with whatever changed since (an edit, a reaction, a poll, a quote opened, a translation), while a
+// * message's text is measured as it is now
+const messageTextMetrics: Map<string, MessageTextMetrics & {layout: string}> = new Map();
+
+const getReadMaxIdKey = (peerId: PeerId, threadId?: number) => peerId + '_' + (threadId || '');
+
+// * imported once: in the build every `import()` walks its chunk's ~300 dependencies again (~3 ms), once per poll
+let pollMessageContentPromise: Promise<typeof import('./bubbleParts/pollMessageContent')>;
+const loadPollMessageContent = () => pollMessageContentPromise ??= import('./bubbleParts/pollMessageContent').catch((err) => {
+  pollMessageContentPromise = undefined;
+  throw err;
+});
+const PEER_CHANGED_ERROR = new Error('peer changed');
+const HIDDEN_LINKS_PENDING_ATTRIBUTE = 'data-hidden-links-pending';
+const HIDDEN_LINKS_FALLBACK_ATTRIBUTE = 'data-hidden-links-fallback';
+
+type TestPeerNonContactState = {userId: UserId, isNonContact: boolean};
+
+type MessageLinkPolicyState = {
+  peerId: PeerId,
+  peerSettings?: PeerSettings,
+  forceHide: boolean,
+  callbacks: Set<() => void>
+};
+
+export function retainMessageLinkPolicyOnCleanup(
+  samePeer: boolean,
+  peerSettings?: PeerSettings,
+  testPeerNonContactState?: TestPeerNonContactState
+) {
+  return samePeer ? {peerSettings, testPeerNonContactState} : {};
+}
+
+export function isTestPeerNonContactRequestCurrent(
+  request: number,
+  currentRequest: number,
+  peerId: PeerId,
+  currentPeerId: PeerId
+) {
+  return request === currentRequest && peerId === currentPeerId;
+}
+
+export function shouldForceHideNonContactLinkTest(
+  peerId: PeerId,
+  myId: PeerId,
+  isBot: boolean,
+  state?: TestPeerNonContactState
+) {
+  if(!peerId?.isUser() || peerId === myId || isBot) return false;
+  return state?.userId === peerId.toUserId() ? state.isNonContact : true;
+}
+
+export function setBubbleHiddenLinksPending(bubble: HTMLElement, pending: boolean) {
+  if(pending) {
+    bubble.removeAttribute(HIDDEN_LINKS_FALLBACK_ATTRIBUTE);
+    bubble.setAttribute(HIDDEN_LINKS_PENDING_ATTRIBUTE, '');
+    return;
+  }
+
+  bubble.removeAttribute(HIDDEN_LINKS_PENDING_ATTRIBUTE);
+}
+
+// * the peer's middleware outlives every bubble a slice or a deletion takes off, so what it keeps for one holds the
+// * bubble weakly - and is bound, not a closure, which would keep the whole render's scope with the bubble in it:
+// * every bubble scrolled past stayed in memory, its DOM with it, until the chat was left
+function destroyDetachedBubble(bubble: WeakRef<HTMLElement>, middlewareHelper: MiddlewareHelper) {
+  if(!bubble.deref()?.isConnected) middlewareHelper.destroy();
+}
+
+function setBubbleHiddenLinksFallback(bubble: HTMLElement, guarded: boolean) {
+  bubble.toggleAttribute(HIDDEN_LINKS_FALLBACK_ATTRIBUTE, guarded);
+}
+
+export function cancelPendingHiddenLinksEvent(event: Event) {
+  const target = event.target;
+  if(!(target instanceof Element)) {
+    return false;
+  }
+
+  const guardedBubble = target.closest(
+    `[${HIDDEN_LINKS_PENDING_ATTRIBUTE}], [${HIDDEN_LINKS_FALLBACK_ATTRIBUTE}]`
+  );
+  // a shared contact is a web-page box too, but no link: it stays usable where links are held back
+  const navigationTarget = target.closest(`${MESSAGE_LINK_ENTITY_SELECTOR}, .webpage:not(.is-contact), .reply-markup-button`);
+  if(!guardedBubble || !navigationTarget || !guardedBubble.contains(navigationTarget)) {
+    return false;
+  }
+
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  return true;
+}
+
+export function isBubbleUiCurrent(
+  middleware: Middleware,
+  bubble: HTMLElement,
+  getBubble: (fullMid: FullMid) => HTMLElement
+) {
+  const fullMid = getBubbleFullMid(bubble);
+  return middleware() && !!fullMid && getBubble(fullMid) === bubble;
+}
+
+export function disposeChatInnerMiddlewareAfterDetach(
+  chatInner: HTMLElement,
+  middlewareHelper: ReturnType<typeof getMiddleware>
+) {
+  if(!chatInner.isConnected) {
+    middlewareHelper.destroy();
+    return;
+  }
+
+  let waiting = true;
+  const destroyIfDetached = () => {
+    if(!waiting || chatInner.isConnected) return;
+    waiting = false;
+    observer.disconnect();
+    // * after the frame: the list is taken out as the next one is put in, and its bubbles' teardown held that
+    // * one's first frame back
+    const destroy = () => middlewareHelper.destroy();
+    if(document.hidden) destroy();
+    else fastRaf(() => setTimeout(destroy, 0));
+  };
+  const observer = new MutationObserver(destroyIfDetached);
+  observer.observe(chatInner.ownerDocument, {childList: true, subtree: true});
+  middlewareHelper.onDestroy(() => {
+    if(!waiting) return;
+    waiting = false;
+    observer.disconnect();
+  });
+}
+
+const DO_NOT_SLICE_VIEWPORT = false;
+const DO_NOT_SLICE_VIEWPORT_ON_RENDER = false;
+const DO_NOT_SLICE_VIEWPORT_ON_SCROLL = IS_SAFARI;
+const DO_NOT_UPDATE_MESSAGE_VIEWS = false;
+const DO_NOT_UPDATE_MESSAGE_REACTIONS = false;
+const DO_NOT_UPDATE_MESSAGE_REPLY = false;
+const GLOBAL_MIDS = true;
+
+
+const BIG_EMOJI_SIZES: {[size: number]: number} = {
+  1: 96,
+  2: 90,
+  3: 84,
+  4: 72,
+  5: 60,
+  6: 48,
+  7: 36
+};
+const BIG_EMOJI_SIZES_LENGTH = Object.keys(BIG_EMOJI_SIZES).length;
+
+// * the bubble flash and the found text inside it: the flash goes first, the text part stays
+// * on a while longer and fades (tdesktop: activeFadeIn + fadeWrap + activeFadeOut)
+const BUBBLE_HIGHLIGHT_DURATION = 2000;
+const BUBBLE_TEXT_HIGHLIGHT_DURATION = 4000;
+// * fade of the "active" highlight, matches the one ChatSelection uses for `is-selected`
+const BUBBLE_ACTIVE_DURATION = 200;
+// * parts of `.message` that are not the message text (link preview / fact-check boxes included)
+const BUBBLE_TEXT_HIGHLIGHT_SKIP = '.time, .reactions, .reply, .code-header, .webpage';
+
+/** what a jump is really about inside the message it lands on, see `ChatBubbles.scrollToBubble` */
+type MessageFocus = {
+  /** the search query / the quote about to be lit up in the text */
+  textHighlight?: TextHighlightMatch,
+  /** an element of the bubble: the answer a poll option link points at, the item of an album */
+  element?: HTMLElement
+};
+
+const TOPIC_ICON_SIZE = makeMediaSize(64, 64);
+
+const webPageTypes: {[type in WebPage.webPage['type']]?: LangPackKey} = {
+  telegram_channel: 'Chat.Message.ViewChannel',
+  telegram_megagroup: 'OpenGroup',
+  telegram_bot: 'Chat.Message.ViewBot',
+  telegram_botapp: 'Chat.Message.ViewApp',
+  telegram_user: 'Chat.Message.SendMessage',
+  telegram_chatlist: 'OpenChatlist',
+  telegram_story: 'OpenStory',
+  telegram_channel_boost: 'BoostLinkButton',
+  telegram_group_boost: 'BoostLinkButton',
+  telegram_giftcode: 'Open',
+  telegram_chat: 'OpenGroup',
+  telegram_livestream: 'VoipChannelJoinVoiceChatUrl',
+  telegram_nft: 'StarGiftLinkButton',
+  telegram_collection: 'StarGiftCollectionLinkButton',
+  telegram_story_album: 'ViewStoryAlbum',
+  telegram_megagroup_request: 'Chat.Message.RequestToJoin',
+  telegram_channel_request: 'Chat.Message.RequestToJoin',
+  telegram_chat_request: 'Chat.Message.RequestToJoin',
+  telegram_stickerset: 'OpenStickers',
+  telegram_call: 'JoinCall',
+  telegram_aicomposetone: 'AiEditor.Chat.ViewStyle'
+};
+
+// size (px) of the compact right-aligned sticker-set / custom-emoji preview grid in a webpage bubble
+const STICKER_SET_PREVIEW_BOX_SIZE = 56;
+
+const serviceMessageActionsWithReply: (MessageAction['_'])[] = [
+  'messageActionTodoAppendTasks',
+  'messageActionTodoCompletions',
+  'messageActionPollAppendAnswer',
+  'messageActionPollDeleteAnswer'
+];
+
+const webPageTypesSiteNames: {[type in WebPage.webPage['type']]?: LangPackKey} = {
+  telegram_livestream: 'PeerInfo.Action.LiveStream'
+};
+
+type Bubble = {
+  bubble: HTMLElement,
+  mids: Set<number>,
+  groupedId?: string
+};
+
+type SolidMessageBodyEntry = {
+  bubble: HTMLElement,
+  controller: SolidMessageBodyController,
+  message: Message.message,
+  revision: number,
+  structure: unknown,
+  ownsTime: boolean,
+  refreshPolicy: () => void,
+  reconcileShell?: (message: Message.message) => void,
+  ensureSpoilers?: () => void,
+  updateSpoilers?: () => void
+};
+
+type StreamedMessageFinalMarker = {
+  tempId: number,
+  timeout: number
+};
+
+type BubbleReplacementTransaction = {
+  source: HTMLElement,
+  fullMid: FullMid,
+  rollbackFullMidBubble?: HTMLElement,
+  previousFullMidSkipped: boolean,
+  regroupMessage?: Message.message
+};
+
+type LocalHistoryResult = Omit<HistoryResult, 'messages'> & {messages?: (MyMessage | AdminLog)[]};
+type MyHistoryResult = LocalHistoryResult | {history: number[]};
+
+type EmptyPlaceholderType =
+  | 'group'
+  | 'saved'
+  | 'noMessages'
+  | 'noScheduledMessages'
+  | 'welcomeMessages'
+  | 'greeting'
+  | 'restricted'
+  | 'premiumRequired'
+  | 'paidMessages'
+  | 'directChannelMessages'
+  | 'topic'
+  | 'logs'
+;
+
+let resolveAdminLog: typeof import('./bubbleParts/adminLogsResolver').resolveAdminLog;
+let adminLogResolverPromise: Promise<void>;
+
+const ensureAdminLogResolver = () => {
+  if(resolveAdminLog) return;
+
+  return adminLogResolverPromise ??= (async() => {
+    const module = await import('./bubbleParts/adminLogsResolver');
+    resolveAdminLog = module.resolveAdminLog;
+  })();
+};
+
+// made with the declaration, not in the block below: a hot update runs the block again, and the live bubbles' callbacks
+// are in this one
+const rerenderLogBubblesCallbacks: NoneToVoidFunction[] = import.meta.hot ? [] : undefined;
+
+if(import.meta.hot) {
+  import.meta.hot.accept('./bubbleParts/adminLogsResolver/index.tsx', (module: unknown) => {
+    if(!module) return;
+    const {resolveAdminLog: newResolveAdminLog} = module as unknown as typeof import('./bubbleParts/adminLogsResolver');
+
+    resolveAdminLog = newResolveAdminLog;
+    rerenderLogBubblesCallbacks.forEach(callback => callback());
+  });
+}
+
+function getMainMidForGrouped(mids: number[]) {
+  return Math.min(...mids);
+}
+
+const getSponsoredPhoto = (sponsoredMessage: SponsoredMessage) => {
+  return sponsoredMessage.photo;
+  // const peerId = getPeerId(sponsoredMessage.from_id);
+  // if(peerId !== NULL_PEER_ID) {
+  //   return;
+  // }
+
+  // let photo: Photo.photo | MTChat.channel;
+  // const chatInvite = sponsoredMessage.chat_invite;
+  // const webPage = sponsoredMessage.webpage;
+  // if(chatInvite) {
+  //   photo = (chatInvite as ChatInvite.chatInvite).photo as Photo.photo;
+  //   photo ||= (chatInvite as ChatInvite.chatInvitePeek).chat as MTChat.channel;
+  // } else if(webPage) {
+  //   photo = webPage.photo as Photo.photo;
+  // }
+
+  // return photo;
+};
+
+// * a touch screen presses on mousedown (CLICK_EVENT_NAME), so a press cancelled there still has its click to come,
+// * which would follow the web page's link - a masked one with nothing asked. Only the primary button's press has
+// * one: a middle or right one ends in auxclick or a context menu, and the next click anywhere would be swallowed
+function cancelWebPageLink(event: Event) {
+  if(event.type !== 'click' && event.defaultPrevented && !(event as MouseEvent).button) {
+    cancelClickOrNextIfNotClick(event);
+  }
+}
+
+function getBubbleFullMid(bubble: HTMLElement) {
+  if(!bubble) return;
+  const mid = bubble.dataset.mid;
+  if(mid === undefined) return;
+  return makeFullMid(bubble.dataset.peerId.toPeerId(), +bubble.dataset.mid);
+}
+
+// * the message a media item of a bubble shows: an item of grouped messages names its own, an item of
+// * one message's album (paid media) is an index into the bubble's
+function getGroupedItemFullMid(bubble: HTMLElement, groupedItem: HTMLElement) {
+  const index = groupedItem ? +(groupedItem.dataset.index ?? -1) : -1;
+  return {fullMid: getBubbleFullMid(index !== -1 ? bubble : groupedItem || bubble), index};
+}
+
+const EMPTY_FULL_MID = makeFullMid(NULL_PEER_ID, 0);
+
+const SimulatedClickSymbol = Symbol('simulatedClick');
+
+function appendBubbleTime(bubble: HTMLElement, element: HTMLElement, callback: () => void) {
+  (bubble.timeAppenders ??= []).unshift({element, callback});
+  callback();
+}
+
+// * The time floats at the end of the text's last line, so it shares that line only when the line runs
+// * the way the UI does — else it takes a line of its own. A message is `dir="auto"`: every paragraph
+// * runs by its own first strong letter, so in RTL it is the last paragraph's that counts (an Arabic
+// * sentence ending with a full stop or an emoji still runs right to left).
+function isBubbleTimeBlock(text: string) {
+  return I18n.getIsRTL() ?
+    !isRTL(text.slice(text.lastIndexOf('\n') + 1)) :
+    isRTL(text, true);
+}
+
+// * the text each time was placed by: a switch of direction on the fly places it anew
+const bubbleTimeTexts: WeakMap<HTMLElement, string> = new WeakMap();
+
+function placeBubbleTime(timeSpan: HTMLElement, text: string) {
+  bubbleTimeTexts.set(timeSpan, text);
+  timeSpan.classList.toggle('is-block', isBubbleTimeBlock(text));
+}
+
+function shouldShowUnknownUserPlaceholder(peerSettings?: PeerSettings) {
+  return peerSettings?.phone_country || peerSettings?.registration_month;
+}
+
+type AddMessageSpoilerOverlayArgs = {
+  mid: number;
+  loadPromises?: Promise<void>[];
+  messageDiv: HTMLDivElement;
+  middleware: Middleware;
+  canTranslate?: boolean;
+};
+
+type RenderLogArgs = {
+  log: AdminLog;
+  reverse?: boolean;
+  bubble: HTMLElement;
+  middleware: Middleware;
+};
+
+type RenderMessageArgs = {
+  message: Message.message | Message.messageService;
+  colorOriginalMessagePeerId?: PeerId;
+  originalMessage?: Message.message | Message.messageService;
+  reverse?: boolean;
+  fakeServiceContent?: Node;
+  additionalPromises?: Promise<any>[];
+  logId?: string | number;
+  bubble: HTMLElement;
+  middleware: Middleware;
+  previewOnly?: boolean;
+  sight?: RenderSight;
+};
+
+type BubblesResolveAdminLogArgs = {
+  log: AdminLog;
+  noJsx?: false;
+  promises: Promise<any>[];
+  middleware: Middleware;
+} | {
+  log: AdminLog;
+  noJsx: true;
+};
+
+export default class ChatBubbles {
+  public container: HTMLDivElement;
+  public chatInner: HTMLDivElement;
+  public scrollable: Scrollable;
+  public paddingTop: HTMLDivElement;
+  public paddingBottom: HTMLDivElement;
+
+  private getHistoryTopPromise: Promise<boolean>;
+  private getHistoryBottomPromise: Promise<boolean>;
+
+  // public messagesCount: number = -1;
+
+  private unreadOut = new Set<number>();
+  private needUpdate: {replyToPeerId: PeerId, replyMid?: number, replyStoryId?: number, mid: number, peerId: PeerId, logId?: string | number}[] = []; // if need wrapSingleMessage
+
+  private bubbles: {[fullMid: string]: HTMLElement} = {};
+  /** bubble → cancel of its active text highlight (search query / quote), see `highlightBubbleText` */
+  private bubbleTextHighlights = new WeakMap<HTMLElement, () => void>();
+  public skippedMids: Set<string> = new Set();
+  public bubblesNewByGroupedId: {[groupId: string]: Bubble} = {};
+  public bubblesNew: {[mid: string]: Bubble} = {};
+  private dateMessages: {[timestamp: number]: {
+    div: HTMLElement,
+    firstTimestamp: number,
+    container: HTMLElement,
+    groupsLength: number,
+    timeout?: number
+  }} = {};
+
+  private solidMessageBodies = new Map<HTMLElement, Map<number, SolidMessageBodyEntry>>();
+  private pendingStreamedMessageUpdates = new Map<FullMid, Message.message>();
+  /** an update of a bubble that came while its message was being rendered, the latest one (`safeRenderMessage`) */
+  private pendingRerenders = new Map<FullMid, Omit<Parameters<ChatBubbles['safeRenderMessage']>[0], 'bubble'>>();
+  private streamedMessageFinals = new Map<FullMid, StreamedMessageFinalMarker>();
+  /**
+   * Android's `welcomeTemplateFirst`: new members read the chat's welcome messages from the
+   * oldest, so only that one says who sees them.
+   */
+  private welcomeFirstMid: number;
+  private streamFollowInvalidatedUntil = 0;
+  private testPeerNonContactState: TestPeerNonContactState;
+  private testPeerNonContactRequest = 0;
+  private messageLinkPolicyState: MessageLinkPolicyState;
+  private messageLinkPolicyStates = new Set<MessageLinkPolicyState>();
+  private hiddenLinksPendingBubbles = new Set<HTMLElement>();
+  private pendingSolidMessageBodyLayouts = new Set<SolidMessageBodyEntry>();
+  private laidOutSolidMessageBodies = new WeakSet<SolidMessageBodyEntry>();
+  private solidMessageBodyLayoutFrame: {win: Window, id: number};
+  // the list keeping up with a body that grew, before the frame it grew in is drawn (`followSolidMessageBodies`)
+  private solidMessageBodyFollow: object;
+  private spoilerOverlayPromises = new WeakMap<HTMLElement, Promise<void>>();
+
+  private scrolledDown = true;
+  private isScrollingTimeout = 0;
+
+  private stickyIntersector: StickyIntersector;
+
+  public separatorIntersectorRoot: SeparatorIntersectorRoot;
+
+  private unreaded: Map<HTMLElement, number> = new Map();
+  private unreadedContent: Map<HTMLElement, number> = new Map();
+  private unreadedSeen: Set<number> = new Set();
+  private unreadedContentSeen: Set<number> = new Set();
+  // The chat the unreaded mids belong to. `this.chat.peerId` flips synchronously at the start of
+  // `Chat.setPeer` while `cleanup()` (which clears the unreaded sets) only runs several awaits
+  // later, so anything deferred (focus promise, late IntersectionObserver entries) must compare
+  // against this snapshot instead of trusting `this.chat` — otherwise mids collected in the old
+  // chat get read against the new peer, poisoning its historyStorage with foreign-namespace mids.
+  private unreadedChat: {peerId: PeerId, threadId: number, monoforumThreadId: PeerId};
+  private readPromise: Promise<void>;
+  private readContentPromise: Promise<void>;
+
+  private bubbleGroups: BubbleGroups;
+
+  private preloader: ProgressivePreloader = null;
+
+  // private messagesQueueOnRender: () => void = null;
+  private messagesQueueOnRenderAdditional: () => void = null;
+
+  private firstUnreadBubble: HTMLElement = null;
+  // * the message the unread delimiter is frozen on: it outlives the bubble, which the viewport slice takes away
+  private firstUnreadFullMid: FullMid;
+  private attachedUnreadBubble: boolean;
+
+  public lazyLoadQueue: LazyLoadQueue;
+
+  private middlewareHelper = getMiddleware();
+  private chatInnerMiddlewareHelper: ReturnType<typeof getMiddleware>;
+
+  private log: ReturnType<typeof logger>;
+
+  public listenerSetter: ListenerSetter;
+
+  private followStack: FullMid[] = [];
+
+  private isHeavyAnimationInProgress = false;
+  private scrollingToBubble: HTMLElement;
+
+  private isFirstLoad = true;
+  private needReflowScroll: boolean;
+
+  private fetchNewPromise: Promise<void>;
+
+  private passEntities: Partial<{
+    [_ in MessageEntity['_']]: boolean
+  }> = {};
+
+  private onAnimateLadder: () => Promise<any> | void;
+  /** the zoom a list rendered anew comes in with (`animateAsLadder`), from the moment it is armed till it is over */
+  private ladderAppearance: CancellablePromise<void>;
+  /** the zoom held back till the list of the peer change (`chat.setPeerPromise`) is mounted (`startHeldLadder`) */
+  private resolveLadderAnimation: () => Promise<any>;
+  /** the peer change whose list is mounted: a zoom of its renders is held back no more */
+  private ladderMountedIn: Promise<void>;
+  private emptyPlaceholderBubble: HTMLElement;
+
+  private viewsMids: Set<FullMid> = new Set();
+  private sendViewCountersDebounced: () => Promise<void>;
+
+  // Post engagement metrics (messages.reportReadMetrics). `readMetricsBubbles` maps each tracked
+  // channel-post bubble currently overlapping the viewport to its mid; the tracker is driven with
+  // a fresh visibility batch on scroll/resize/intersection changes.
+  private readMetricsTracker: ReadMetricsTracker;
+  private readMetricsBubbles: Map<HTMLElement, number> = new Map();
+  private updateReadMetricsBatchScheduled: boolean;
+  private lastReadMetricsActivity = 0;
+
+  private isTopPaddingSet = false;
+
+  private getSponsoredMessagePromise: Promise<void>;
+  private ephemeralHistoryPromise: Promise<MyEphemeralMessage[]>;
+  private ephemeralHistoryLoaded = false;
+  private openingEphemeralHistory: ReturnType<ChatBubbles['requestEphemeralHistory']>;
+  private ephemeralHistoryGeneration = 0;
+  private pendingEphemeralHistory = 0;
+
+  private previousStickyDate: HTMLElement;
+
+  private hoverBubble: HTMLElement;
+  private hoverReaction: HTMLElement;
+  private sliceViewportDebounced: DebounceReturnType<ChatBubbles['sliceViewport']>;
+  private resizeObserver: ResizeObserver;
+  private willScrollOnLoad: boolean;
+  public observer: SuperIntersectionObserver;
+
+  // Preserve the chat's scroll position across reflows that rewrap the bubbles — a window/PiP-window
+  // resize or a PiP pop-in/out (full width ↔ ~430px). The anchor is captured before the change (kept
+  // fresh on scroll, default "at bottom") and re-pinned after the reflow settles. Stored CONTAINER-
+  // relative (offset of the top visible bubble from the container's top), not viewport-relative, so it
+  // survives the cross-window move into the PiP — the viewport origin differs between the two windows.
+  private reflowAnchor: {element: HTMLElement, offset: number};
+  private reflowWasAtEnd = true;
+  private reflowWasWidth: number;
+  // * the scrollable's size as the resize observer last saw it: what an opening chat measures by, without a layout read
+  private scrollableSize: {width: number, height: number};
+  private saveReflowScrollDebounced: DebounceReturnType<ChatBubbles['saveReflowScroll']>;
+  private appWindowUnsubs: (() => void)[] = [];
+  private disposeDirectionEffect: () => void;
+
+  private renderingMessages: Set<FullMid> = new Set();
+  private setPeerCached: boolean;
+  private attachPlaceholderOnRender: () => void;
+
+  // viewer's own country calling code (e.g. '7'), used to format a shared contact's
+  // phone that is stored without its country code (bugs.telegram.org #30681)
+  private myCountryCode: string;
+
+  // An entry exists only while `candidate` is uncommitted. `source` is always the ultimate
+  // still-visible bubble, even when another replacement supersedes an earlier candidate.
+  private bubblesToReplace = new Map<HTMLElement, BubbleReplacementTransaction>();
+  private updatePlaceholderPosition: () => void;
+  private setPeerOptions: {lastMsgFullMid: FullMid, topMessageFullMid: FullMid, savedPosition: ChatSavedPosition};
+
+  private setPeerTempId: number = 0;
+
+  private renderNewPromises: Set<Promise<any>> = new Set();
+  // what is sent flies into its message
+  public sendFlights: SendFlights;
+  // * the outgoing bubbles' gradient, drawn once for the list
+  private gradientUnion: OutgoingGradientUnion;
+  private updateGradient: boolean;
+
+  private extendedMediaMessages: Set<number> = new Set();
+  private pollExtendedMediaMessagesPromise: Promise<void>;
+
+  private batchProcessor: BatchProcessor<Awaited<ReturnType<ChatBubbles['safeRenderMessage']>>>;
+
+  // Coalesces the per-bubble read-cursor cross-worker round-trip: every non-unread
+  // bubble in a group/channel render burst asks for the SAME peer/thread read
+  // cursor, so memoize the in-flight promise for the burst and reuse it. TTL 0 →
+  // the entry is dropped on the next macrotask after the fetch settles, so a
+  // later, distinct render pass re-reads a fresh value.
+  private getRenderReadMaxId = memoizeAsyncWithTTL(
+    (peerId: PeerId, threadId?: number) => this.managers.appMessagesManager.getInboxReadMaxId(peerId, threadId),
+    ([peerId, threadId]) => getReadMaxIdKey(peerId, threadId),
+    0
+  );
+
+  // * the cursor an opening chat's bubbles are rendered against, asked for together with the history: asked by the
+  // * first bubble instead, its answer came a frame later on a busy main thread, and every bubble waited for it
+  private openingReadMaxId: {key: string, promise: Promise<number>};
+
+  // * what an opening chat renders right after its first frame (`renderFirstScreen`): no scroll trigger loads more
+  // * until it is in, the history it would load is on its way
+  private firstScreenRestPromise: Promise<void>;
+
+  // * the tags known apart from a message's own `from_rank`: a supergroup's admins, a basic group's
+  // * members, and any tag changed since its messages were loaded ('' marks one removed)
+  private ranks: Map<PeerId, BubbleNameRank>;
+  private ranksChatId: ChatId;
+  // * whether a message's own `from_rank` counts: in a supergroup, not in a basic group
+  private ranksFromMessages: boolean;
+  // * tag changes learnt before `ranks` came, applied over them
+  private pendingRankChanges: Array<() => void>;
+  private processRanks: Set<() => void>;
+  // * what draws an author's tag on each of their rendered name lines, to redraw it when the tag changes
+  private rankRenderers: Map<PeerId, Set<() => void>>;
+  private canShowRanks: boolean;
+  // private reactions: Map<number, ReactionsElement>;
+
+  /** Applies an edit to a bubble in place; `false` leaves it to the usual re-render. */
+  private updateLocalOnEdit: Map<HTMLElement, (message: Message.message) => void | false> = new Map();
+  public replySwipeHandler: SwipeHandler;
+
+  private remover: HTMLDivElement;
+  public floatingSeparatorsContainer: HTMLDivElement;
+
+  private lastPlayingVideo: HTMLVideoElement;
+
+  private batchingModifying: Array<() => void>;
+  // the batch made and shown to its end (`modifyBubble`)
+  private batchingModified: CancellablePromise<void>;
+  // the bubbles of the batch whose change is shown (`bubbleTransitions`), by what changes in them, and the last
+  // change still being shown
+  private batchingTransitions: Map<HTMLElement, BubbleChange>;
+  private bubbleTransitionPromise: Promise<void>;
+  private bubbleTransition: BubbleTransition;
+
+  /** a send's temporary id → its server id; used when message is sent faster than temporary one was rendered */
+  public changedMids: Map<number, number>;
+
+  private peerSettings: PeerSettings;
+
+  private placeholderTopicIconContainer?: HTMLElement;
+
+  // for filtering the contents of the chat rather then showing up results in the topbar search
+  private inChatQuery?: string;
+
+  public committedLogsFilters?: CommittedFilters;
+
+  public logsByBubble = new WeakMap<HTMLElement, AdminLog>();
+
+  private logsBubbleByMid = new Map<number, {element: HTMLElement, priorityDate: number}>();
+
+  public contexts: Map<HTMLElement, BubbleContext> = new Map();
+
+  private webPageClickCallbacks: WeakMap<HTMLElement, (e: MouseEvent) => any> = new WeakMap();
+
+  constructor(
+    public chat: Chat,
+    public managers: AppManagers
+  ) {
+    this.log = this.chat.log;
+    // this.chat.log.error('Bubbles construction');
+
+    this.listenerSetter = new ListenerSetter();
+
+    // the heights widgets had where they last ran, off the account's disk before a chat of it counts its first screen
+    if(isWidgetRenderingEnabled()) keepWidgetHeights(this.managers);
+
+    // --- scroll preservation across viewport reflows (window/PiP-window resize, PiP pop-in/out) ---
+    this.saveReflowScrollDebounced = debounce(this.saveReflowScroll, 200, false, true);
+    this.disposeDirectionEffect = createRoot((dispose) => {
+      createEffect(on(I18n.isRTL, this.placeBubbleTimesAnew, {defer: true}));
+      return dispose;
+    });
+    // PiP pop-in/out: snapshot the scroll BEFORE the window flips (DOM still at the old size, nothing
+    // reflowed), then re-pin once the moved DOM has settled in the new window (rAF; two frames safe).
+    this.appWindowUnsubs.push(onBeforeAppWindowChange(this.saveReflowScroll));
+    // a flight is drawn in one window, on its frames and its clock: one on its way does not go along
+    this.appWindowUnsubs.push(onBeforeAppWindowChange(() => this.sendFlights?.abortAll()));
+    // the clock of a window the chat leaves may never tick again: a change shown there is over at once
+    this.appWindowUnsubs.push(onBeforeAppWindowChange(() => {
+      this.bubbleTransition?.finish();
+      finishGrowth();
+    }));
+    this.appWindowUnsubs.push(onAppWindowChange(() => {
+      const win = getAppWindow();
+      win.requestAnimationFrame(() => win.requestAnimationFrame(() => {
+        this.restoreReflowScroll();
+        this.reflowWasWidth = this.scrollable?.container.offsetWidth;
+      }));
+    }));
+    // Window / PiP-window resize: mediaSizes fires on the active window's resize. Re-pin only when the
+    // bubbles container actually changed width — a width change is what rewraps them; pure-height
+    // changes (e.g. the keyboard) are already handled by the height-tracking ResizeObserver.
+    this.listenerSetter.add(mediaSizes)('resize', () => {
+      const width = this.scrollable?.container.offsetWidth;
+      if(!width) return;
+      if(this.reflowWasWidth !== undefined && width !== this.reflowWasWidth) {
+        this.restoreReflowScroll();
+      }
+      this.reflowWasWidth = width;
+    });
+
+    // cache the viewer's own country code (from the warm main-thread user cache), to
+    // format shared-contact phones that lack their country code without misreading the
+    // leading digits (#30681); the self user is always cached by chat-construction time
+    const myPhone = apiManagerProxy.getUser(rootScope.myId.toUserId())?.phone;
+    this.myCountryCode = myPhone ? formatPhoneNumber(myPhone).code?.country_code : undefined;
+
+    this.constructBubbles();
+    this.gradientUnion = new OutgoingGradientUnion();
+    this.gradientUnion.setInner(this.chatInner);
+
+    // * constructor end
+
+    this.batchProcessor = new BatchProcessor({
+      log: this.log,
+      process: (...args) => this.processBatch(...args),
+      possibleError: PEER_CHANGED_ERROR
+    });
+    this.preloader = new ProgressivePreloader({
+      cancelable: false
+    });
+    this.lazyLoadQueue = new LazyLoadQueue(undefined, true);
+    this.lazyLoadQueue.queueId = ++queueId;
+
+    this.changedMids = new Map();
+    this.sendFlights = new SendFlights({
+      container: () => this.chat.container,
+      composer: () => this.chat.input.chatInput,
+      canFly: () => this.scrolledDown &&
+        this.scrollable.loadedAll.bottom &&
+        !this.chat.isPreview &&
+        [ChatType.Chat, ChatType.Discussion, ChatType.Saved].includes(this.chat.type) &&
+        !this.container.classList.contains('is-selecting'),
+      viewportHeight: () => this.chat.bubblesViewport.getBoundingClientRect().height,
+      scrollToEnd: () => {
+        const {container} = this.scrollable;
+        return Math.max(0, container.scrollHeight - container.clientHeight - container.scrollTop);
+      },
+      // the paddings too: the one under the list follows the composer as it grows or shrinks
+      observed: () => [this.scrollable.container, this.chatInner, this.paddingTop, this.paddingBottom].filter(Boolean)
+    });
+
+    // this.reactions = new Map();
+
+    // * events
+
+    const invalidateStreamFollow = () => {
+      this.streamFollowInvalidatedUntil = Date.now() + 450;
+    };
+    (['wheel', 'touchstart', 'pointerdown', 'keydown'] as const).forEach((event) => {
+      this.listenerSetter.add(this.scrollable.container)(event, invalidateStreamFollow, {passive: true});
+    });
+
+    this.listenerSetter.add(rootScope)('streamed_message_finalize', ({draft, tempId, finalMessage}) => {
+      this.pendingStreamedMessageUpdates.delete(makeFullMid(draft.peerId, tempId));
+      if(
+        finalMessage.peerId !== this.peerId ||
+        (this.chat.type !== ChatType.Chat && this.chat.type !== ChatType.Discussion) ||
+        this.chat.threadId && draft.threadId !== this.chat.threadId
+      ) return;
+      const fullMid = makeFullMid(finalMessage);
+      const previous = this.streamedMessageFinals.get(fullMid);
+      if(previous) window.clearTimeout(previous.timeout);
+      const timeout = window.setTimeout(() => {
+        if(this.streamedMessageFinals.get(fullMid)?.tempId === tempId) {
+          this.streamedMessageFinals.delete(fullMid);
+        }
+      }, 30_000);
+      this.streamedMessageFinals.set(fullMid, {tempId, timeout});
+    });
+
+    if(Modes.forceHideNonContactLinks) {
+      this.listenerSetter.add(rootScope)('contacts_update', (userId) => {
+        if(!this.peerId.isUser() || this.peerId.toUserId() !== userId) return;
+        this.refreshTestPeerNonContactState(true);
+      });
+    }
+
+    // will call when sent for update pos
+    this.listenerSetter.add(rootScope)('history_update', async({storageKey, tempId, message}) => {
+      if(this.chat.messagesStorageKey !== storageKey || this.chat.type === ChatType.Scheduled) {
+        return;
+      }
+
+      const peerGeneration = this.setPeerTempId;
+      const {mid} = message;
+      const fullMid = makeFullMid(message);
+      // Must be read before the awaits below: history_multiappend consumes this marker to
+      // suppress its own duplicate render, so a later read would see it gone and drop a final
+      // whose streamed draft never got a bubble of its own.
+      const isStreamedFinal = !!tempId && this.streamedMessageFinals.get(fullMid)?.tempId === tempId;
+      const log = false ? this.log.bindPrefix('history_update-' + mid) : undefined;
+      log && log('start');
+
+      if(tempId && (this.renderNewPromises.size || this.messagesQueuePromise)) {
+        if(this.renderNewPromises.size) {
+          await Promise.allSettled(Array.from(this.renderNewPromises));
+        }
+        if(this.messagesQueuePromise) {
+          await this.messagesQueuePromise.catch(noop);
+        }
+      }
+
+      if(
+        this.setPeerTempId !== peerGeneration ||
+        this.chat.messagesStorageKey !== storageKey
+      ) return;
+
+      // The bubble is registered before its async render result is committed to the batch. Rekeying
+      // it earlier makes the batch's temp-id ownership check discard that same bubble; the matching
+      // history_multiappend is then intentionally suppressed and the final message disappears.
+      if(tempId && this.finalizeTypingMessage(message, tempId)) return;
+
+      if(isStreamedFinal) {
+        this.renderNewMessage(message);
+        return;
+      }
+
+      const bubble = this.getBubble(fullMid);
+      if(!bubble) return;
+
+      if(this.renderNewPromises.size) {
+        log && log.error('will await new messages render');
+        await Promise.all(Array.from(this.renderNewPromises));
+      }
+
+      if(this.messagesQueuePromise) {
+        log && log.error('messages render in process');
+        await this.messagesQueuePromise;
+      }
+
+      if(
+        this.setPeerTempId !== peerGeneration ||
+        this.chat.messagesStorageKey !== storageKey
+      ) return;
+
+      if(this.getBubble(fullMid) !== bubble) return;
+
+      // await getHeavyAnimationPromise();
+
+      const item = this.bubbleGroups.getItemByBubble(bubble);
+      if(!item) { // probably a group item
+        log && log.error('no item by bubble', bubble);
+        return;
+      } else if(item.mid === mid) {
+        log && log.warn('wow what', item, mid);
+        return;
+      }
+
+      if(this.updateGroupedMessage(bubble, message, {preserveScroll: false}) && this.scrollingToBubble) {
+        this.scrollToEnd();
+      }
+
+      log && log('end');
+    });
+
+    this.listenerSetter.add(rootScope)('dialog_flush', ({peerId}) => {
+      if(this.peerId === peerId) {
+        this.deleteMessagesByIds(this.getRenderedHistory('asc'));
+      }
+    });
+
+    // Calls when message successfully sent and we have an id
+    this.listenerSetter.add(rootScope)('message_sent', (e) => {
+      const {storageKey, tempId, tempMessage, mid, message} = e;
+
+      // ! can't use peerId to validate here, because id can be the same in 'scheduled' and 'chat' types
+      if(this.chat.messagesStorageKey !== storageKey) {
+        return;
+      }
+
+      this.changedMids.set(tempId, mid);
+      this.sendFlights.rekey(tempMessage, message);
+
+      this.needUpdate.forEach((obj) => {
+        if(obj.peerId === tempMessage.peerId && obj.mid === tempId) {
+          obj.mid = mid;
+        }
+      });
+
+      const fullTempMid = makeFullMid(tempMessage);
+      const fullMid = makeFullMid(message);
+
+      let cancelledBubbleReplacement = false;
+      let _bubble = this.getBubble(fullTempMid);
+      if(_bubble) {
+        const replacement = this.cancelPendingBubbleReplacement(_bubble);
+        cancelledBubbleReplacement = replacement.cancelled;
+        const bubble = _bubble = replacement.bubble;
+        delete this.bubbles[fullTempMid];
+        this.bubbles[fullMid] = bubble;
+        bubble.dataset.mid = '' + mid;
+        if(replacement.cancelled && message._ === 'message') {
+          // A staging candidate can be cancelled before its async render publishes the final
+          // grouping snapshot. Rebuild from the server message now; changing only `mid/message`
+          // would leave date/from/single/group membership from the temporary item.
+          bubble.dataset.timestamp = '' + message.date;
+          this.updateGroupedMessage(bubble, message, {regroup: true});
+        } else if(this.chat.type === ChatType.Scheduled) {
+          this.updateGroupedMessage(bubble, message);
+        }
+
+        const context = this.contexts.get(bubble);
+        if(context) {
+          if(context.releaseDice) {
+            context.releaseDice(((message as Message.message).media as MessageMedia.messageMediaDice).value);
+          }
+        }
+
+        fastRaf(() => {
+          const mid = +bubble.dataset.mid;
+          if(this.getBubble(fullMid) !== bubble || !bubble.classList.contains('is-outgoing')) {
+            return;
+          }
+
+          bubble.classList.remove('is-outgoing');
+
+          let status: Parameters<ChatBubbles['setBubbleSendingStatus']>[1];
+          if(bubble.classList.contains('is-out')) {
+            status = (this.peerId === rootScope.myId && this.chat.type !== ChatType.Scheduled) || !this.unreadOut.has(mid) ?
+              'read' :
+              'sent';
+          }
+
+          this.setBubbleSendingStatus(
+            bubble,
+            status
+          );
+        });
+      }
+
+      // a bubble that cannot take the sent message as it stands (a widget's is bound to its message's id) is rendered
+      // again, as an edit it cannot take is (editInPlace)
+      if(this.updateLocalOnEdit.get(_bubble)?.(message as Message.message) === false) {
+        this.safeRenderMessage({message, reverse: true, bubble: _bubble});
+      }
+
+      if(_bubble && message._ === 'message') {
+        // * a link the server knows already comes back with its preview in the answer itself, which the
+        // * bubble drawn without it takes below (the `webPage` branch): its body keeps the structure it was
+        // * drawn with, or that edit would take the preview for one it has and not draw it
+        const bringsWebPage = ((message.media as MessageMedia.messageMediaWebPage)?.webpage)?._ === 'webPage' &&
+          !_bubble.querySelector('.web');
+        this.updateSolidMessageBodyIdentity(_bubble, message, tempId, cancelledBubbleReplacement || bringsWebPage);
+        if(cancelledBubbleReplacement) {
+          this.retryCancelledBubbleReplacement(_bubble, message, fullMid);
+        }
+      }
+
+      if(this.unreadOut.has(tempId)) {
+        this.unreadOut.delete(tempId);
+        this.unreadOut.add(mid);
+      }
+
+      // * check timing of scheduled message
+      if(this.chat.type === ChatType.Scheduled) {
+        const timestamp = Date.now() / 1000 | 0;
+        const maxTimestamp = tempMessage.date - 10;
+        if(timestamp >= maxTimestamp) {
+          this.deleteMessagesByIds([fullMid]);
+        }
+      }
+
+      let messages: (Message.message | Message.messageService)[], tempIds: number[];
+      const groupedId = (message as Message.message).grouped_id;
+      if(groupedId) {
+        messages = apiManagerProxy.getMessagesByGroupedId(groupedId);
+        const mids = messages.map(({mid}) => mid);
+        const lastMid = mids[mids.length - 1];
+        if(lastMid !== mid) {
+          return;
+        }
+
+        _bubble = this.getBubble(message.peerId, getMainMidForGrouped(mids));
+        tempIds = (Array.from(_bubble.querySelectorAll('.grouped-item')) as HTMLElement[]).map((el) => +el.dataset.mid);
+        (_bubble as any).maxBubbleMid = lastMid;
+      } else {
+        messages = [message];
+        tempIds = [tempId];
+        if(_bubble) {
+          (_bubble as any).maxBubbleMid = mid;
+        }
+      }
+
+      if(!_bubble) {
+        return;
+      }
+
+      const reactionsElements = Array.from(_bubble.querySelectorAll('reactions-element')) as ReactionsElement[];
+      if(reactionsElements.length) {
+        const mainMessage = apiManagerProxy.getGroupsFirstMessage(message as Message.message);
+        reactionsElements.forEach((reactionsElement) => {
+          reactionsElement.changeContext(mainMessage);
+        });
+      }
+
+      (messages as Message.message[]).forEach((message, idx) => {
+        if(!message) {
+          return;
+        }
+
+        const tempId = tempIds[idx];
+        const mid = message.mid;
+        const bubble: HTMLElement = _bubble.querySelector(`.document-container[data-mid="${mid}"]`) || _bubble;
+
+        if(message._ !== 'message') {
+          return;
+        }
+
+        if(message.replies) {
+          const repliesElement = _bubble.querySelector('replies-element') as RepliesElement;
+          if(repliesElement) {
+            repliesElement.message = message;
+            repliesElement.init();
+          }
+        }
+
+        const media = message.media ?? {} as MessageMedia.messageMediaEmpty;
+        const doc = (media as MessageMedia.messageMediaDocument).document as Document.document;
+        const poll = (media as MessageMedia.messageMediaPoll).poll;
+        const webPage = (media as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage;
+        if(doc) {
+          const documentContainer = bubble.querySelector<HTMLElement>(`.document-container[data-mid="${tempId}"]`);
+          const div = documentContainer?.querySelector(`.document`);
+          if(div && !tempMessage.media?.document?.thumbs?.length && doc.thumbs?.length) {
+            getHeavyAnimationPromise().then(async() => {
+              const timeSpan = div.querySelector('.time');
+              const newDiv = await wrapDocument({
+                message,
+                middleware: bubble.middlewareHelper.get(),
+                fontSize: this.chat.appSettings.messagesTextSize
+              });
+              div.replaceWith(newDiv);
+
+              if(timeSpan) {
+                (newDiv.querySelector('.document') || newDiv).append(timeSpan);
+              }
+            });
+          }
+
+          if(documentContainer) {
+            documentContainer.dataset.mid = '' + mid;
+          }
+
+          const element = bubble.querySelector(`.audio[data-mid="${tempId}"], .document[data-doc-id="${tempId}"], .media-round[data-mid="${tempId}"]`) as HTMLElement;
+          if(element) {
+            if(isAudioElement(element)) {
+              element.replaceMessage(message);
+            } else if(element.classList.contains('media-round')) {
+              element.dataset.mid = '' + message.mid;
+              delete element.dataset.isOutgoing;
+              (element as DeferredMediaElement).onLoad(true);
+            } else {
+              element.dataset.docId = '' + doc.id;
+              (element as any).doc = doc;
+            }
+          }
+        } else if(webPage?._ === 'webPage' && !bubble.querySelector('.web')) {
+          const isLast = this.getLastBubble() === bubble;
+          onMessageEdit(message, true).then(async(result) => {
+            if(isLast && result) {
+              await this.messagesQueuePromise;
+              this.scrollToBubbleEnd(result.bubble);
+            }
+          });
+        }
+
+        // set new mids to album items for mediaViewer
+        if(groupedId) {
+          const item = (bubble.querySelector(`.grouped-item[data-mid="${tempId}"]`) as HTMLElement) ||
+            (bubble.classList.contains('document-container') ? bubble : undefined);
+          if(item) {
+            item.dataset.mid = '' + mid;
+          }
+        }
+      });
+    });
+
+    const onMessageEdit = async(
+      message: Message.message | Message.messageService,
+      reverse = false
+    ) => {
+      const fullMid = makeFullMid(message);
+      const bubble = this.getBubble(fullMid);
+      if(!bubble) return;
+
+      if(this.editInPlace(bubble, message)) return;
+
+      // do not edit geo messages
+      if(bubble.querySelector('.geo-container')) {
+        return;
+      }
+
+      if(this.chat.isMonoforum && message._ === 'message' && !canHaveSuggestedPostReplyMarkup(message)) {
+        const group = bubble.closest('.bubbles-group');
+        const cls = 'avatar-for-suggested-reply-markup';
+        group?.querySelector(`.${cls}`)?.classList.remove(cls);
+      }
+
+      return this.safeRenderMessage({
+        message,
+        reverse,
+        bubble
+      });
+    };
+
+    this.listenerSetter.add(rootScope)('message_edit', ({storageKey, message}) => {
+      if(storageKey !== this.chat.messagesStorageKey) return;
+      onMessageEdit(message);
+    });
+
+    this.listenerSetter.add(rootScope)('streamed_message_update', ({draft, message, initial}) => {
+      if(
+        draft.peerId !== this.peerId ||
+        !this.isTransientMessageInCurrentChat(message)
+      ) {
+        return;
+      }
+
+      this.handleStreamedMessageUpdate(message, initial, onMessageEdit);
+    });
+
+    this.listenerSetter.add(rootScope)('streamed_message_remove', ({draft}) => {
+      if(
+        draft.peerId !== this.peerId ||
+        (this.chat.type !== ChatType.Chat && this.chat.type !== ChatType.Discussion)
+      ) {
+        return;
+      }
+
+      const fullMid = makeFullMid(draft.peerId, draft.tempId);
+      this.pendingStreamedMessageUpdates.delete(fullMid);
+      this.deleteMessagesByIds([fullMid]);
+      this.updateHasMessages();
+    });
+
+    this.listenerSetter.add(rootScope)('ephemeral_history_edit', ({storageKey, message}) => {
+      if(
+        storageKey !== this.chat.messagesStorageKey ||
+        (this.chat.type !== ChatType.Chat && this.chat.type !== ChatType.Discussion)
+      ) {
+        return;
+      }
+
+      onMessageEdit(message);
+    });
+
+    this.listenerSetter.add(rootScope)('message_error', async({storageKey, tempId, peerId}) => {
+      if(storageKey !== this.chat.messagesStorageKey) return;
+
+      const fullTempMid = makeFullMid(peerId, tempId);
+      const bubble = this.getBubble(fullTempMid);
+      if(!bubble) return;
+
+
+      await getHeavyAnimationPromise();
+      if(this.getBubble(fullTempMid) !== bubble) return;
+
+      bubble.classList.remove('is-outgoing');
+      this.setBubbleSendingStatus(bubble, 'error');
+
+      // * read in its chat's storage: a temporary id names no message on its own
+      const message = apiManagerProxy.getMessageFromStorage(storageKey, +bubble.dataset.mid);
+      if(!message || !('repayRequest' in message) || !message.repayRequest) return;
+
+      const serviceMsgText = bubble.querySelector('.service-msg-i18n-element');
+      if(!serviceMsgText) return;
+
+      const i18nElement = I18n.weakMap.get(serviceMsgText as HTMLElement);
+      if(!(i18nElement instanceof I18n.IntlElement)) return;
+
+      i18nElement.update({
+        key: 'PaidMessages.FailedToPayForMessage'
+      });
+    });
+
+    this.listenerSetter.add(rootScope)('replies_short_update', (message) => {
+      if(this.peerId !== message.peerId) return;
+      const bubble = this.getBubble(makeFullMid(message));
+      if(!bubble) return;
+      // the count in the time gives way to the new one, the bubble making room for it
+      this.modifyBubble(() => this.setBubbleRepliesCount(bubble, message.replies.replies), bubble, 'meta');
+    });
+
+    this.listenerSetter.add(rootScope)('grouped_edit', ({peerId, messages, deletedMids}) => {
+      if(peerId !== this.peerId) return;
+
+      const mids = messages.map(({mid}) => mid);
+      const oldMids = mids.concat(Array.from(deletedMids));
+      const wasMainMid = getMainMidForGrouped(oldMids);
+      const wasFullMid = makeFullMid(peerId, wasMainMid);
+      const bubble = this.getBubble(wasFullMid);
+      if(!bubble) {
+        return;
+      }
+
+      const mainMid = getMainMidForGrouped(mids);
+      this.rerenderGroupedBubble(bubble, wasFullMid, messages.find((message) => message.mid === mainMid));
+    });
+
+    // this.listenerSetter.add(rootScope)('peer_title_edit', async(peerId) => {
+    //   if(peerId.isUser()) {
+    //     const middleware = this.getMiddleware();
+    //     const user = await this.managers.appUsersManager.getUser(peerId.toUserId());
+    //     if(!middleware()) return;
+
+    //     const isPremium = user?.pFlags?.premium;
+    //     const groups = this.bubbleGroups.groups.filter((group) => group.avatar?.peerId === peerId);
+    //     groups.forEach((group) => {
+    //       group.avatar.classList.toggle('is-premium', isPremium);
+    //       group.avatar.classList.toggle('tgico-star', isPremium);
+    //     });
+    //   }
+    // });
+
+    if(!DO_NOT_UPDATE_MESSAGE_REACTIONS/*  && false */) {
+      this.listenerSetter.add(rootScope)('messages_reactions', async(arr) => {
+        if(this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Welcome) {
+          return;
+        }
+
+        const a = arr.map(async({message, changedResults}) => {
+          if(this.peerId !== message.peerId && !GLOBAL_MIDS) {
+            return;
+          }
+
+          const result = await this.getMountedBubble(message);
+          if(!result) {
+            return;
+          }
+
+          // can be .document-container
+          return {bubble: findUpClassName(result.bubble, 'bubble'), message, changedResults};
+        });
+
+        // in the batch the bubbles are kept in place around and shown changing in (`modifyBubble`); the effects of the
+        // reactions that changed start once those stand where they end
+        const waitPromise = deferredPromise<void>();
+        const modified = (await Promise.all(a)).filter(Boolean).map(({bubble, message, changedResults}) => {
+          return this.modifyBubble(() => {
+            if(bubble.dataset.ignoreReactions) {
+              delete bubble.dataset.ignoreReactions;
+              changedResults = [];
+            }
+
+            const unreadReactions = getUnreadReactions(message);
+            if(unreadReactions) {
+              changedResults = [];
+            }
+
+            const key = message.peerId + '_' + message.mid;
+            const set = REACTIONS_ELEMENTS.get(key);
+            if(set) {
+              for(const element of set) {
+                element.update(message, changedResults, waitPromise);
+                if(!message.reactions || !message.reactions.results.length) {
+                  const parentElement = element.parentElement;
+                  element.remove();
+
+                  const timeSpan = element.querySelector('.time');
+                  if(timeSpan) {
+                    findAndSplice(bubble.timeAppenders, ({element: el}) => el === element);
+                    bubble.timeAppenders[0].callback();
+                  }
+
+                  if(
+                    parentElement &&
+                    parentElement.classList.contains('document-message') &&
+                    !parentElement.childNodes.length
+                  ) {
+                    parentElement.remove();
+                  }
+                }
+              }
+            } else if(!message.reactions || !message.reactions.results.length) {
+              return;
+            } else {
+              this.appendReactionsElementToBubble(bubble, message, message, changedResults, undefined, waitPromise);
+            }
+
+            if(unreadReactions) {
+              this.setUnreadObserver('content', bubble, message.mid);
+            }
+          }, bubble, 'meta');
+        });
+
+        Promise.all(modified).then(() => waitPromise.resolve());
+      });
+    }
+
+    !DO_NOT_UPDATE_MESSAGE_REPLY && this.listenerSetter.add(rootScope)('messages_downloaded', this.updateMessageReply);
+    !DO_NOT_UPDATE_MESSAGE_REPLY && this.listenerSetter.add(rootScope)('stories_downloaded', this.updateMessageReply);
+
+    attachMediaPeekListeners({
+      listenTo: this.scrollable.container,
+      listenerSetter: this.listenerSetter,
+      findTarget: (target) => {
+        // * a press while selecting selects
+        if(this.chat.selection.isSelecting) return;
+        const found = target.closest<HTMLElement>('.attachment.media-sticker-wrapper, .attachment.media-gif-wrapper, .poll-option-sticker.media-sticker-wrapper') ||
+          (findUpClassName(target, 'attachment') && target.closest<HTMLElement>('.custom-emoji')) ||
+          this.findMediaPeekTarget(target);
+        // * not what a spoiler hides: a GIF can have one too
+        if(found && !hasMediaSpoiler(found)) return found;
+      },
+      getSource: (element) => {
+        if(isRichMessageTarget(element)) return getRegisteredMediaPeekSource(element);
+        return element.dataset.docId ? getMediaPeekDocSource(element) : this.getMediaPeekSource(element);
+      }
+    });
+    attachClickEvent(this.scrollable.container, this.onBubblesClick, {listenerSetter: this.listenerSetter});
+    this.listenerSetter.add(this.scrollable.container)('keydown', (e: KeyboardEvent) => {
+      const target = (e.target as HTMLElement).closest<HTMLElement>('[role="button"]');
+      if(!target || !this.scrollable.container.contains(target)) return;
+      buttonKeyDown(e, target);
+    });
+    // this.listenerSetter.add(this.bubblesContainer)('click', this.onBubblesClick/* , {capture: true, passive: false} */);
+
+    this.listenerSetter.add(this.scrollable.container)('mousedown', (e) => {
+      if(e.button !== 0) return;
+
+      const codeTarget = getCodeBlockClickTarget(e.target);
+      if(codeTarget) {
+        cancelEvent(e);
+        if(!codeTarget.isWrapToggle) {
+          copyFromElement(codeTarget.code);
+        }
+
+        const onClick = (e: MouseEvent) => {
+          cancelEvent(e);
+
+          if(codeTarget.isWrapToggle) {
+            toggleCodeBlockWrap(codeTarget);
+            return;
+          }
+
+          toastNew({
+            langPackKey: 'CodeCopied',
+            onClose: () => {
+              detach();
+            }
+          });
+        };
+
+        const detach = attachClickEvent(
+          window,
+          onClick,
+          {
+            listenerSetter: this.listenerSetter,
+            once: true,
+            capture: true,
+            ignoreMove: true
+          }
+        );
+        return;
+      }
+    });
+
+    const stuckContainers = new WeakSet<HTMLElement>();
+
+    this.stickyIntersector = new StickyIntersector(this.scrollable.container, (stuck, target) => {
+      // target.classList.toggle('is-sticky', stuck);
+      // return;
+
+      if(stuck) stuckContainers.add(target);
+      else stuckContainers.delete(target);
+
+      // Only the bottom-most (latest-timestamp) stuck date should carry is-sticky.
+      let newStickyDate: HTMLElement;
+      let latestTimestamp = -Infinity;
+      for(const timestamp in this.dateMessages) {
+        const dateMessage = this.dateMessages[timestamp];
+        const ts = +timestamp;
+        if(stuckContainers.has(dateMessage.container) && ts > latestTimestamp) {
+          latestTimestamp = ts;
+          newStickyDate = dateMessage.div;
+        }
+      }
+
+      if(this.previousStickyDate !== newStickyDate) {
+        if(this.previousStickyDate) {
+          this.previousStickyDate.classList.remove('is-sticky');
+        }
+
+        newStickyDate?.classList.add('is-sticky');
+        this.previousStickyDate = newStickyDate;
+      }
+    });
+
+    if(!DO_NOT_SLICE_VIEWPORT_ON_SCROLL) {
+      this.sliceViewportDebounced = debounce(this.sliceViewport.bind(this), 3000, false, true);
+    }
+
+    let middleware: ReturnType<ChatBubbles['getMiddleware']>;
+    useHeavyAnimationCheck(() => {
+      this.isHeavyAnimationInProgress = true;
+      this.lazyLoadQueue.lock();
+      middleware = this.getMiddleware();
+
+      // if(this.sliceViewportDebounced) {
+      //   this.sliceViewportDebounced.clearTimeout();
+      // }
+    }, () => {
+      this.isHeavyAnimationInProgress = false;
+
+      if(middleware?.()) {
+        this.lazyLoadQueue.unlockAndRefresh();
+
+        // if(this.sliceViewportDebounced) {
+        //   this.sliceViewportDebounced();
+        // }
+      }
+
+      middleware = null;
+    }, this.listenerSetter);
+  }
+
+  private createChatInner() {
+    const middlewareHelper = this.chatInnerMiddlewareHelper = this.chat.destroyMiddlewareHelper.get().create();
+    const state = this.messageLinkPolicyState = this.createCurrentMessageLinkPolicyState();
+    this.messageLinkPolicyStates.add(state);
+    middlewareHelper.onDestroy(() => this.messageLinkPolicyStates.delete(state));
+    return document.createElement('div');
+  }
+
+  private createCurrentMessageLinkPolicyState(): MessageLinkPolicyState {
+    return {
+      peerId: this.peerId,
+      peerSettings: this.peerSettings,
+      forceHide: this.shouldForceHideNonContactLinks(),
+      callbacks: new Set()
+    };
+  }
+
+  private syncCurrentMessageLinkPolicyState() {
+    const peerId = this.peerId;
+    const peerSettings = this.peerSettings;
+    const forceHide = this.shouldForceHideNonContactLinks();
+    for(const state of this.messageLinkPolicyStates) {
+      if(state.peerId !== peerId) continue;
+
+      const wasHidden = shouldHidePeerMessageLinks(peerId, state.peerSettings) || state.forceHide;
+      state.peerSettings = peerSettings;
+      state.forceHide = forceHide;
+      const hidden = shouldHidePeerMessageLinks(peerId, peerSettings) || forceHide;
+      if(wasHidden !== hidden && state !== this.messageLinkPolicyState) {
+        state.callbacks.forEach((callback) => callback());
+      }
+    }
+  }
+
+  private createMessageLinkPolicyAccessor(
+    message: Message.message | Message.messageService,
+    state = this.messageLinkPolicyState || this.createCurrentMessageLinkPolicyState()
+  ) {
+    // `chat.peerId` changes before the old chatInner is physically detached. Capture the policy
+    // object owned by this render generation so retained Rich/InstantView/translation handlers
+    // cannot start reading the next peer's permissions during the transition.
+    return () => shouldHideMessageLinks(
+      message,
+      state.peerId,
+      state.peerSettings,
+      state.forceHide
+    );
+  }
+
+  // * whether the chat holds the message's links and buttons back now (its pinned plate asks too); nothing while the
+  // * chat is not built for the message's peer yet
+  public hidesMessageLinks(message: Message.message | Message.messageService) {
+    const state = this.messageLinkPolicyState;
+    if(state?.peerId !== message.peerId) return;
+    return this.createMessageLinkPolicyAccessor(message, state)();
+  }
+
+  private registerRetainedMessageLinkPolicy(
+    state: MessageLinkPolicyState,
+    bubble: HTMLElement,
+    middleware: Middleware,
+    hideLinks: () => boolean,
+    refreshPolicy?: () => void
+  ) {
+    const update = () => {
+      const hidden = hideLinks();
+      if(hidden) bubble.dataset.hiddenLinks = '1';
+      else delete bubble.dataset.hiddenLinks;
+      setBubbleHiddenLinksPending(bubble, false);
+      setBubbleHiddenLinksFallback(bubble, hidden);
+      refreshPolicy?.();
+    };
+    state.callbacks.add(update);
+    middleware.onDestroy(() => state.callbacks.delete(update));
+  }
+
+  private releaseChatInnerMiddleware() {
+    const middlewareHelper = this.chatInnerMiddlewareHelper;
+    if(!middlewareHelper) return;
+    this.chatInnerMiddlewareHelper = undefined;
+    disposeChatInnerMiddlewareAfterDetach(this.chatInner, middlewareHelper);
+  }
+
+  private constructBubbles() {
+    const container = this.container = document.createElement('div');
+    container.classList.add('bubbles', 'scrolled-down');
+
+    const chatInner = this.chatInner = this.createChatInner();
+    chatInner.classList.add('bubbles-inner');
+
+    const removerContainer = document.createElement('div');
+    removerContainer.classList.add('bubbles-remover-container');
+    const remover = this.remover = document.createElement('div');
+    remover.classList.add('bubbles-remover', 'bubbles-inner');
+    removerContainer.append(remover);
+
+    const floatingSeparatorsContainer = this.floatingSeparatorsContainer = document.createElement('div');
+    floatingSeparatorsContainer.classList.add('bubbles-floating-separators-container');
+
+    this.setScroll();
+
+    container.append(removerContainer, this.scrollable.container, floatingSeparatorsContainer);
+  }
+
+  public attachContainerListeners() {
+    const container = this.container;
+
+    this.listenerSetter.add(container)('click', cancelPendingHiddenLinksEvent, {capture: true});
+    // * a touch device presses on mousedown (`attachClickEvent`): an invoice's button opens its payment there
+    this.listenerSetter.add(container)('mousedown', cancelPendingHiddenLinksEvent, {capture: true});
+    this.listenerSetter.add(container)('auxclick', cancelPendingHiddenLinksEvent, {capture: true});
+    this.listenerSetter.add(container)('contextmenu', cancelPendingHiddenLinksEvent, {capture: true});
+    this.listenerSetter.add(container)('dragstart', cancelPendingHiddenLinksEvent, {capture: true});
+
+    if(this.chat.isPreview) {
+      // Belt-and-suspenders: every other isPreview short-circuit in this file gates a
+      // specific delegate (`onBubblesClick`, `readMessages`, …). Sponsored / menu / close
+      // buttons inside bubbles bind their own listeners directly on their DOM and skip
+      // those delegates — a capture-phase swallow on the bubbles container kills them all
+      // before anything can run, complementing the `.bubble { pointer-events: none }`
+      // CSS that handles regular bubble children. Context menu / selection / dblclick
+      // listeners are skipped entirely (preview is read-only).
+      this.listenerSetter.add(container)('click', (e) => {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }, {capture: true});
+      return;
+    }
+
+    this.chat.contextMenu.attachTo(container);
+    this.chat.selection.attachListeners(container, new ListenerSetter());
+
+    if(DEBUG) {
+      this.listenerSetter.add(container)('dblclick', (e) => {
+        const bubble = getSelectionElementFromTarget(e.target);
+        if(bubble) {
+          const fullMid = getBubbleFullMid(bubble);
+
+          if(TEST_BUBBLES_DELETION) {
+            return this.deleteMessagesByIds([fullMid], true);
+          }
+
+          this.log('debug message:', this.chat.getMessage(fullMid));
+          this.highlightBubble(bubble);
+        }
+      });
+    }
+
+    if(!IS_MOBILE && !TEST_BUBBLES_DELETION) {
+      this.listenerSetter.add(container)('dblclick', async(e) => {
+        if(
+          this.chat.type === ChatType.Pinned ||
+          this.chat.type === ChatType.Logs ||
+          this.chat.selection.isSelecting ||
+          !this.chat.input.canSendPlain()
+        ) {
+          return;
+        }
+
+        if(
+          findUpClassName(e.target, 'attachment') ||
+          findUpClassName(e.target, 'audio') ||
+          findUpClassName(e.target, 'document') ||
+          findUpClassName(e.target, 'is-contact') ||
+          findUpClassName(e.target, 'time') ||
+          findUpClassName(e.target, 'code-header-button') ||
+          findUpClassName(e.target, 'reaction') ||
+          findUpClassName(e.target, 'bubble-beside-button') ||
+          findUpClassName(e.target, 'poll-message-content') ||
+          isPagingSlideshowTarget(e.target) || // * pages on every click
+          isRichMessageButtonTarget(e.target)
+        ) {
+          return;
+        }
+
+        const target = e.target as HTMLElement;
+        let bubble = target.classList.contains('bubble') ?
+          target :
+          (target.classList.contains('document-selection') ? target.parentElement : null);
+
+        const selectedText = getSelectedText();
+        if(!bubble && (!selectedText.trim() || /^\s/.test(selectedText))) {
+          bubble = findUpClassName(target, 'bubble');
+          // cancelEvent(e);
+          // cancelSelection();
+        }
+
+        if(bubble && !bubble.classList.contains('bubble-first')) {
+          const message = this.chat.getMessage(getBubbleFullMid(bubble));
+          if(
+            message.pFlags.is_outgoing ||
+            message.peerId !== this.peerId ||
+            !this.canReplyToBubble(bubble)
+          ) {
+            return;
+          }
+
+          this.chat.input.initMessageReply(this.chat.input.getChatInputReplyToFromMessage(message));
+        }
+      });
+    } else if(IS_TOUCH_SUPPORTED) {
+      const controller = this.createReplySwipeController(container);
+      this.replySwipeHandler = handleHorizontalSwipe({
+        element: container,
+        verifyTouchTarget: async(e) => {
+          if(this.chat.type === ChatType.Pinned ||
+            this.chat.selection.isSelecting ||
+            !(await this.chat.canSend())) {
+            return false;
+          }
+
+          const bubble = findUpClassName(e.target, 'bubble');
+          if(!bubble ||
+            bubble.classList.contains('service') ||
+            bubble.classList.contains('is-sending') ||
+            !this.canReplyToBubble(bubble) ||
+            isPagingSlideshowTarget(e.target) || // * pages through its items instead
+            isWidgetHorizontalDragTarget(e.target, getEvent(e).clientX)) { // * a widget drags its own knob, or back
+            return false;
+          }
+
+          controller.prepare(bubble);
+          return true;
+        },
+        onSwipe: (xDiff) => {
+          // * a reply is pulled toward the line's start: leftward, rightward in RTL
+          controller.move(I18n.getIsRTL() ? -xDiff : xDiff);
+        },
+        onReset: () => {
+          controller.reset();
+        },
+        listenerOptions: {capture: true}
+      });
+    }
+
+    // * Swipe-to-reply on laptop trackpads: a two-finger horizontal swipe is delivered as
+    // * `wheel` events (deltaX), not touch. Reuse the same reply visuals as the touch path,
+    // * driven from a wheel gesture with per-gesture axis locking so vertical scrolling and
+    // * horizontally-scrollable children (code blocks, wide tables) keep working.
+    if(!IS_MOBILE) {
+      this.attachReplyWheelSwipe(container);
+    }
+  }
+
+  // * Builds the shared visual controller for the swipe-to-reply gesture (bubble + avatar
+  // * translation, the reveal-on-drag reply icon, and firing the reply on release). Both the
+  // * touch (`handleHorizontalSwipe`) and trackpad-wheel paths drive the same three callbacks.
+  private createReplySwipeController(container: HTMLElement) {
+    const className = 'is-gesturing-reply';
+    const MAX = 64;
+    const replyAfter = MAX * .75;
+    let shouldReply = false;
+    let started = false; // visual setup applied — deferred to the first move so a tap leaves no litter
+    let target: HTMLElement;
+    let icon: HTMLElement;
+    let swipeAvatar: HTMLElement;
+
+    // Validate + resolve the target and its group avatar. NO DOM mutation here: the touch path calls
+    // this on touchstart (verifyTouchTarget), and a tap that never moves must not leave the
+    // `is-gesturing-reply` class or the reply icon behind — those are applied lazily by `begin` on the
+    // first `move`.
+    const prepare = (bubble: HTMLElement) => {
+      target = bubble;
+      swipeAvatar = undefined;
+      started = false;
+
+      try {
+        const avatar = target.parentElement.querySelector('.bubbles-group-avatar') as HTMLElement;
+        if(avatar) {
+          const visibleRect = getVisibleRect(avatar, target);
+          if(visibleRect) {
+            swipeAvatar = avatar;
+          }
+        }
+      } catch(err) {}
+    };
+
+    const begin = () => {
+      // * read before it moves: the transform takes the pieces of its gradient in
+      holdOutgoingMessageGradient([target]);
+      [target, swipeAvatar].filter(Boolean).forEach((element) => {
+        SetTransition({
+          element,
+          className,
+          forwards: true,
+          duration: 250
+        });
+        void element.offsetLeft; // reflow
+      });
+
+      if(!icon) {
+        icon = Icon('reply_filled', 'bubble-gesture-reply-icon');
+      } else {
+        icon.classList.remove('is-visible', 'is-hiding'); // reuse after a possibly-interrupted fade-out
+        icon.style.opacity = '';
+      }
+
+      target/* .querySelector('.bubble-content') */.append(icon);
+    };
+
+    const move = (xDiff: number) => {
+      if(!started) {
+        started = true;
+        begin();
+      }
+
+      shouldReply = xDiff >= replyAfter;
+
+      if(shouldReply && !icon.classList.contains('is-visible')) {
+        icon.classList.add('is-visible');
+      }
+      icon.style.opacity = '' + Math.min(1, xDiff / replyAfter);
+
+      const x = -Math.max(0, Math.min(MAX, xDiff)) * (I18n.getIsRTL() ? -1 : 1);
+      const transform = `translateX(${x}px)`;
+      target.style.transform = transform;
+      if(swipeAvatar) {
+        swipeAvatar.style.transform = transform;
+      }
+      cancelContextMenuOpening();
+    };
+
+    const reset = () => {
+      if(!started) { // gesture ended with no movement — nothing was shown, just drop the target
+        target = swipeAvatar = undefined;
+        return;
+      }
+      started = false;
+
+      const _target = target;
+      const _swipeAvatar = swipeAvatar;
+      target = swipeAvatar = undefined;
+
+      // fade the icon out over the slide-back rather than dropping it in one frame
+      icon.classList.add('is-hiding');
+
+      const onTransitionEnd = () => {
+        if(icon.parentElement === _target) {
+          icon.classList.remove('is-visible', 'is-hiding');
+          icon.style.opacity = '';
+          icon.remove();
+        }
+      };
+
+      [_target, _swipeAvatar].filter(Boolean).forEach((element, idx) => {
+        SetTransition({
+          element,
+          className,
+          forwards: false,
+          duration: 250,
+          onTransitionEnd: idx === 0 ? onTransitionEnd : undefined
+        });
+      });
+
+      fastRaf(() => {
+        _target.style.transform = '';
+        if(_swipeAvatar) {
+          _swipeAvatar.style.transform = '';
+        }
+
+        if(shouldReply) {
+          const message = this.chat.getMessage(getBubbleFullMid(_target));
+          if(!(isEphemeralMessage(message) && message.pFlags.out)) {
+            this.chat.input.initMessageReply(this.chat.input.getChatInputReplyToFromMessage(message));
+          }
+          shouldReply = false;
+        }
+      });
+    };
+
+    return {MAX, prepare, move, reset};
+  }
+
+  // * Trackpad two-finger horizontal swipe → reply. Browsers surface it as `wheel` events with a
+  // * dominant `deltaX` (there is no wheel `phase()` like Qt, so a debounce marks the gesture end).
+  // * The axis is locked once per gesture: only a horizontal-dominant start over a repliable bubble
+  // * engages — otherwise the event passes through untouched so vertical scroll and inner
+  // * horizontal scrollers behave normally. Delta is scaled down so the throw matches the touch feel.
+  private attachReplyWheelSwipe(container: HTMLElement) {
+    const controller = this.createReplySwipeController(container);
+    const {MAX} = controller;
+    const SCALE = 0.25;
+    const IDLE_DELAY = 75; // ms of wheel silence = gesture end (also the no-momentum commit delay)
+    // Inertia detection: a trackpad keeps firing `wheel` events for ~1s after the fingers lift, the
+    // magnitude decaying smoothly. The browser gives no "fingers up" signal, so we approximate release by
+    // spotting a SUSTAINED coast and finish the gesture there. It must be strict: the brief slow-down at
+    // the END of an active push (fingers still down) also decays, so a short streak would fire too early
+    // (fired-before-release). Hence a long streak of decaying events (longer than any plausible finger
+    // ease-out), robust to the tiny up-jitter within a real coast, and gated on a genuine flick's peak.
+    const INERTIA_DECEL_EVENTS = 8;     // consecutive decaying events to call it a coast (not an ease-out)
+    const INERTIA_PEAK_RATIO = 0.7;     // ...with magnitude fallen to this fraction of the gesture's peak
+    const INERTIA_MIN_PEAK = 12;        // ...and only after a real flick (slow drags carry no momentum)
+    const INERTIA_REACCEL_RATIO = 1.2;  // a jump past this fraction of the last delta = the finger pushed again
+
+    let axis: 'x' | 'y' | undefined; // undefined while the gesture axis is still undecided
+    let offset = 0;
+    let gesturing = false;
+    let released = false;            // fingers lifted (inertia/idle) — swallow the momentum tail
+    let prevAbs = -1, peakAbs = 0, decel = 0; // delta-magnitude trend for inertia detection
+
+    const finish = () => {
+      if(gesturing) {
+        gesturing = false;
+        controller.reset(); // fires the reply iff shouldReply (offset >= replyAfter at release)
+      }
+    };
+
+    // Trailing-edge only: the true end of the wheel burst — also the fallback `finish` for a slow drag
+    // that stops without any momentum tail for the inertia heuristic to catch.
+    const idle = debounce(() => {
+      finish();
+      axis = undefined;
+      offset = 0;
+      released = false;
+      prevAbs = -1;
+      peakAbs = decel = 0;
+    }, IDLE_DELAY, false);
+
+    // Let an inner element (code block, wide table) consume the swipe if it can still scroll that way.
+    // The reply swipe only ever engages with a scroll toward the line's end (rightward, leftward in
+    // RTL), so we only care whether an inner element can still scroll that way. `scrollLeft` counts
+    // from the element's own start: 0 to max left to right, 0 to -max right to left.
+    const childCanScrollX = (from: HTMLElement, towardsRight: boolean) => {
+      let element = from;
+      while(element && element !== container) {
+        if(element.scrollWidth > element.clientWidth) {
+          const style = window.getComputedStyle(element);
+          const overflowX = style.overflowX;
+          if(overflowX === 'auto' || overflowX === 'scroll') {
+            const max = element.scrollWidth - element.clientWidth;
+            const fromLeft = style.direction === 'rtl' ? max + element.scrollLeft : element.scrollLeft;
+            if(towardsRight ? fromLeft < max - 1 : fromLeft > 1) {
+              return true;
+            }
+          }
+        }
+
+        element = element.parentElement;
+      }
+
+      return false;
+    };
+
+    this.listenerSetter.add(container)('wheel', (e: WheelEvent) => {
+      // pinch-zoom (ctrl/meta) or a mouse wheel scrolling sideways (holding shift maps the wheel's
+      // deltaY onto deltaX) — a modifier is held, so this is not a trackpad reply swipe
+      if(e.ctrlKey || e.metaKey || e.shiftKey) {
+        return;
+      }
+
+      // normalize line/page delta modes (horizontal tilt-wheel mice) to pixels, counted toward the
+      // line's end (rightward, leftward in RTL): that drags the bubble toward the start, as a reply
+      const isRTL = I18n.getIsRTL();
+      const deltaX = wheelDeltaToPixels(e.deltaX, e.deltaMode, container.clientWidth) * (isRTL ? -1 : 1);
+
+      if(axis === undefined) {
+        // Only a horizontal-dominant swipe in the reply direction (deltaX > 0, i.e. dragging the
+        // bubble toward the line's start) engages; the opposite direction is left untouched so the
+        // browser's back/forward swipe still works over the chat.
+        if(deltaX <= 0 ||
+          Math.abs(deltaX) <= Math.abs(e.deltaY) ||
+          this.chat.type === ChatType.Pinned ||
+          this.chat.type === ChatType.Logs ||
+          this.chat.selection.isSelecting ||
+          !this.chat.input.canSendPlain() ||
+          childCanScrollX(e.target as HTMLElement, !isRTL) ||
+          isPagingSlideshowTarget(e.target)) { // * pages through its items instead
+          axis = 'y'; // vertical / wrong-direction / not repliable — ignore for the rest of the gesture
+          idle();
+          return;
+        }
+
+        const bubble = findUpClassName(e.target, 'bubble');
+        if(!bubble ||
+          bubble.classList.contains('service') ||
+          bubble.classList.contains('is-sending') ||
+          !this.canReplyToBubble(bubble)) {
+          axis = 'y';
+          idle();
+          return;
+        }
+
+        axis = 'x';
+        offset = 0;
+        prevAbs = -1;
+        peakAbs = decel = 0;
+        gesturing = true;
+        controller.prepare(bubble);
+      }
+
+      if(axis === 'y') {
+        idle();
+        return;
+      }
+
+      cancelEvent(e);
+
+      // Fingers already lifted this gesture: swallow the whole decaying inertia tail so its (jittery)
+      // events can't nudge the bubble or re-engage a gesture after the reply already fired, until the
+      // wheel finally goes idle. (Trying to distinguish a new scroll/swipe from the tail here misreads
+      // momentum jitter as fresh input and makes the bubble twitch after release — not worth it.)
+      if(released) {
+        idle();
+        return;
+      }
+
+      // Active phase — the fingers are still on the trackpad.
+      offset = Math.max(0, Math.min(MAX, offset + deltaX * SCALE));
+      controller.move(offset);
+
+      // Track the delta-magnitude trend to spot the transition into inertia (see the constants above).
+      // A real coast decays smoothly with only tiny up-jitter; the finger pushing again shows up as a
+      // clear jump, which alone resets the streak. Flat/jittery events neither extend nor reset it.
+      const abs = Math.abs(deltaX);
+      if(abs > peakAbs) peakAbs = abs;
+      if(prevAbs >= 0) {
+        if(abs < prevAbs) ++decel;
+        else if(abs > prevAbs * INERTIA_REACCEL_RATIO) decel = 0; // clear re-acceleration → still dragging
+      }
+      prevAbs = abs;
+
+      if(peakAbs >= INERTIA_MIN_PEAK &&
+        decel >= INERTIA_DECEL_EVENTS &&
+        abs < peakAbs * INERTIA_PEAK_RATIO) {
+        released = true; // inertia has begun → the fingers have left
+        finish();        // fires the reply iff we're past the threshold right now
+      }
+
+      idle();
+    }, {passive: false, capture: true});
+  }
+
+  private canReplyToBubble(bubble: HTMLElement) {
+    const message = this.chat.getMessage(getBubbleFullMid(bubble));
+    // a welcome template is replied to by nobody (desktop's welcome section has no Reply)
+    return !!message &&
+      !(isEphemeralMessage(message) && !canReplyToEphemeralMessage(message)) &&
+      !(message as Message.message).pFlags.welcome_template;
+  }
+
+  public constructPeerHelpers() {
+    // will call when message is sent (only 1)
+    this.listenerSetter.add(rootScope)('history_append', async({storageKey, message}) => {
+      if(storageKey !== this.chat.messagesStorageKey || this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Static || this.chat.type === ChatType.Logs || this.chat.type === ChatType.Pinned) return;
+
+      if(liteMode.isAvailable('chat_background')) {
+        this.updateGradient = true;
+      }
+
+      if(this.chat.isBotforum && !this.chat.threadId && message._ === 'message' && message.pFlags.out && getMessageThreadId(message, {isBotforum: true})) {
+        this.chat.setPeer({
+          peerId: this.peerId,
+          threadId: getMessageThreadId(message, {isBotforum: true})
+        });
+        return;
+      }
+
+      if(this.chat.threadId && getMessageThreadId(message, {isForum: this.chat.isForum}) !== this.chat.threadId) {
+        return;
+      }
+
+      // * if user sent a message inside a thread, do not scroll to it in a chat below
+      if(
+        !this.chat.threadId &&
+        this.chat.appImManager.chats.some((chat) => this.chat !== chat && chat.peerId === this.peerId && chat.threadId)
+      ) {
+        this.renderNewMessage(message);
+        return;
+      }
+
+      if(!this.scrollable.loadedAll.bottom) {
+        this.chat.setMessageId();
+      } else {
+        this.renderNewMessage(message, true, this.sendFlights.claim(message));
+      }
+
+      this.updateHasMessages();
+    });
+
+    this.listenerSetter.add(rootScope)('history_multiappend', (message) => {
+      if(this.peerId !== message.peerId || this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Welcome || this.chat.type === ChatType.Static || this.chat.type === ChatType.Logs || this.chat.type === ChatType.Pinned) return;
+      const streamedFinal = this.streamedMessageFinals.get(makeFullMid(message));
+      if(streamedFinal) {
+        window.clearTimeout(streamedFinal.timeout);
+        this.streamedMessageFinals.delete(makeFullMid(message));
+        this.updateHasMessages();
+        return;
+      }
+      this.renderNewMessage(message);
+      this.updateHasMessages();
+    });
+
+    this.listenerSetter.add(rootScope)('ephemeral_history_append', ({storageKey, message}) => {
+      if(storageKey !== this.chat.messagesStorageKey) {
+        return;
+      }
+
+      this.renderTransientHistoryMessage(message, true);
+    });
+
+    this.listenerSetter.add(rootScope)('history_delete', ({peerId, msgs}) => {
+      if((peerId !== this.peerId && !GLOBAL_MIDS) || this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Welcome || this.chat.type === ChatType.Static || this.chat.type === ChatType.Logs) {
+        return;
+      }
+
+      const mids = [...msgs.keys()];
+      const fullMids = mids.map((mid) => makeFullMid(peerId, mid));
+      this.deleteMessagesByIds(fullMids);
+      this.updateMessageReply({
+        peerId,
+        mids
+      });
+    });
+
+    this.listenerSetter.add(rootScope)('ephemeral_history_delete', ({peerId, msgs}) => {
+      if(
+        peerId !== this.peerId ||
+        (this.chat.type !== ChatType.Chat && this.chat.type !== ChatType.Discussion)
+      ) {
+        return;
+      }
+
+      const mids = [...msgs];
+      this.deleteMessagesByIds(mids.map((mid) => makeFullMid(peerId, mid)));
+      this.updateMessageReply({peerId, mids});
+      this.updateHasMessages();
+    });
+
+    this.listenerSetter.add(rootScope)('history_delete_key', ({historyKey, mid}) => {
+      if(this.chat.historyStorage.key !== historyKey) {
+        return;
+      }
+
+      this.deleteMessagesByIds([makeFullMid(this.peerId, mid)]);
+    });
+
+    this.listenerSetter.add(rootScope)('dialog_unread', ({peerId}) => {
+      if(peerId === this.peerId) {
+        this.chat.input.setUnreadCount();
+
+        getHeavyAnimationPromise().then(() => {
+          this.updateUnreadByDialog();
+        });
+      }
+    });
+
+    this.listenerSetter.add(rootScope)('dialogs_multiupdate', (dialogs) => {
+      if(!dialogs.has(this.peerId) || this.chat.monoforumThreadId || this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Welcome || this.chat.type === ChatType.Saved) {
+        return;
+      }
+
+      this.chat.input.setUnreadCount();
+    });
+
+    this.listenerSetter.add(rootScope)('monoforum_dialogs_update', ({dialogs}) => {
+      if(this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Saved) return;
+      if(!dialogs.find(dialog => dialog.parentPeerId === this.peerId && dialog.peerId === this.chat.monoforumThreadId)) return;
+
+      this.chat.input.setUnreadCount();
+    });
+
+    this.listenerSetter.add(rootScope)('dialog_notify_settings', (dialog) => {
+      if(this.peerId !== dialog.peerId || this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Saved) {
+        return;
+      }
+
+      this.chat.input.setUnreadCount();
+    });
+
+    const refreshInput = async() => {
+      const callbacks = await Promise.all([
+        this.finishPeerChange(),
+        this.chat.input.finishPeerChange({peerId: this.peerId, middleware: this.getMiddleware()})
+      ]);
+
+      callbacks.forEach((callback) => callback());
+    };
+
+    this.listenerSetter.add(rootScope)('user_full_update', async(userId) => {
+      const peerId = userId.toPeerId(false);
+      if(peerId !== this.peerId) {
+        return;
+      }
+
+      const middleware = this.getMiddleware();
+      const {
+        isUserBlocked,
+        isPremiumRequired,
+        starsAmount
+      } = await namedPromises({
+        isUserBlocked: this.managers.appProfileManager.isCachedUserBlocked(userId),
+        isPremiumRequired: this.chat.isPremiumRequiredToContact(),
+        starsAmount: this.managers.appUsersManager.getStarsAmount(userId)
+      });
+
+      if(!middleware()) return;
+
+      const wasUserBlocked = this.chat.isUserBlocked;
+      const wasPremiumRequired = this.chat.isPremiumRequired;
+      const wasStarsAmount = this.chat.starsAmount;
+      let refreshing = false;
+      // do not refresh if had no status since input is shown by default
+      if(wasUserBlocked === undefined ? isUserBlocked : wasUserBlocked !== isUserBlocked) {
+        this.chat.isUserBlocked = isUserBlocked;
+        refreshing = true;
+      }
+
+      const hasPremiumChanged = wasPremiumRequired === undefined ? isPremiumRequired : wasPremiumRequired !== isPremiumRequired;
+      const hasStarsAmountChanged = wasStarsAmount === undefined ? starsAmount : wasStarsAmount !== starsAmount;
+
+      this.chat.isPremiumRequired = isPremiumRequired;
+      this.chat.starsAmount = starsAmount;
+
+      if(hasPremiumChanged || hasStarsAmountChanged) {
+        refreshing = true;
+        this.cleanupPlaceholders();
+        this.checkIfEmptyPlaceholderNeeded();
+      }
+
+      if(hasStarsAmountChanged) {
+        getCurrentNewMediaPopup()?.setStarsAmount(starsAmount);
+      }
+
+      if(refreshing) {
+        refreshInput();
+      }
+    });
+
+    // * a tag set or removed after the messages came: redrawn on that author's name lines
+    this.listenerSetter.add(rootScope)('chat_participant_rank', ({chatId, userId, rank}) => this.onRankChange(chatId, () => {
+      const peerId = userId.toPeerId(false);
+      const role = this.ranks.get(peerId)?.role || 'member';
+      // * a supergroup's admin without a tag reads "admin" / "owner" again
+      const defaultRank = role !== 'member' && apiManagerProxy.getChat(chatId)?._ === 'channel' ? (role === 'owner' ? 1 : 2) : '';
+      this.setAuthorRank(peerId, {rank: rank || defaultRank, role});
+    }));
+
+    // * promoted or demoted in a supergroup: the tag takes the new role's colour
+    this.listenerSetter.add(rootScope)('chat_participant', ({channel_id, user_id, new_participant}) => this.onRankChange(channel_id, () => {
+      const peerId = user_id.toPeerId(false);
+      // * no participant: the member left or was let off their restrictions
+      const role = getMemberTagRole(new_participant);
+      // * a member restricted or let off keeps the tag known for them: such an update carries none
+      if(role === 'member' && (this.ranks.get(peerId)?.role ?? 'member') === 'member') {
+        return;
+      }
+
+      // * a demoted admin goes back to what the messages say
+      this.setAuthorRank(
+        peerId,
+        role !== 'member' ? {rank: getParticipantRank(new_participant), role} : undefined
+      );
+    }));
+
+    // * a basic group keeps roles and tags in its full chat
+    this.listenerSetter.add(rootScope)('chat_full_update', (chatId) => this.onRankChange(chatId, async() => {
+      if(apiManagerProxy.getChat(chatId)?._ !== 'chat') {
+        return;
+      }
+
+      const ranks = this.ranks;
+      const chatParticipants = await this.managers.appProfileManager.getParticipants({id: chatId}).catch((): undefined => undefined);
+      if(this.ranks !== ranks || !chatParticipants) {
+        return;
+      }
+
+      const next = new Map<PeerId, BubbleNameRank>();
+      (chatParticipants.participants as ChatParticipant[]).forEach((participant) => {
+        if(participant.rank) {
+          next.set(getParticipantPeerId(participant), {rank: participant.rank, role: getMemberTagRole(participant)});
+        }
+      });
+
+      new Set([...ranks.keys(), ...next.keys()]).forEach((peerId) => {
+        const was = ranks.get(peerId), is = next.get(peerId);
+        if(was?.rank !== is?.rank || was?.role !== is?.role) {
+          this.setAuthorRank(peerId, is);
+        }
+      });
+    }));
+
+    this.listenerSetter.add(rootScope)('chat_update', async(chatId) => {
+      const {peerId} = this;
+      if(peerId !== chatId.toPeerId(true)) {
+        return;
+      }
+
+      const middleware = this.getMiddleware();
+      const chat = this.chat.peer;
+      const hadRights = this.chatInner.classList.contains('has-rights');
+      const hadPlainRights = this.chat.input.canSendPlain();
+      const [hasRights, hasPlainRights, canEmbedLinks] = await Promise.all([
+        this.chat.canSend('send_messages'),
+        this.chat.canSend('send_plain'),
+        this.chat.canSend('embed_links')
+      ]);
+      if(!middleware()) return;
+
+      if(hadRights !== hasRights || hadPlainRights !== hasPlainRights) {
+        await refreshInput();
+      }
+
+      if(!middleware()) return;
+      // reset webpage
+      if((canEmbedLinks && !this.chat.input.willSendWebPage) || (!canEmbedLinks && this.chat.input.willSendWebPage)) {
+        this.chat.input.lastUrl = '';
+        this.chat.input.onMessageInput();
+      }
+
+      if(!!(chat as MTChat.channel).pFlags.forum !== this.chat.isForum && this.chat.type === ChatType.Chat) {
+        this.chat.peerId = 0;
+        this.chat.appImManager.setPeer({peerId});
+      }
+    });
+
+    this.listenerSetter.add(rootScope)('history_reload', async(peerId) => {
+      if(peerId !== this.peerId) {
+        return;
+      }
+
+      this.onHistoryReload();
+    });
+
+    this.listenerSetter.add(rootScope)('state_cleared', () => {
+      this.onHistoryReload();
+    });
+
+    this.listenerSetter.add(rootScope)('sponsored_messages_toggle', (enabled) => {
+      this.onSponsoredMessagesToggle(enabled);
+    });
+
+    this.listenerSetter.add(rootScope)('settings_updated', ({key}) => {
+      if(key === 'settings.emoji.big') {
+        // const middleware = this.getMiddleware();
+        const fullMids = this.getRenderedHistory('desc');
+        const m = fullMids.map((fullMid) => {
+          const bubble = this.getBubble(fullMid);
+          if(bubble.classList.contains('can-have-big-emoji')) {
+            const {peerId, mid} = splitFullMid(fullMid);
+            return {bubble, message: this.chat.getMessageByPeer(peerId, mid), fullMid};
+          }
+        });
+
+        // const awaited = await Promise.all(m);
+        // if(!middleware()) {
+        //   return;
+        // }
+
+        m.filter(Boolean).forEach(({bubble, message, fullMid}) => {
+          if(this.getBubble(fullMid) !== bubble) {
+            return;
+          }
+
+          this.safeRenderMessage({
+            message: message as Message.messageService,
+            reverse: true,
+            bubble
+          });
+        });
+      }
+    });
+
+    !DO_NOT_UPDATE_MESSAGE_VIEWS && this.listenerSetter.add(rootScope)('messages_views', (arr) => {
+      if(this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Welcome) return;
+
+      // in the batch the bubbles are kept in place around and shown changing in: the count gives way to the new one
+      for(const {peerId, views, mid} of arr) {
+        if(this.peerId !== peerId && !GLOBAL_MIDS) continue;
+
+        const bubble = this.getBubble(peerId, mid);
+        const str = formatNumber(views, 1);
+        const postViewsElements = bubble ? Array.from(bubble.querySelectorAll<HTMLElement>('.post-views')) : [];
+        if(!postViewsElements.some((postViews) => postViews.textContent !== str)) continue;
+
+        // the count as the time shows it by then: an edit before it in the batch makes the time anew
+        this.modifyBubble(() => {
+          bubble.querySelectorAll<HTMLElement>('.post-views').forEach((postViews) => postViews.textContent = str);
+        }, bubble, 'meta');
+      }
+    });
+
+    this.observer = new SuperIntersectionObserver({root: this.scrollable.container});
+
+    this.sendViewCountersDebounced = debounce(() => {
+      const fullMids = [...this.viewsMids];
+      this.viewsMids.clear();
+
+      const byPeers: Map<PeerId, number[]> = new Map();
+      fullMids.forEach((fullMid) => {
+        const {peerId, mid} = splitFullMid(fullMid);
+        let mids = byPeers.get(peerId);
+        if(!mids) {
+          byPeers.set(peerId, mids = []);
+        }
+
+        mids.push(mid);
+      });
+
+      byPeers.forEach((mids, peerId) => {
+        this.managers.appMessagesManager.incrementMessageViews(peerId, mids);
+      });
+    }, 1000, false, true);
+
+    this.setupReadMetrics();
+
+    // * pinned part start
+    this.listenerSetter.add(rootScope)('peer_pinned_messages', ({peerId, threadId, mids, pinned, unpinAll}) => {
+      if(peerId !== this.peerId) {
+        return;
+      }
+
+      // a pin shows in the time: it comes or goes there, shown changing. Every pin taken off a topic is taken off its
+      // messages only; scheduled messages are none of the history's (their ids may be the same)
+      if(this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Welcome) {
+        return;
+      }
+
+      if(this.chat.type !== ChatType.Pinned) {
+        const isInThread = (bubble: HTMLElement) => {
+          const message = threadId && this.chat.getMessageByPeer(peerId, +bubble.dataset.mid);
+          return !threadId || (!!message && getMessageThreadId(message, {isForum: this.chat.isForum}) === threadId);
+        };
+        const getPinned = () => new Set(
+          Array.from(this.chatInner.querySelectorAll<HTMLElement>('.bubble .time-pinned'))
+          .map((icon) => findUpClassName(icon, 'bubble'))
+          .filter(isInThread)
+        );
+        if(unpinAll) {
+          // the pins shown as the batch runs, in this chat still: one put in by it before this is taken out too
+          const middleware = this.getMiddleware();
+          this.modifyBubble(() => middleware() && getPinned().forEach((bubble) => this.setBubblePinned(bubble, false)));
+          getPinned().forEach((bubble) => this.modifyBubble(noop, bubble, 'meta'));
+          return;
+        }
+
+        for(const bubble of new Set((mids || []).map((mid) => this.getBubble(peerId, mid)))) {
+          if(!bubble?.timeSpan) continue;
+          this.modifyBubble(() => this.setBubblePinned(bubble, pinned), bubble, 'meta');
+        }
+
+        return;
+      }
+
+      if(mids) {
+        if(!pinned) {
+          this.deleteMessagesByIds(mids.map((mid) => makeFullMid(peerId, mid)));
+        }
+      }
+    });
+    // * pinned part end
+
+    // * scheduled part start
+    const onUpdate = async() => {
+      this.chat.topbar.setTitle((await this.managers.appMessagesManager.getScheduledMessagesStorage(this.peerId)).size);
+    };
+
+    this.listenerSetter.add(rootScope)('scheduled_new', (message) => {
+      if(this.chat.type !== ChatType.Scheduled || message.peerId !== this.peerId) return;
+
+      this.renderNewMessage(message);
+      onUpdate();
+    });
+
+    this.listenerSetter.add(rootScope)('scheduled_delete', ({peerId, mids}) => {
+      if(this.chat.type !== ChatType.Scheduled || peerId !== this.peerId) return;
+
+      this.deleteMessagesByIds(mids.map((mid) => makeFullMid(peerId, mid)));
+      onUpdate();
+    });
+    // * scheduled part end
+
+    // * welcome messages (layer 229): their own list, changed by any of the chat's admins
+    this.listenerSetter.add(rootScope)('welcome_message_new', (message) => {
+      if(this.chat.type !== ChatType.Welcome || message.peerId !== this.peerId) return;
+      this.welcomeFirstMid ??= message.mid;
+      this.renderNewMessage(message);
+    });
+
+    this.listenerSetter.add(rootScope)('welcome_messages_delete', async({peerId, mids}) => {
+      if(this.chat.type !== ChatType.Welcome || peerId !== this.peerId) return;
+
+      // the next one is read first now: it takes the chip over, before its neighbour's removal
+      // starts regrouping the bubbles under a re-render
+      if(mids.includes(this.welcomeFirstMid)) {
+        const [firstMid] = await this.managers.appMessagesManager.getWelcomeMessagesMids(peerId);
+        if(this.peerId !== peerId || this.chat.type !== ChatType.Welcome) return;
+        this.welcomeFirstMid = firstMid;
+        const bubble = firstMid && this.getBubble(makeFullMid(peerId, firstMid));
+        const message = bubble && this.chat.getMessage(firstMid);
+        if(message) await this.safeRenderMessage({message, bubble});
+      }
+
+      this.deleteMessagesByIds(mids.map((mid) => makeFullMid(peerId, mid)));
+    });
+  }
+
+  private get peerId() {
+    return this.chat.peerId;
+  }
+
+  public get messagesQueuePromise() {
+    return this.batchProcessor.queuePromise;
+  }
+
+  private async onHistoryReload() {
+    // welcome templates are not the chat's messages: reloading those says nothing about them, and
+    // their ids would name other messages there
+    if(this.chat.type === ChatType.Welcome) {
+      return;
+    }
+
+    const {peerId} = this;
+    const wasLikeGroup = this.chat.isLikeGroup;
+    this.chat.isLikeGroup = await this.chat._isLikeGroup(peerId);
+    const finishPeerChange = wasLikeGroup !== this.chat.isLikeGroup &&  await this.finishPeerChange();
+
+    // * filter local and outgoing
+    const fullMids = this.getRenderedHistory('desc', true);
+    const mids = fullMids.map((fullMid) => splitFullMid(fullMid).mid);
+    const middleware = this.getMiddleware();
+    this.managers.appMessagesManager.reloadMessages(peerId, mids).then((messages) => {
+      if(!middleware()) return;
+
+      const toDelete: FullMid[] = [];
+      messages.forEach((message, idx) => {
+        const fullMid = fullMids[idx];
+        if(message) {
+          const bubble = this.getBubble(peerId, message.mid);
+          if(!bubble) return;
+
+          this.safeRenderMessage({
+            message,
+            reverse: true,
+            bubble
+          });
+        } else {
+          toDelete.push(fullMid);
+        }
+      });
+
+      finishPeerChange?.();
+      if(finishPeerChange) {
+        this.bubbleGroups.groups.forEach((group) => {
+          if(!this.chat.isLikeGroup) {
+            group.destroyAvatar();
+          } else if(this.isAvatarNeeded(group.firstItem.message)) {
+            group.createAvatar(group.firstItem.message);
+          }
+        });
+      }
+
+      this.deleteMessagesByIds(toDelete);
+
+      this.setLoaded('top', false);
+      this.setLoaded('bottom', false);
+      this.scrollable.checkForTriggers();
+    });
+  }
+
+  /** The key a widget message's height and crash count go by: one out of the chat's history by its store's own ids. */
+  private getMessageWidgetKey(message: Message.message, accountNumber = getManagersSession(this.chat.managers).accountNumber) {
+    return getWidgetKey(accountNumber, message.peerId, message.mid, getNonHistoryStore(this.chat.type, message));
+  }
+
+  /**
+   * What an opening chat counts its first screen by: the messages of a history (newest first), the height of its
+   * screen, and the height of a message's bubble by how this kind of chat lays out text, else the lowest a bubble can
+   * be: never more than it is
+   */
+  private measureFirstScreen(historyResult: LocalHistoryResult | {history: number[]}) {
+    const items: (number | MyMessage | AdminLog)[] = (historyResult as LocalHistoryResult).messages || historyResult.history;
+    const messages = items.map((item) => (typeof(item) === 'number' ? this.chat.getMessage(item) : item) as Message.message | Message.messageService);
+    const {width, height} = this.getScrollableSize();
+
+    const layout = this.getLayoutKey(width);
+    const metrics = messageTextMetrics.get(this.getTextMetricsKind());
+    const textMetrics = !this.isTextTranslated() && metrics?.layout === layout ? metrics : undefined;
+    // * a widget is as high as its bot says, else as it was at this layout when it last ran, else as low as one gets
+    const accountNumber = getManagersSession(this.chat.managers).accountNumber;
+    const getWidgetHeight: GetWidgetHeight = isWidgetRenderingEnabled() ? (message, media) => {
+      return getWidgetHeightAtLeast(media, this.getMessageWidgetKey(message, accountNumber), layout);
+    } : undefined;
+    const getHeight = (message: Message.message | Message.messageService, inAlbum: boolean) => {
+      // * an album as the chat has it, whole: a history may hold some of its items only (a saved position has its main
+      // * one), and the caption its bubble shows is the only one of all its items
+      const album = inAlbum && apiManagerProxy.getMessagesByGroupedId((message as Message.message).grouped_id);
+      if(album?.length) {
+        message = getAlbumBubbleMessage(album);
+      }
+
+      return textMetrics ? estimateBubbleHeight(message, textMetrics, inAlbum, getWidgetHeight) : getBubbleHeightAtLeast(message, inAlbum, getWidgetHeight);
+    };
+
+    return {items, messages, height, getHeight};
+  }
+
+  /**
+   * Where a chat opens, which its first frame is counted around: at a message jumped to, at the first unread one, at
+   * the one it was left at - else at its end. Nothing for a chat that is not a plain one (a search, pinned messages,
+   * comments), which renders its page whole
+   */
+  private getFirstScreen({chatType, peerId, savedPosition, followingUnread, readMaxId, isTarget, isJump, lastMsgFullMid}: {
+    chatType: ChatType,
+    peerId: PeerId,
+    savedPosition: ChatSavedPosition,
+    followingUnread: boolean,
+    readMaxId: number,
+    isTarget: boolean,
+    isJump: boolean,
+    lastMsgFullMid: FullMid
+  }): FirstScreen {
+    if(chatType !== ChatType.Chat) {
+      return;
+    } else if(savedPosition?.mids) {
+      const {anchor} = savedPosition;
+      return anchor && {at: 'position', mid: splitFullMid(anchor.fullMid).mid, top: anchor.top};
+    } else if(followingUnread) {
+      return {at: 'unread', readMaxId};
+    } else if(!isJump) { // * the last message jumped to stands at the end too
+      return {at: 'end'};
+    } else if(isTarget) {
+      const target = splitFullMid(lastMsgFullMid);
+      return target.peerId === peerId ? {at: 'message', mid: target.mid} : undefined;
+    }
+  }
+
+  /**
+   * The message a chat opens at in a history (newest first) and where on a screen of `height` it stands - as
+   * `setPeer` scrolls to it: `top` and `bottom` are the bars over the screen's edges
+   */
+  private placeFirstScreen(messages: (Message.message | Message.messageService)[], firstScreen: FirstScreen, height: number): {index: number, place: FirstScreenPlace} {
+    const top = this.chat.chatPaddingTop[0](), bottom = this.chat.chatPaddingBottom[0]();
+    // * `scrollToBubble`'s margin from the bars
+    const margin = 4;
+    let index: number;
+    switch(firstScreen.at) {
+      case 'end':
+        return {index: 0, place: 'end'};
+      case 'message':
+        // * in the middle of what the bars leave
+        index = messages.findIndex((message) => message?.mid === firstScreen.mid);
+        return index === -1 ? undefined : {index, place: {center: top + (height - top - bottom) / 2}};
+      case 'unread':
+        // * the oldest after the read cursor not drawn as one's own, as `setUnreadDelimiter` finds it among the bubbles
+        // * - an album by the item its bubble is rendered for, the oldest - under the topbar
+        for(index = messages.length - 1; index >= 0; --index) {
+          const message = messages[index];
+          const groupedId = (message as Message.message)?.grouped_id;
+          const mid = groupedId ? apiManagerProxy.getMidsByGroupedId(groupedId)[0] ?? message.mid : message?.mid;
+          if(mid > firstScreen.readMaxId && (isDrawnAsService(message) || !this.chat.isOutMessage(message))) {
+            return {index, place: {top: top + margin}};
+          }
+        }
+
+        return;
+      case 'position':
+        index = messages.findIndex((message) => message?.mid === firstScreen.mid);
+        return index === -1 ? undefined : {index, place: {top: firstScreen.top}};
+    }
+  }
+
+  /**
+   * Splits a history at where the chat opens. What fills its screen there and the scroll triggers on both sides stays,
+   * for the first frame; what fills two screens more each way - as much as viewport slicing keeps - is returned with
+   * the oldest message it goes to (`cut`), to render after that frame; the rest is left to scrolling. Of what stays,
+   * the scroll triggers' part is out of sight (`sight`): beyond the screen's edge even with every message before it as
+   * low as it gets - and more of it goes out of sight while it renders, as its widgets report their heights
+   */
+  private cutToFirstScreen(historyResult: LocalHistoryResult | {history: number[]}, firstScreen: FirstScreen): {
+    cut?: {beyond?: LocalHistoryResult | {history: number[]}, oldestMid: number},
+    sight?: RenderSight & {dispose: () => void}
+  } {
+    const {items, messages, height, getHeight} = this.measureFirstScreen(historyResult);
+    // * a screen not laid out has nothing to count by, a message that is gone nothing to count around
+    const placed = height && items.length ? this.placeFirstScreen(messages, firstScreen, height) : undefined;
+    if(!placed) {
+      return {};
+    }
+
+    const isEnd = (historyResult as LocalHistoryResult).isEnd || {};
+    const count = (margin: number) => countFirstScreen(messages, placed.index, placed.place, height, margin, isEnd, getHeight);
+    const getItemMid = (item: typeof items[number]) => typeof(item) === 'number' ? item : (item as MyMessage).mid;
+    const sight = this.watchFirstScreenSight(items.map(getItemMid), () => count(0));
+
+    const first = count(this.scrollable.onScrollOffset);
+    if(first.newest === 0 && first.oldest === items.length - 1) {
+      return {sight};
+    }
+
+    const beyond = count(height * 2);
+    const whole = {...historyResult};
+    Object.assign(historyResult, keepRange(whole, first.newest, first.oldest));
+    return {
+      cut: {
+        beyond: beyond.newest === first.newest && beyond.oldest === first.oldest ? undefined : joinHistories(
+          keepRange(whole, beyond.newest, first.newest - 1),
+          keepRange(whole, first.oldest + 1, beyond.oldest)
+        ),
+        oldestMid: getItemMid(items[beyond.oldest])
+      },
+      sight
+    };
+  }
+
+  /**
+   * What of an opening chat's first screen is out of sight: of the messages counted (`mids`, newest first), those
+   * outside the range `countInSight` gives by the heights known now - not one added to the history after (the chat's
+   * last message). A widget's height comes to be known as it runs, so they are counted again then, for as long as
+   * messages are watched - until `dispose`, once the first screen is in
+   */
+  private watchFirstScreenSight(mids: number[], countInSight: () => {newest: number, oldest: number}): RenderSight & {dispose: () => void} {
+    const counted = new Set(mids);
+    let inSight: Set<number>;
+    const countSight = () => {
+      const {newest, oldest} = countInSight();
+      inSight = new Set(mids.slice(newest, oldest + 1));
+    };
+    const isOutOfSight = (mid: number) => counted.has(mid) && !inSight.has(mid);
+    countSight();
+
+    const watchers = new Map<number, () => void>();
+    let stopListening: () => void;
+    const recount = () => {
+      countSight();
+      for(const [mid, onOutOfSight] of watchers) {
+        if(isOutOfSight(mid)) {
+          watchers.delete(mid);
+          onOutOfSight();
+        }
+      }
+    };
+
+    return {
+      isOutOfSight,
+      watch: (mid, onOutOfSight) => {
+        watchers.set(mid, onOutOfSight);
+        // * once for every height reported in one task
+        stopListening ??= onWidgetHeightRemembered(throttleWith(queueMicrotask, recount));
+
+        return () => watchers.delete(mid);
+      },
+      dispose: () => {
+        watchers.clear();
+        stopListening?.();
+      }
+    };
+  }
+
+  /**
+   * Renders a history from where the chat opens (`getFirstScreen`): what fills its screen there first, by `render`
+   * (which is told what of it is out of sight), and once that frame is up what fills two screens more each way, out of
+   * sight. No scroll trigger loads more until it is in
+   */
+  private renderFirstScreen<T extends LocalHistoryResult | {history: number[]}>(
+    historyResult: T,
+    firstScreen: FirstScreen,
+    render: (historyResult: T, sight?: RenderSight) => Promise<void>
+  ) {
+    const {cut, sight} = firstScreen ? this.cutToFirstScreen(historyResult, firstScreen) : {};
+    const promise = render(historyResult, sight);
+    if(sight) promise.finally(sight.dispose).catch(noop);
+    let restPromise: Promise<void>;
+    if(cut?.beyond) {
+      const middleware = this.getMiddleware();
+      restPromise = this.firstScreenRestPromise = promise.then(() => new Promise<void>((resolve) => fastRaf(() => setTimeout(resolve, 0)))).then(async() => {
+        if(!middleware()) return;
+        await this.performHistoryResult(cut.beyond, true, true, OUT_OF_SIGHT);
+        if(!middleware()) return;
+        // * the browser keeps what is on screen in place as bubbles go in above it: that is no scroll of the user's,
+        // * which would show the date over the list
+        this.scrollable.lastScrollPosition = this.scrollable.scrollPosition;
+      }).catch(noop).finally(() => {
+        if(this.firstScreenRestPromise === restPromise) {
+          this.firstScreenRestPromise = undefined;
+        }
+      });
+    }
+
+    return {promise, restPromise, cut};
+  }
+
+  /**
+   * The bubble at the top of the screen and how far below the screen's top it stands: where the chat is reopened at
+   */
+  public getScrollAnchor(): ChatSavedPosition['anchor'] {
+    const top = this.getTopBubble();
+    const fullMid = top && getBubbleFullMid(top.element);
+    return fullMid ? {fullMid, top: top.offset} : undefined;
+  }
+
+  private getTextMetricsKind() {
+    return this.chat.isBroadcast ? 'channel' : 'chat';
+  }
+
+  // * a translation shown in place of the text is not the text the model measures: such a chat counts by the lowest a
+  // * bubble can be, and teaches the model nothing
+  private isTextTranslated() {
+    return !!this.chat.appSettings.translations.enabledPeers[this.peerId];
+  }
+
+  private getLayoutKey(width: number) {
+    return width + '_' + this.chat.appSettings.messagesTextSize;
+  }
+
+  // * as the observer last saw it, or as it is laid out before the observer has seen it (a chat being opened)
+  private getScrollableSize() {
+    return this.scrollableSize ?? {
+      width: this.scrollable.container.clientWidth,
+      height: this.scrollable.container.clientHeight
+    };
+  }
+
+  /**
+   * How the text of the bubbles on screen is laid out, read once the chat has settled: in a frame, before anything is
+   * written, it is the layout the frame has anyway
+   */
+  private rememberLayout() {
+    const width = this.scrollableSize?.width;
+    if(!width || this.isTextTranslated()) {
+      return;
+    }
+
+    // * a text bubble is as wide as a bubble gets when a paragraph of it is wider than it: that one has wrapped. Lines
+    // * broken by hand say nothing of it, and the widest such bubble of the kind of chat is the one counted by
+    const layout = this.getLayoutKey(width);
+    const kind = this.getTextMetricsKind();
+    const known = messageTextMetrics.get(kind);
+    let metrics: MessageTextMetrics = known?.layout === layout ? known : undefined;
+    for(const bubble of this.chatInner.querySelectorAll<HTMLElement>('.bubbles-date-group .bubble[data-mid]:not(.is-date)')) {
+      const element = bubble.querySelector<HTMLElement>('.message');
+      const message = element && this.chat.getMessage(+bubble.dataset.mid) as Message.message;
+      if(
+        !message?.message ||
+        message.entities?.some((entity) => entity._ === 'messageEntityBlockquote' || entity._ === 'messageEntityPre') ||
+        bubble.matches('.photo, .video, .has-webpage, .poll-message, .is-album, .sticker, .round, .emoji-big') ||
+        bubble.querySelector('.attachment, .document-container, .reply-summary') // * a summary is not the text either
+      ) {
+        continue;
+      }
+
+      const lineWidth = element.clientWidth;
+      if(metrics && lineWidth <= metrics.lineWidth) {
+        continue;
+      }
+
+      const style = getComputedStyle(element);
+      const font = [style.fontStyle, style.fontWeight, style.fontSize, style.fontFamily].join(' ');
+      const lineHeight = parseFloat(style.lineHeight);
+      // * by a tenth more: a line that only just fits may measure a little wider on a canvas
+      if(lineHeight && message.message.split('\n').some((paragraph) => measureTextWidth(paragraph, font) > lineWidth * 1.1)) {
+        metrics = {font, lineHeight, lineWidth};
+      }
+    }
+
+    if(metrics && metrics !== known) {
+      messageTextMetrics.set(kind, {...metrics, layout});
+    }
+  }
+
+  public createScrollSaver(reverse = true) {
+    const scrollSaver = new ScrollSaver(
+      this.scrollable,
+      '.bubble:not(.is-date):not(.is-sponsored):not(.botforum-new-topic-bubble)',
+      reverse
+    );
+    return scrollSaver;
+  }
+
+  // The top visible bubble - the first one reaching into the viewport from the top - and its offset from the
+  // container top: where the chat stands, to put it back after a reflow or when it is reopened
+  private getTopBubble(): {element: HTMLElement, offset: number} {
+    const container = this.scrollable.container;
+    const cTop = container.getBoundingClientRect().top;
+    const bubbles = container.querySelectorAll<HTMLElement>('.bubble:not(.is-date):not(.is-sponsored):not(.botforum-new-topic-bubble)');
+    for(const bubble of bubbles) {
+      const rect = bubble.getBoundingClientRect();
+      if(rect.bottom > cTop + 1) {
+        return {element: bubble, offset: rect.top - cTop};
+      }
+    }
+  }
+
+  // Scrolls so that the bubble stands `offset` below the container top again
+  private pinBubble(element: HTMLElement, offset: number) {
+    const scrollable = this.scrollable;
+    const delta = element.getBoundingClientRect().top - scrollable.container.getBoundingClientRect().top - offset;
+    if(Math.abs(delta) > 0.5) {
+      scrollable.setScrollPositionSilently(scrollable.scrollPosition + delta);
+    }
+  }
+
+  // Snapshot the scroll position (the top visible bubble + its offset from the container top) so it can
+  // be re-pinned after a reflow rewraps the bubbles. Container-relative on purpose — see reflowAnchor.
+  private saveReflowScroll = () => {
+    const scrollable = this.scrollable;
+    if(!scrollable) return;
+    this.reflowWasAtEnd = scrollable.isScrolledToEnd;
+    this.reflowAnchor = undefined;
+    if(this.reflowWasAtEnd) return; // bottom-stick needs no anchor
+    this.reflowAnchor = this.getTopBubble();
+  };
+
+  private restoreReflowScroll = () => {
+    const scrollable = this.scrollable;
+    if(!scrollable) return;
+    if(this.reflowWasAtEnd) {
+      scrollable.setScrollPositionSilently(scrollable.scrollSize); // keep the chat pinned to the bottom
+      return;
+    }
+    const anchor = this.reflowAnchor;
+    if(!anchor?.element.isConnected) return;
+    this.pinBubble(anchor.element, anchor.offset);
+  };
+
+  private unreadedObserverCallback = (entry: IntersectionObserverEntry) => {
+    if(entry.isIntersecting) {
+      const target = entry.target as HTMLElement;
+      const mid = this.unreaded.get(target as HTMLElement);
+      this.onUnreadedInViewport('history', target, mid);
+    }
+  };
+
+  private unreadedContentObserverCallback = (entry: IntersectionObserverEntry) => {
+    if(entry.isIntersecting) {
+      const target = entry.target as HTMLElement;
+      const mid = this.unreadedContent.get(target as HTMLElement);
+      this.onUnreadedInViewport('content', target, mid);
+    }
+  };
+
+  private viewsObserverCallback = (entry: IntersectionObserverEntry) => {
+    if(entry.isIntersecting) {
+      this.observer.unobserve(entry.target, this.viewsObserverCallback);
+      this.onViewed(entry.target as HTMLElement);
+    }
+  };
+
+  /**
+   * What is watched for its views came into view: a post's view is counted, an ad is reported as seen. Of an ad the
+   * button under it is watched, which has no id of its own: its bubble has
+   */
+  private onViewed(target: HTMLElement) {
+    if(this.chat.isPreview) return;
+
+    const fullMid = getBubbleFullMid(findUpClassName(target, 'bubble'));
+    if(!fullMid) return;
+
+    if(this.sponsoredMessagesMids.includes(fullMid)) {
+      const {mid} = splitFullMid(fullMid);
+      const msg = this.sponsoredMessages.find((msg) => msg.mid === mid);
+      const sponsoredMessage = (msg as Message.message)?.sponsoredMessage;
+
+      // * once per ad of the load: a bubble of it rendered anew is not another view. One that failed goes again
+      if(sponsoredMessage && !sponsoredMessage.viewed) {
+        sponsoredMessage.viewed = true;
+        this.managers.appMessagesManager.viewSponsoredMessage(sponsoredMessage.random_id).catch(() => {
+          sponsoredMessage.viewed = false;
+        });
+      }
+
+      return;
+    }
+
+    this.viewsMids.add(fullMid);
+    this.sendViewCountersDebounced();
+  }
+
+  // * guarded to at most once per chat-open (like iOS's hasDisplayedGuestChatMessageTooltip); reset in cleanup
+  private guestChatHintShown = false;
+
+  // * hint explaining guest bots: shown above the "<Bot> for <Visitor>" name of the first guest-chat
+  // * message that scrolls into view (iOS shows it in any chat type, at most twice — see
+  // * TelegramUI/…/ChatControllerDisplayGuestChatMessageTooltip)
+  private guestChatHintObserverCallback = (entry: IntersectionObserverEntry) => {
+    if(!entry.isIntersecting) {
+      return;
+    }
+
+    const bubble = entry.target as HTMLElement;
+
+    if(this.chat.isPreview || this.guestChatHintShown) { // once per chat-open (iOS hasDisplayedGuestChatMessageTooltip)
+      this.observer.unobserve(bubble, this.guestChatHintObserverCallback);
+      return;
+    }
+
+    const shownTimes = this.chat.appSettings.seenTooltips.guestBotPrivacy || 0; // undefined for pre-existing state
+    if(shownTimes >= 2) { // twice total (iOS counter notice)
+      this.observer.unobserve(bubble, this.guestChatHintObserverCallback);
+      return;
+    }
+
+    // * notch over the bot's name (element = the .peer-title, which hugs its text). fall back to the
+    // * bubble as the anchor when the name is hidden (a grouped, non-first guest bubble)
+    const nameNode = bubble.querySelector<HTMLElement>('.name .peer-title');
+    const anchor = nameNode?.offsetParent ? nameNode : bubble;
+
+    // * the observer's root is the whole scroll container, so this fires as soon as ANY pixel of the
+    // * bubble intersects — which can be while the name is still under the floating topbar or below the
+    // * fold, dropping the (upward) tooltip off-screen. Wait until the name has cleared the topbar with
+    // * room above it and sits inside the viewport; keep the bubble observed so a later scroll that
+    // * brings it fully into view re-triggers this (the counter isn't spent until we actually show).
+    const scrollRect = this.scrollable.container.getBoundingClientRect();
+    const topbarBottom = this.chat.topbar?.container.getBoundingClientRect().bottom ?? scrollRect.top;
+    const visibleTop = Math.max(scrollRect.top, topbarBottom);
+    const anchorRect = anchor.getBoundingClientRect();
+    const roomForTooltip = 48; // tooltip height + notch + gap — don't show it half-clipped by the topbar
+    if(anchorRect.top - roomForTooltip < visibleTop || anchorRect.top > scrollRect.bottom) {
+      return;
+    }
+
+    this.observer.unobserve(bubble, this.guestChatHintObserverCallback);
+    this.guestChatHintShown = true;
+    setAppSettings('seenTooltips', 'guestBotPrivacy', shownTimes + 1);
+
+    // * mount inside the bubble and position absolutely, so the hint scrolls with the message and is
+    // * clipped by the chat viewport instead of floating over the topbar (container = bubble clamps the
+    // * body's width/position)
+    showTooltip({
+      element: anchor,
+      container: bubble,
+      mountOn: bubble,
+      absolute: true,
+      vertical: 'top',
+      textElement: i18n('BotCantReadChatTooltip'),
+      paddingX: 8,
+      auto: true, // auto-dismiss after a few seconds — it appears unsolicited
+      useOverlay: false // don't swallow the user's next click
+    });
+  };
+
+  private setupReadMetrics() {
+    this.readMetricsTracker = new ReadMetricsTracker(({peerId, metric}) => {
+      this.managers.appMessagesManager.reportReadMetrics(peerId, metric);
+    });
+
+    const updateScreenActive = () => {
+      // Paused while another chat is pushed on top of this one, or a dark overlay (media viewer) covers it.
+      this.readMetricsTracker.setScreenActive(this.chat.appImManager.chat === this.chat && !overlayCounter.isOverlayActive);
+    };
+    updateScreenActive();
+
+    const updateAppActive = () => {
+      // Foreground = tab visible and window focused.
+      this.readMetricsTracker.setAppActive(!getAppWindow().document.hidden && getAppWindow().document.hasFocus());
+    };
+    updateAppActive();
+
+    this.listenerSetter.add(document)('visibilitychange', updateAppActive);
+    this.listenerSetter.add(window)('blur', updateAppActive);
+    this.listenerSetter.add(window)('focus', updateAppActive);
+    this.listenerSetter.add(this.chat.appImManager)('chat_changing', updateScreenActive);
+    this.listenerSetter.add(overlayCounter)('change', updateScreenActive);
+
+    const activityEvents: (keyof HTMLElementEventMap)[] = ['pointermove', 'pointerdown', 'touchstart', 'touchmove', 'wheel', 'keydown'];
+    activityEvents.forEach((event) => {
+      this.listenerSetter.add(this.chat.container)(event, this.registerReadMetricsActivity, {passive: true});
+    });
+  }
+
+  private registerReadMetricsActivity = () => {
+    const now = Date.now();
+    if(now - this.lastReadMetricsActivity < 1000) { // throttle: the activity window is 15s, so 1s granularity is plenty
+      return;
+    }
+
+    this.lastReadMetricsActivity = now;
+    this.readMetricsTracker?.registerActivity();
+  };
+
+  private readMetricsObserverCallback = (entry: IntersectionObserverEntry) => {
+    const bubble = entry.target as HTMLElement;
+    if(entry.isIntersecting) {
+      if(!this.readMetricsBubbles.has(bubble)) {
+        const fullMid = getBubbleFullMid(bubble);
+        if(!fullMid) {
+          return;
+        }
+
+        this.readMetricsBubbles.set(bubble, splitFullMid(fullMid).mid);
+      }
+    } else {
+      this.readMetricsBubbles.delete(bubble);
+    }
+
+    this.scheduleReadMetricsBatch();
+  };
+
+  private scheduleReadMetricsBatch() {
+    if(this.updateReadMetricsBatchScheduled || !this.readMetricsTracker) {
+      return;
+    }
+
+    this.updateReadMetricsBatchScheduled = true;
+    fastRaf(() => {
+      this.updateReadMetricsBatchScheduled = false;
+      this.updateReadMetricsBatch();
+    });
+  }
+
+  private updateReadMetricsBatch() {
+    const tracker = this.readMetricsTracker;
+    if(!tracker || !this.scrollable) {
+      return;
+    }
+
+    const rect = this.scrollable.container.getBoundingClientRect();
+    tracker.startBatch(this.peerId, rect.top, rect.bottom);
+    this.readMetricsBubbles.forEach((mid, bubble) => {
+      if(!bubble.isConnected) {
+        return;
+      }
+
+      const bubbleRect = bubble.getBoundingClientRect();
+      if(bubbleRect.bottom <= rect.top || bubbleRect.top >= rect.bottom) { // no overlap (observer lagged a fast scroll)
+        return;
+      }
+
+      tracker.push(mid, bubbleRect.top, bubbleRect.height);
+    });
+    tracker.endBatch();
+  }
+
+  private _stickerEffectObserverCallback = (entry: IntersectionObserverEntry, callback: IntersectionCallback, selector: string) => {
+    if(entry.isIntersecting) {
+      this.observer.unobserve(entry.target, callback);
+
+      // what is sent flies into its bubble, and what is to be clicked may be away in the flight, or stood in
+      // for: it is looked for once the flight is over
+      const bubble = entry.target as HTMLElement;
+      const landed = this.sendFlights.whenLanded(bubble);
+      const attachmentDiv: HTMLElement = landed ? undefined : bubble.querySelector(selector);
+      Promise.all([getHeavyAnimationPromise(), landed]).then(() => {
+        const element = landed ? bubble.querySelector<HTMLElement>(selector) : attachmentDiv;
+        if(isInDOM(element)) {
+          simulateClickEvent(element);
+        }
+      });
+    }
+  };
+
+  private stickerEffectObserverCallback = (entry: IntersectionObserverEntry) => {
+    this._stickerEffectObserverCallback(entry, this.stickerEffectObserverCallback, '.attachment');
+  };
+
+  private messageEffectObserverCallback = (entry: IntersectionObserverEntry) => {
+    this._stickerEffectObserverCallback(entry, this.messageEffectObserverCallback, '.time-inner .time-effect');
+  };
+
+  private createResizeObserver() {
+    if(!('ResizeObserver' in window) || this.resizeObserver) {
+      return;
+    }
+
+    const container = this.scrollable.container;
+    let wasHeight = 0/* container.offsetHeight */;
+    let resizing = false;
+    let skip = false;
+    let scrolled = 0;
+    let part = 0;
+    let rAF = 0;
+    // let skipNext = true;
+
+    const onResizeEnd = () => {
+      const height = container.offsetHeight;
+      const isScrolledDown = this.scrollable.isScrolledToEnd;
+      if(height !== wasHeight && (!skip || !isScrolledDown)) { // * fix opening keyboard while ESG is active, offsetHeight will change right between 'start' and this first frame
+        part += wasHeight - height;
+      }
+
+      /* if(DEBUG) {
+        this.log('resize end', scrolled, part, this.scrollable.scrollTop, height, wasHeight, this.scrollable.isScrolledDown);
+      } */
+
+      if(part) {
+        this.scrollable.setScrollPositionSilently(this.scrollable.scrollPosition + Math.round(part));
+      }
+
+      wasHeight = height;
+      scrolled = 0;
+      rAF = 0;
+      part = 0;
+      resizing = false;
+      skip = false;
+
+      this.scheduleReadMetricsBatch(); // viewport height changed -> recompute height ratios / visibility
+    };
+
+    const setEndRAF = (single: boolean) => {
+      if(rAF) window.cancelAnimationFrame(rAF);
+      rAF = window.requestAnimationFrame(single ? onResizeEnd : () => {
+        rAF = window.requestAnimationFrame(onResizeEnd);
+        // this.log('resize after RAF', part);
+      });
+    };
+
+    const processEntries: ResizeObserverCallback = (entries) => {
+      const {width: containerWidth, height: containerHeight} = entries[0].contentRect;
+      this.scrollableSize = {width: containerWidth, height: containerHeight};
+
+      /* if(skipNext) {
+        skipNext = false;
+        return;
+      } */
+
+      if(skip) {
+        setEndRAF(false);
+        return;
+      }
+
+      const entry = entries[0];
+      const height = entry.contentRect.height;/* Math.ceil(entry.contentRect.height); */
+
+      if(!wasHeight) {
+        wasHeight = height;
+        return;
+      }
+
+      const realDiff = wasHeight - height;
+      let diff = realDiff + part;
+      const _part = diff % 1;
+      diff -= _part;
+
+      if(!resizing) {
+        resizing = true;
+
+        /* if(DEBUG) {
+          this.log('resize start', realDiff, this.scrollable.scrollTop, this.scrollable.container.offsetHeight, this.scrollable.isScrolledDown);
+        } */
+
+        if(realDiff < 0 && this.scrollable.isScrolledToEnd) {
+          // if(isSafari) { // * fix opening keyboard while ESG is active
+          part = -realDiff;
+          // }
+
+          skip = true;
+          setEndRAF(false);
+          return;
+        }
+      }
+
+      scrolled += diff;
+
+      /* if(DEBUG) {
+        this.log('resize', wasHeight - height, diff, this.scrollable.container.offsetHeight, this.scrollable.isScrolledDown, height, wasHeight);
+      } */
+
+      if(diff) {
+        const needScrollTop = this.scrollable.scrollPosition + diff;
+        this.scrollable.setScrollPositionSilently(needScrollTop);
+      }
+
+      setEndRAF(false);
+
+      part = _part;
+      wasHeight = height;
+    };
+
+    const resizeObserver = this.resizeObserver = new ResizeObserver(processEntries);
+    resizeObserver.observe(container);
+  }
+
+  private destroyResizeObserver() {
+    const resizeObserver = this.resizeObserver;
+    if(!resizeObserver) {
+      return;
+    }
+
+    resizeObserver.disconnect();
+    this.resizeObserver = undefined;
+  }
+
+  private updateMessageReply = async(options: {
+    peerId: PeerId,
+    mids?: number[],
+    ids?: number[]
+  }) => {
+    const middleware = this.getMiddleware();
+    await getHeavyAnimationPromise();
+    if(!middleware()) return;
+
+    const callbacks: (() => Promise<any>)[] = [];
+
+    const peerId = options.peerId;
+    const ids = options.mids || options.ids;
+    const needUpdate = this.needUpdate;
+    const property: keyof typeof needUpdate[0] = options.mids ? 'replyMid' : 'replyStoryId';
+    const promises = ids.map((id) => {
+      const filtered: typeof needUpdate[0][] = [];
+      forEachReverse(needUpdate, (obj, idx) => {
+        if(obj[property] === id && (obj.replyToPeerId === peerId || !peerId)) {
+          // needUpdate.splice(idx, 1)[0];
+          filtered.push(obj);
+        }
+      });
+
+      const promises = filtered.map(async({peerId, mid, replyMid, replyToPeerId, logId}) => {
+        const fullMid = makeFullMid(peerId, mid);
+        const logFullMid = logId ? makeFullMid(peerId, +logId) : undefined;
+        const bubble = this.getBubble(fullMid) || (logId && this.getBubble(logFullMid));
+        if(!bubble) return;
+
+        const [message, originalMessage] = await Promise.all([
+          this.chat.getMessage(fullMid) as Message.message,
+          replyMid && this.managers.appMessagesManager.getMessageByPeer(replyToPeerId, replyMid) as Promise<Message.message>
+        ]);
+
+        callbacks.push(async() => {
+          const promise = MessageRender.setReply({
+            chat: this.chat,
+            bubble,
+            message,
+            logId,
+            middleware: bubble.middlewareHelper.get(),
+            lazyLoadQueue: this.lazyLoadQueue,
+            needUpdate: this.needUpdate,
+            isStandaloneMedia: bubble.classList.contains('just-media'),
+            isOut: bubble.classList.contains('is-out'),
+            fromUpdate: true,
+            // the quote that came is shown changing, in the batch that keeps the view in place around it
+            swap: (callback) => this.modifyBubble(callback, bubble, 'meta')
+          });
+
+          if(!originalMessage) {
+            return promise;
+          }
+
+          await promise;
+
+          let maxMediaTimestamp: number;
+          const timestamps = bubble.querySelectorAll<HTMLAnchorElement>('.timestamp');
+          if(maxMediaTimestamp = getMediaDurationFromMessage(originalMessage)) {
+            timestamps.forEach((timestamp) => {
+              const value = +timestamp.dataset.timestamp;
+              if(value < maxMediaTimestamp) {
+                timestamp.classList.remove('is-disabled');
+              } else {
+                timestamp.removeAttribute('href');
+              }
+            });
+          }
+        });
+      });
+
+      return Promise.all(promises);
+    });
+
+    await Promise.all(promises);
+    if(!middleware() || !callbacks.length) return;
+
+    await Promise.all(callbacks.map((callback) => callback()));
+  };
+
+  private onBubblesMouseMove = async(e: MouseEvent) => {
+    const mediaVideoContainer = findUpClassName(e.target, 'media-video-mini');
+    mediaVideoContainer?.onMiniVideoMouseMove?.(e);
+
+    const content = findUpClassName(e.target, 'bubble-content');
+    if(!(
+      this.chat.type !== ChatType.Scheduled &&
+      this.chat.type !== ChatType.Welcome &&
+      content &&
+      !this.chat.selection.isSelecting &&
+      !findUpClassName(e.target, 'service') &&
+      !findUpClassName(e.target, 'bubble-beside-button') &&
+      this.peerId !== rootScope.myId
+    )) {
+      this.unhoverPrevious();
+      return;
+    }
+
+    const bubble = findUpClassName(content, 'bubble');
+    if(!this.chat.selection.canSelectBubble(bubble)) {
+      this.unhoverPrevious();
+      return;
+    }
+
+    let {hoverBubble, hoverReaction} = this;
+    if(bubble === hoverBubble) {
+      return;
+    }
+
+    this.unhoverPrevious();
+
+    hoverBubble = this.hoverBubble = bubble;
+    hoverReaction = this.hoverReaction;
+    // hoverReaction = contentWrapper.querySelector('.bubble-hover-reaction');
+    if(hoverReaction) {
+      if(hoverReaction.dataset.loaded) {
+        this.setHoverVisible(hoverReaction, true);
+      }
+
+      return;
+    }
+
+    // A native button only with the keyboard layer: it brings the browser's button box and takes the focus on click.
+    hoverReaction = this.hoverReaction = Button('bubble-hover-reaction', {noRipple: true, ariaLabel: 'DoubleTapSetting', asDiv: !Modes.a11y});
+    const middlewareHelper = hoverReaction.middlewareHelper = this.getMiddleware().create();
+    const middleware = middlewareHelper.get(() => this.hoverReaction === hoverReaction);
+
+    const stickerWrapper = document.createElement('div');
+    stickerWrapper.classList.add('bubble-hover-reaction-sticker');
+    hoverReaction.append(stickerWrapper);
+
+    content.append(hoverReaction);
+
+    let message = this.chat.getMessage(getBubbleFullMid(bubble));
+    if(message?._ !== 'message' || isEphemeralMessage(message)) {
+      this.unhoverPrevious();
+      return;
+    }
+
+    message = await this.managers.appMessagesManager.getGroupsFirstMessage(message);
+
+    Promise.all([
+      this.managers.appReactionsManager.getAvailableReactionsByMessage(message, true),
+      apiManagerProxy.getAvailableReactions(),
+      pause(400)
+    ]).then(async([{reactions}, availableReactions]) => {
+      const reaction = reactions.find((reaction) => reaction._ !== 'reactionPaid');
+      if(!reaction) {
+        hoverReaction.remove();
+        return;
+      }
+
+      const availableReaction = reaction._ === 'reactionEmoji' ? availableReactions.find((r) => r.reaction === reaction.emoticon) : undefined;
+      const doc = availableReaction?.select_animation ?? await this.managers.appEmojiManager.getCustomEmojiDocument((reaction as Reaction.reactionCustomEmoji).document_id);
+      if(!middleware()) {
+        return;
+      }
+      hoverReaction.setAttribute('aria-label', availableReaction?.title || doc?.stickerEmojiRaw || I18n.format('DoubleTapSetting', true));
+      stickerWrapper.setAttribute('aria-hidden', 'true');
+
+      wrapSticker({
+        div: stickerWrapper,
+        doc,
+        width: 18,
+        height: 18,
+        needUpscale: true,
+        middleware,
+        group: this.chat.animationGroup,
+        withThumb: false,
+        needFadeIn: false
+      }).then(({render}) => render).then((player) => {
+        assumeType<LottiePlayer>(player);
+
+        const onFirstFrame = () => {
+          if(!middleware()) {
+            // debugger;
+            return;
+          }
+
+          hoverReaction.dataset.loaded = '1';
+          this.setHoverVisible(hoverReaction, true);
+        };
+
+        if(Array.isArray(player)) {
+          onFirstFrame();
+        } else {
+          player.addEventListener('firstFrame', onFirstFrame, {once: true});
+        }
+
+        attachClickEvent(hoverReaction, (e) => {
+          cancelEvent(e); // cancel triggering selection
+
+          // * snapshot the hovered quick-reaction (instant flight source) + the
+          // * clean first-frame render that upgrades it
+          stashFlightSource(reaction, hoverReaction);
+          holdReactionFlight({reaction, source: hoverReaction, message, scrollable: this.scrollable.container});
+          this.chat.sendReaction({
+            message: message as Message.message,
+            reaction
+          });
+          this.unhoverPrevious();
+        }, {listenerSetter: this.listenerSetter});
+      }, noop);
+    });
+  };
+
+  public setReactionsHoverListeners() {
+    this.listenerSetter.add(contextMenuController)('toggle', this.unhoverPrevious);
+    this.listenerSetter.add(overlayCounter)('change', this.unhoverPrevious);
+    this.listenerSetter.add(this.chat.selection)('toggle', this.unhoverPrevious);
+    this.listenerSetter.add(this.container)('mousemove', this.onBubblesMouseMove);
+  }
+
+  private setHoverVisible(hoverReaction: HTMLElement, visible: boolean) {
+    if(hoverReaction.parentElement) {
+      hoverReaction.parentElement.classList.toggle('hover-reaction-visible', visible);
+    }
+
+    SetTransition({
+      element: hoverReaction,
+      className: 'is-visible',
+      forwards: visible,
+      duration: 200,
+      onTransitionEnd: visible ? undefined : () => {
+        hoverReaction.remove();
+        hoverReaction.middlewareHelper.destroy();
+      },
+      useRafs: visible ? 2 : 0
+    });
+  }
+
+  private unhoverPrevious = () => {
+    const {hoverBubble, hoverReaction} = this;
+    if(hoverBubble) {
+      this.setHoverVisible(hoverReaction, false);
+      this.hoverBubble =
+        this.hoverReaction =
+        undefined;
+    }
+  };
+
+  public setStickyDateManually() {
+    // const timestamps = Object.keys(this.dateMessages).map((k) => +k).sort((a, b) => b - a);
+    // let lastVisible: HTMLElement;
+
+    // // if(this.chatInner.classList.contains('is-scrolling')) {
+    // const {scrollTop} = this.scrollable.container;
+    // const isOverflown = scrollTop > 0;
+    // if(isOverflown) {
+    //   for(const timestamp of timestamps) {
+    //     const dateMessage = this.dateMessages[timestamp];
+    //     const visibleRect = getVisibleRect(dateMessage.container, this.scrollable.container);
+    //     if(visibleRect && visibleRect.overflow.top) {
+    //       lastVisible = dateMessage.div;
+    //     } else if(lastVisible) {
+    //       break;
+    //     }
+    //   }
+    // }
+    // // }
+
+    // if(lastVisible === this.previousStickyDate) {
+    //   return;
+    // }
+
+    // if(lastVisible) {
+    //   const needReflow = /* !!this.chat.setPeerPromise ||  */!this.previousStickyDate;
+    //   if(needReflow) {
+    //     lastVisible.classList.add('no-transition');
+    //   }
+
+    //   lastVisible.classList.add('is-sticky');
+
+    //   if(needReflow) {
+    //     void lastVisible.offsetLeft; // reflow
+    //     lastVisible.classList.remove('no-transition');
+    //   }
+    // }
+
+    // if(this.previousStickyDate && this.previousStickyDate !== lastVisible) {
+    //   this.previousStickyDate.classList.remove('is-sticky');
+    // }
+
+    // this.previousStickyDate = lastVisible;
+  }
+
+  public getRenderedLength() {
+    return this.getRenderedHistory().length;
+  }
+
+  private onUnreadedInViewport(type: 'history' | 'content', target: HTMLElement, mid: number) {
+    let {unreadedSeen, unreadedObserverCallback, unreaded} = this;
+    if(type === 'content') {
+      unreadedSeen = this.unreadedContentSeen;
+      unreadedObserverCallback = this.unreadedContentObserverCallback;
+      unreaded = this.unreadedContent;
+    }
+
+    unreadedSeen.add(mid);
+    this.observer.unobserve(target, unreadedObserverCallback);
+    unreaded.delete(target);
+    this.readUnreaded(type);
+  }
+
+  // Whether `this.chat` has moved on from the chat the unreaded mids were collected in. True in
+  // the window between the synchronous peer flip in `Chat.setPeer` and `cleanup()` — the unreaded
+  // sets still hold the previous chat's mids there and must not be read against the new peer.
+  private isUnreadedChatChanged() {
+    const {unreadedChat, chat} = this;
+    return unreadedChat && (
+      unreadedChat.peerId !== chat.peerId ||
+      unreadedChat.threadId !== chat.threadId ||
+      unreadedChat.monoforumThreadId !== chat.monoforumThreadId
+    );
+  }
+
+  private readUnreaded(type: 'history' | 'content') {
+    if(this.chat.isPreview) return;
+    const readPromiseKey = type === 'history' ? 'readPromise' : 'readContentPromise';
+    if(this[readPromiseKey]) return;
+
+    const unreadedSeenKey = type === 'history' ? 'unreadedSeen' : 'unreadedContentSeen';
+
+    const middleware = this.getMiddleware();
+    const readPromise: Promise<void> = idleController.getFocusPromise().then(async() => {
+      // like a failed middleware, a stale unreadedChat leaves `this[readPromiseKey]` latched —
+      // `cleanup()` is what resets both the promise and the sets
+      if(!middleware() || this.isUnreadedChatChanged()) return;
+      const {peerId, threadId, monoforumThreadId} = this.chat;
+
+      let callback: () => Promise<any>;
+      if(type === 'history') {
+        let maxId = Math.max(...Array.from(this[unreadedSeenKey]));
+
+        // ? if message with maxId is not rendered ?
+        if(this.scrollable.loadedAll.bottom) {
+          // * no message of the chat's own left in the list (the one seen was deleted meanwhile): -1
+          const rendered = this.getRenderedHistory('desc', true);
+          const bubblesMaxId = rendered.length ? splitFullMid(rendered[0]).mid : -1;
+          if(maxId >= bubblesMaxId) {
+            maxId = Math.max(this.chat.getHistoryMaxId() || 0, maxId);
+            if(!middleware()) return;
+          }
+        }
+
+        this.unreaded.forEach((mid, target) => {
+          if(mid <= maxId) {
+            this.onUnreadedInViewport('history', target, mid);
+          }
+        });
+
+        if(DEBUG) {
+          this.log('will readHistory by maxId:', maxId);
+        }
+
+        callback = () => this.managers.appMessagesManager.readHistory({peerId, maxId, threadId, monoforumThreadId});
+      } else {
+        const readContents: number[] = [];
+        for(const mid of this.unreadedContentSeen) {
+          const message: MyMessage = this.chat.getMessage(mid);
+          if(isMentionUnread(message) || getUnreadReactions(message)) {
+            readContents.push(mid);
+          }
+        }
+
+        if(DEBUG) {
+          this.log('will readMessages', readContents);
+        }
+
+        callback = () => this.managers.appMessagesManager.readMessages(peerId, readContents);
+      }
+
+      this[unreadedSeenKey].clear();
+
+      // const promise = Promise.resolve();
+      const promise = callback();
+
+      return promise.catch((err: any) => {
+        this.log.error('read err:', type, err);
+        callback();
+      }).finally(() => {
+        if(!middleware()) return;
+        this[readPromiseKey] = undefined;
+
+        if(this[unreadedSeenKey].size) {
+          this.readUnreaded(type);
+        }
+      });
+    }).catch((err) => {
+      // * a throw before the read went out must not keep this chat's reads latched until the chat changes: the
+      // * next message seen tries again, with what this attempt held (not at once, which would throw the same way)
+      this.log.error('read unreaded err:', type, err);
+      if(middleware() && this[readPromiseKey] === readPromise) {
+        this[readPromiseKey] = undefined;
+      }
+    });
+    this[readPromiseKey] = readPromise;
+  }
+
+  public onBubblesClick = async(e: Event) => {
+    // Previews are read-only — no media open, no jump-to-reply, no link follow, no
+    // context menu. Belt-and-suspenders to the CSS `pointer-events: none` we put on
+    // `.bubble` for preview mode.
+    if(this.chat.isPreview) return;
+    let target = e.target as HTMLElement;
+    let bubble: HTMLElement = null, bubbleFullMid: FullMid;
+    try {
+      bubble = findUpClassName(target, 'bubble');
+      if(bubble) {
+        bubbleFullMid = getBubbleFullMid(bubble);
+      }
+    } catch(err) {}
+
+    const stack = this.chat.appImManager.getStackFromElement(target);
+    const additionalSetPeerProps: Partial<ChatSetInnerPeerOptions> = {stack};
+
+    if(!bubble && !this.chat.selection.isSelecting) {
+      const avatar = findUpClassName(target, 'user-avatar');
+      if(!avatar) {
+        return;
+      }
+
+      // const sponsoredContainer = findUpClassName(target, 'bubbles-group-sponsored');
+      // if(sponsoredContainer) {
+      //   if(sponsoredContainer.dataset.toCallback) {
+      //     sponsoredContainer.querySelector<HTMLElement>('.webpage').click();
+      //   }
+      //   return;
+      // }
+
+      // * a channel opens itself and anyone else their profile, as on iOS
+      const peerId = avatar.dataset.peerId.toPeerId();
+      if(peerId === NULL_PEER_ID) {
+        toastNew({langPackKey: 'HidAccount'});
+      } else if((apiManagerProxy.getPeer(peerId) as MTChat.channel)?.pFlags?.broadcast) {
+        this.chat.appImManager.setInnerPeer({...additionalSetPeerProps, peerId});
+      } else {
+        void hotReloadGuard.showPeerProfilePopup({peerId, stack});
+      }
+      return;
+    }
+
+    if(!bubble) {
+      return;
+    }
+
+    if(bubble.classList.contains('is-date') && findUpClassName(target, 'bubble-content')) {
+      if(bubble.classList.contains('is-fake')) {
+        bubble = bubble.previousElementSibling as HTMLElement;
+      }
+
+      if(bubble.classList.contains('is-sticky') && !this.chatInner.classList.contains('is-scrolling')) {
+        return;
+      }
+
+      for(const timestamp in this.dateMessages) {
+        const d = this.dateMessages[timestamp];
+        if(d.div === bubble) {
+          // Multi-select range only makes sense when the user can actually
+          // delete messages on both sides — otherwise the range pick is a
+          // dead-end UI.
+          const {peerId, threadId, monoforumThreadId} = this.chat;
+          const canDeleteDays = peerId.isUser() && !threadId && !monoforumThreadId;
+          showDatePickerPopup({
+            initDate: new Date(+timestamp),
+            onPick: this.onDatePick,
+            peerId,
+            canMultiSelect: canDeleteDays,
+            // When revoke is allowed, swap the multi-select primary action
+            // to a danger "Clear History" that gates on a confirmation.
+            multiSelectAction: canDeleteDays ? {
+              langKey: 'Calendar.ClearHistory',
+              isDanger: true,
+              callback: async(fromTs, toTs) => {
+                const dayCount = Math.round((toTs - fromTs) / 86400);
+                await confirmationPopup({
+                  descriptionLangKey: 'Calendar.ClearHistory.Confirm',
+                  descriptionLangArgs: [
+                    i18n('Calendar.ClearHistory.SelectedDays', [dayCount])
+                  ],
+                  button: {langKey: 'Delete', isDanger: true}
+                });
+
+                this.managers.appMessagesManager.flushHistory({
+                  peerId,
+                  justClear: true,
+                  revoke: true,
+                  minDate: fromTs,
+                  maxDate: toTs
+                });
+              }
+            } : undefined
+          });
+          break;
+        }
+      }
+
+      return;
+    }
+
+    // the network marker of a widget explains itself on a tap, as on hover (its title)
+    const widgetNetwork = findUpClassName(target, 'time-widget-network');
+    if(widgetNetwork) {
+      showTooltip({
+        element: widgetNetwork,
+        container: this.container,
+        vertical: 'top',
+        textElement: i18n('Widget.NetworkMarker')
+      });
+      return;
+    }
+
+    const timeEffect = findUpClassName(target, 'time-effect');
+    if(timeEffect) {
+      fireMessageEffectByBubble({timeEffect, bubble, e, scrollable: this.scrollable});
+      return;
+    }
+
+    if(!IS_TOUCH_SUPPORTED && findUpClassName(target, 'time')) {
+      this.chat.selection.toggleByElement(bubble);
+      return;
+    }
+
+    const attachmentDiv = findUpClassName(target, 'attachment') as HTMLElement;
+    if(
+      bubble &&
+      bubble.dataset.dice &&
+      attachmentDiv
+    ) {
+      const canSend = await this.chat.canSend('send_stickers');
+      const emoticon = bubble.dataset.dice;
+      setTimeout(() => {
+        const {close} = showTooltip({
+          element: attachmentDiv,
+          container: this.container,
+          vertical: 'top',
+          textElement: i18n(
+            canSend ? 'Dice.Tooltip' : 'Dice.Tooltip.CantSend',
+            [
+              wrapEmojiText(emoticon),
+              canSend ? anchorCallback(() => {
+                close();
+                this.managers.appMessagesManager.sendText({
+                  ...this.chat.getMessageSendingParams(),
+                  text: emoticon
+                });
+              }) : undefined
+            ]
+          ),
+          auto: true
+        });
+      }, 0);
+      return;
+    }
+
+    // ! Trusted - due to audio autoclick
+    if(this.chat.selection.isSelecting && e.isTrusted) {
+      if(bubble.classList.contains('service') && bubbleFullMid === undefined) {
+        return;
+      }
+
+      const element = findUpClassName(target, 'grouped-item') || bubble;
+      this.chat.selection.cancelElementClick(e, element);
+      // console.log('bubble click', e);
+
+      if(IS_TOUCH_SUPPORTED && this.chat.selection.selectedText) {
+        this.chat.selection.selectedText = undefined;
+        return;
+      }
+
+      // this.chatSelection.toggleByBubble(bubble);
+      this.chat.selection.toggleByElement(element);
+      return;
+    }
+
+    const callDiv: HTMLElement = findUpClassName(target, 'bubble-call');
+    if(callDiv) {
+      const conferenceMsgId = +callDiv.dataset.conferenceMsgId;
+      if(conferenceMsgId) {
+        // tdesktop resolves the conference from its invite message on any
+        // click on the bubble (history_view_call.cpp:71 -> resolveConferenceCall).
+        // `joinConference` owns the support gate, the confirmation and the
+        // dead-link toast, and rethrows what it already reported.
+        this.chat.appImManager.joinConference({
+          _: 'inputGroupCallInviteMessage',
+          msg_id: conferenceMsgId
+        }, {
+          // The invite's sender is who the confirmation names as inviting us.
+          inviterPeerId: this.chat.getMessage(bubbleFullMid)?.fromId
+        }).catch(noop);
+      } else {
+        this.chat.appImManager.callUser(this.peerId.toUserId(), callDiv.dataset.type as any);
+      }
+
+      return;
+    }
+
+    const buyButton: HTMLElement = findUpClassName(target, 'is-buy');
+    if(buyButton) {
+      cancelEvent(e);
+
+      const message = this.chat.getMessage(bubbleFullMid);
+      if(!message) {
+        return;
+      }
+
+      const media = (message as Message.message).media;
+      const paidMedia = media?._ === 'messageMediaPaidMedia' ? media : undefined;
+
+      let popup: Awaited<ReturnType<typeof createPaymentPopup>>;
+      try {
+        const inputInvoice = await this.managers.appPaymentsManager.getInputInvoiceByPeerId(message.peerId, message.mid);
+        popup = await createPaymentPopup({
+          message: message as Message.message,
+          inputInvoice,
+          isReceipt: buyButton.classList.contains('is-receipt'),
+          paidMedia
+        });
+      } catch(err) {
+        // * a payment form or a receipt the server would not give: the press is not lost without a word
+        toastError(err as ApiError, 'payment form error');
+        return;
+      }
+
+      if(paidMedia) {
+        popup.addEventListener('finish', async(result) => {
+          if(result === 'paid') {
+            showChatToast({
+              icon: 'cash_circle',
+              title: i18n('StarsMediaPurchaseCompleted'),
+              textElement: i18n('StarsMediaPurchaseCompletedInfo', [
+                paidMedia.stars_amount,
+                await wrapPeerTitle({peerId: (message as Message.message).fwdFromId || message.peerId})
+              ]),
+              duration: 5000
+            });
+          }
+        });
+      }
+      return;
+    }
+
+    const mediaSpoiler: HTMLElement = findUpClassName(target, 'media-spoiler-container');
+    if(mediaSpoiler) {
+      onMediaSpoilerClick({
+        event: e,
+        mediaSpoiler
+      });
+      // * one in a web page's preview lies inside its link, which the click after a touch would follow
+      if(findUpClassName(mediaSpoiler, 'webpage')) {
+        cancelWebPageLink(e);
+      }
+
+      return;
+    }
+
+    const reactionElement = findUpTag(target, 'REACTION-ELEMENT') as ReactionElement;
+    if(reactionElement) {
+      if(findUpClassName(target, 'tooltip')) {
+        return;
+      }
+
+      cancelEvent(e);
+      if(reactionElement.classList.contains('is-inactive')) {
+        return;
+      }
+
+      const reactionsElement = reactionElement.parentElement as ReactionsElement;
+      const reactionCount = reactionsElement.getReactionCount(reactionElement);
+      const {reaction} = reactionCount;
+
+      if(reactionsElement.getType() === ReactionLayoutType.Tag) {
+        if(!rootScope.premium) {
+          hotReloadGuard.showPremiumPopup({feature: 'saved_tags'});
+          return;
+        }
+
+        const search = this.chat.searchSignal();
+        if(reactionsEqual(search?.reaction, reaction)) {
+          this.chat.contextMenu.onContextMenu(e as MouseEvent);
+          return;
+        }
+
+        this.chat.initSearch({reaction: reaction});
+      } else {
+        const message = reactionsElement.getContext();
+        this.chat.sendReaction({message, reaction});
+      }
+
+      return;
+    }
+
+    const stickerEmojiEl = isRichMessageButtonTarget(target) ?
+      undefined :
+      findUpAttribute(target, 'data-sticker-emoji');
+    if(
+      stickerEmojiEl &&
+      stickerEmojiEl.parentElement.querySelectorAll('[data-sticker-emoji]').length === 1 &&
+      bubble.classList.contains('emoji-big')
+    ) {
+      this.chat.appImManager.onEmojiStickerClick({
+        event: e,
+        container: stickerEmojiEl,
+        managers: this.managers,
+        middleware: this.getMiddleware(),
+        peerId: this.peerId
+      }).then((firedAnimation) => {
+        if(firedAnimation) {
+          return;
+        }
+
+        this.openEmojiPackByTarget(stickerEmojiEl);
+      });
+
+      return;
+    } else if(stickerEmojiEl) {
+      this.openEmojiPackByTarget(stickerEmojiEl);
+      return;
+    }
+
+    const quoteDiv: HTMLElement = findUpClassName(target, 'quote-like-collapsable');
+    if(quoteDiv) {
+      const isGood = onQuoteClick(e, quoteDiv, this.scrollable, () => this.createScrollSaver(true));
+      if(isGood) {
+        return;
+      }
+    }
+
+    const commentsDiv: HTMLElement = findUpClassName(target, 'replies');
+    if(commentsDiv) {
+      if(this.peerId === REPLIES_PEER_ID) {
+        const message = this.chat.getMessage(bubbleFullMid) as Message.message;
+        const peerId = getPeerId((message.reply_to as MessageReplyHeader.messageReplyHeader).reply_to_peer_id);
+        const threadId = (message.reply_to as MessageReplyHeader.messageReplyHeader).reply_to_top_id;
+        const lastMsgId = message.fwd_from.saved_from_msg_id;
+        this.chat.appImManager.openThread({
+          peerId,
+          lastMsgId,
+          threadId
+        });
+      } else {
+        const message1 = this.chat.getMessage(bubbleFullMid);
+        const message = await this.managers.appMessagesManager.getMessageWithReplies(message1 as Message.message);
+        const replies = message.replies;
+        if(replies) {
+          this.managers.appMessagesManager.getDiscussionMessage(this.peerId, message.mid).then((message) => {
+            if(!message) return;
+            this.chat.appImManager.setInnerPeer({
+              ...additionalSetPeerProps,
+              peerId: replies.channel_id.toPeerId(true),
+              type: ChatType.Discussion,
+              threadId: (message as MyMessage).mid
+            });
+          });
+        }
+      }
+
+      return;
+    }
+
+    const via = findUpClassName(target, 'is-via');
+    if(via) {
+      const el = via.querySelector('.peer-title') as HTMLElement;
+      if(target === el || findUpAsChild(target, el)) {
+        if(this.chat.input.canSendPlain()) {
+          const message = el.innerText + ' ';
+          this.managers.appDraftsManager.setDraft(this.peerId, this.chat.threadId, message);
+        }
+
+        cancelEvent(e);
+        return;
+      }
+    }
+
+    // * a member tag says what it is
+    const memberTag = findUpClassName(target, 'is-member-tag');
+    if(memberTag) {
+      cancelEvent(e);
+      const message = this.chat.getMessage(bubbleFullMid) as Message.message;
+      const rank = message && this.getMessageRank(message);
+      if(rank?.role) {
+        const options = {chatId: this.ranksChatId, peerId: message.fromId, rank: memberTag.textContent, role: rank.role};
+        import('@components/popups/memberTagInfo').then(({default: showMemberTagInfoPopup}) => showMemberTagInfoPopup(options));
+      }
+
+      return;
+    }
+
+    const nameDiv = findUpClassName(target, 'peer-title') ||
+      findUpAvatar(target) ||
+      findUpClassName(target, 'selector-user') ||
+      findUpAttribute(target, 'data-saved-from') ||
+      findUpAttribute(target, 'data-follow');
+    if(nameDiv && nameDiv !== bubble) {
+      // * a name or a mention is a link to its peer: with Ctrl or Cmd held, the browser opens it in a
+      // * new tab (PeerTitle `link` lets that click through)
+      if(nameDiv.tagName === 'A' && (nameDiv as HTMLAnchorElement).href && ((e as MouseEvent).ctrlKey || (e as MouseEvent).metaKey)) {
+        return;
+      }
+
+      target = nameDiv || target;
+      const peerIdStr = target.dataset.peerId || target.getAttribute('peer') || target.dataset.key || target.dataset.follow/*  || (target as AvatarElement).peerId */;
+      const savedFrom = target.dataset.savedFrom as FullMid;
+      if(typeof(peerIdStr) === 'string' || savedFrom) {
+        cancelEvent(e);
+        if(savedFrom) {
+          const {peerId, mid} = splitFullMid(savedFrom);
+          if(target.classList.contains('is-receipt-link')) {
+            const message = await this.managers.appMessagesManager.getMessageByPeer(peerId.toPeerId(), +mid);
+            if(message) {
+              const inputInvoice = await this.managers.appPaymentsManager.getInputInvoiceByPeerId(message.peerId, message.mid);
+              createPaymentPopup({
+                message: message as Message.message,
+                inputInvoice,
+                isReceipt: true
+              });
+            }
+          } else if(target.classList.contains('is-game-link')) {
+            const gameMessage = await this.managers.appMessagesManager.getMessageByPeer(peerId.toPeerId(), +mid);
+            if(gameMessage?._ === 'message') {
+              this.chat.appImManager.playGame(gameMessage as Message.message);
+            }
+          } else {
+            this.chat.appImManager.setInnerPeer({
+              ...additionalSetPeerProps,
+              peerId: peerId.toPeerId(),
+              lastMsgId: +mid
+            });
+          }
+        } else {
+          const peerId = peerIdStr.toPeerId();
+          const {mid} = splitFullMid(getBubbleFullMid(bubble) || EMPTY_FULL_MID);
+
+          if(peerId !== NULL_PEER_ID) {
+            const chat = this.chat.peer;
+            const linkedChat = chat?._ === 'channel' && chat?.pFlags?.monoforum && chat?.linked_monoforum_id ?
+              apiManagerProxy.getChat(chat.linked_monoforum_id) :
+              undefined;
+
+            const shouldOpenAsMonoforum = this.chat.isMonoforum && this.chat.canManageDirectMessages && peerId !== linkedChat?.id?.toPeerId();
+
+            this.chat.appImManager.setInnerPeer({
+              ...additionalSetPeerProps,
+              peerId: shouldOpenAsMonoforum ? this.peerId : peerId,
+              monoforumThreadId: shouldOpenAsMonoforum ? peerId : undefined
+            });
+            this.chat.appImManager.clickIfSponsoredMessage((bubble as any).message);
+          } else {
+            toastNew({langPackKey: 'HidAccount'});
+          }
+        }
+      }
+
+      return;
+    }
+
+    // this.log('chatInner click:', target);
+    // const isVideoComponentElement = target.tagName === 'SPAN' && findUpClassName(target, 'media-container');
+    /* if(isVideoComponentElement) {
+      const video = target.parentElement.querySelector('video') as HTMLElement;
+      if(video) {
+        video.click(); // hot-fix for time and play button
+        return;
+      }
+    } */
+
+    if(bubble.classList.contains('sticker') && target.parentElement.classList.contains('attachment')) {
+      const message = this.chat.getMessage(bubbleFullMid);
+
+      const doc = ((message as Message.message).media as MessageMedia.messageMediaDocument)?.document as Document.document;
+
+      if(doc?.stickerSetInput) {
+        showStickersPopup(doc.stickerSetInput, undefined, this.chat.input);
+      }
+
+      return;
+    }
+
+    let pollOptionEl: HTMLElement;
+    if(target.closest('.poll-option-sticker') && (pollOptionEl = target.closest('[data-poll-option-idx]'))) {
+      const message = this.chat.getMessage(bubbleFullMid);
+      const idx = +(pollOptionEl.dataset.pollOptionIdx ?? 0);
+
+      if(idx !== undefined && message?._ === 'message' && message.media?._ === 'messageMediaPoll') {
+        const {poll} = await this.managers.appPollsManager.getPoll(message.media.poll.id);
+        const answer = poll?.answers?.[idx];
+        if(answer.media?._ === 'messageMediaDocument' && answer.media.document?._ === 'document' && answer.media.document?.stickerSetInput) {
+          showStickersPopup(answer.media.document.stickerSetInput, undefined, this.chat.input);
+        }
+      }
+    }
+
+    const videoMini = findUpClassName(target, 'media-video-mini');
+    if(videoMini && false) {
+      if(findUpClassName(target, 'video-to-viewer')) {
+        if(this.checkTargetForMediaViewer(videoMini.querySelector('video'), e)) {
+          cancelClickOrNextIfNotClick(e);
+          return;
+        }
+      } else if(findUpClassName(target, 'media-photo')) {
+        simulateClickEvent(videoMini.querySelector('video'));
+      }
+
+      cancelEvent(e);
+      // if(findUpClassName(target, 'ckin__controls')) {
+      //   return;
+      // }
+
+      // // console.log('video click', e);
+      // cancelEvent(e);
+      return;
+    }
+
+    if(this.checkTargetForMediaViewer(target, e)) {
+      cancelClickOrNextIfNotClick(e);
+      return;
+    }
+
+    const webPageContainer = findUpClassName(target, 'webpage') as HTMLAnchorElement;
+    if(webPageContainer) {
+      if(findUpClassName(target, 'webpage-name-tip')) {
+        return;
+      }
+
+      if(findUpClassName(target, 'webpage-preview-resizer')) {
+        e.preventDefault();
+        return;
+      }
+
+      this.dispatchWebPageClick(webPageContainer, e as MouseEvent);
+      return;
+    }
+
+    if(['IMG', 'DIV', 'SPAN'/* , 'A' */].indexOf(target.tagName) === -1) target = findUpTag(target, 'DIV');
+
+    if(['DIV', 'SPAN'].indexOf(target.tagName) !== -1/*  || target.tagName === 'A' */) {
+      if(target.classList.contains('goto-original')) {
+        const savedFrom = bubble.dataset.savedFrom as FullMid;
+        const {peerId, mid} = splitFullMid(savedFrom);
+        this.chat.appImManager.setInnerPeer({
+          ...additionalSetPeerProps,
+          peerId: peerId.toPeerId(),
+          lastMsgId: +mid
+        });
+        return;
+      } else if(target.classList.contains('forward')) {
+        const message = this.chat.getMessage(bubbleFullMid);
+        hotReloadGuard.showForwardPopup({
+          [this.peerId]: await this.managers.appMessagesManager.getMidsByMessage(message)
+        });
+        // appSidebarRight.forwardTab.open([mid]);
+        return;
+      }
+
+      let isReplyClick = false;
+
+      try {
+        isReplyClick = !!(e.target as HTMLElement).closest('.reply, .bubble.service.is-reply');
+      } catch(err) {}
+
+      if(isReplyClick && bubble.classList.contains('is-reply')/*  || bubble.classList.contains('forwarded') */) {
+        let replyTo: MessageReplyHeader;
+        let message: Message.message;
+
+        if(this.chat.type === ChatType.Logs) {
+          const log = this.logsByBubble.get(bubble);
+          const entry = this.resolveAdminLogUnsafe({log, noJsx: true});
+          if(entry.type !== 'default' || entry.message._ !== 'message') return;
+          message = entry.message;
+          replyTo = entry.message.reply_to;
+        } else {
+          message = this.chat.getMessage(bubbleFullMid) as Message.message;
+          replyTo = message.reply_to;
+        }
+
+        if(replyTo._ === 'messageReplyStoryHeader') {
+          const target = bubble.querySelector('.reply-media');
+          const peerId = getPeerId(replyTo.peer);
+          hotReloadGuard.createStoriesViewerWithPeer({
+            target: () => target,
+            peerId,
+            id: replyTo.story_id
+          });
+          return;
+        }
+
+        if(replyTo.reply_to_msg_deleted) {
+          toastNew({langPackKey: 'DeletedMessageToast'});
+          return;
+        }
+
+        let replyToMid = replyTo.reply_to_msg_id;
+        if(!replyToMid) {
+          toastNew({langPackKey: replyTo.pFlags.quote ? 'QuotePrivate' : 'ReplyPrivate'});
+          return;
+        }
+
+        let replyToPeerId = replyTo.reply_to_peer_id ?
+          getPeerId(replyTo.reply_to_peer_id) :
+          this.chat.type === ChatType.Logs ?
+            this.peerId :
+            message.peerId;
+
+        if(this.chat.type === ChatType.Discussion && !this.chat.isForum) {
+          ({peerId: replyToPeerId, mid: replyToMid} = await this.getDiscussionReplyTarget(replyToPeerId, replyToMid));
+        }
+
+        this.followStack.push(bubbleFullMid);
+
+        if(this.chat.type === ChatType.Logs) {
+          let existingMessage: MyMessage;
+          replyToMid = await this.managers.appMessagesIdsManager.generateMessageId(replyToMid, this.chat.isChannel ? this.peerId.toChatId() : undefined);
+
+          try {
+            existingMessage = await this.managers.appMessagesManager.reloadMessage(replyToPeerId, replyToMid);
+          } catch{}
+
+          if(!existingMessage) {
+            const existingLogBubble = this.logsBubbleByMid.get(replyToMid);
+            if(!existingLogBubble) return;
+            this.scrollToBubble(existingLogBubble.element, 'center');
+            this.highlightBubble(existingLogBubble.element);
+            return;
+          }
+        }
+
+        const replyQuote = replyTo.pFlags.quote && getReplyQuote(replyTo);
+        this.chat.appImManager.setInnerPeer({
+          ...additionalSetPeerProps,
+          peerId: replyToPeerId,
+          lastMsgId: replyToMid,
+          pollOption: replyTo.poll_option,
+          // * only a manual quote points at a specific part of the message
+          highlight: replyQuote ? {
+            type: 'quote',
+            text: replyQuote.text,
+            offset: replyQuote.offset
+          } : undefined,
+          type: this.chat.type === ChatType.Logs ? undefined : this.chat.type,
+          threadId: this.chat.threadId,
+          monoforumThreadId: this.chat.monoforumThreadId
+        });
+
+        return;
+      }
+    }
+
+    if(bubbleFullMid) {
+      const message = this.chat.getMessage(bubbleFullMid);
+      const action = (message as Message.messageService)?.action;
+      if(action?._ === 'messageActionBoostApply') {
+        showBoostPopup(this.peerId);
+        return;
+      }
+    }
+  };
+
+  /**
+   * Where a reply in a post's discussion goes: one to the channel's post goes to its copy that starts the thread.
+   * With no such start at hand (an empty history, a first message that is no copy of the post) it goes where it points.
+   */
+  private async getDiscussionReplyTarget(peerId: PeerId, mid: number) {
+    const historyResult = await this.managers.appMessagesManager.getHistory({
+      peerId,
+      threadId: this.chat.threadId,
+      limit: 1,
+      offsetId: 1,
+      addOffset: -1
+    });
+
+    const firstMid = historyResult.history[0];
+    const message = firstMid ? this.chat.getMessageByPeer(peerId, firstMid) as Message.message : undefined;
+    return message?.fwd_from?.channel_post === mid ? {peerId: message.peerId, mid: message.mid} : {peerId, mid};
+  }
+
+  private openEmojiPackByTarget(stickerEmojiEl: HTMLElement) {
+    this.managers.appEmojiManager.getCustomEmojiDocument(stickerEmojiEl.dataset.docId).then((doc) => {
+      const attribute = doc.attributes.find((attribute) => attribute._ === 'documentAttributeCustomEmoji') as DocumentAttribute.documentAttributeCustomEmoji;
+      if(!attribute) {
+        return;
+      }
+
+      const inputStickerSet = attribute.stickerset as InputStickerSet.inputStickerSetID;
+      showStickersPopup(inputStickerSet, true, this.chat.input);
+    });
+  }
+
+  // * a photo or video the media viewer would open
+  private findMediaPeekTarget(target: HTMLElement) {
+    if(this.chat.type === ChatType.Logs) return;
+    // * a rich message's media is its page's, and the page has said what it shows
+    return isRichMessageTarget(target) ?
+      findRegisteredMediaPeekElement(target) :
+      target.closest<HTMLElement>('.album-item, .attachment.media-container, .webpage-preview.media-container');
+  }
+
+  private getMediaPeekSource(element: HTMLElement) {
+    const bubble = findUpClassName(element, 'bubble');
+    if(!bubble || bubble.classList.contains('story')) return;
+    const {fullMid, index} = getGroupedItemFullMid(bubble, element.classList.contains('album-item') ? element : undefined);
+    return getMessageMediaPeekSource(fullMid && this.chat.getMessage(fullMid), index === -1 ? undefined : index);
+  }
+
+  public checkTargetForMediaViewer(target: HTMLElement, e?: Event, mediaTimestamp?: number) {
+    const bubble = findUpClassName(target, 'bubble');
+    const documentDiv = findUpClassName(target, 'document-with-thumb');
+
+    // a rich message's media is not the message's own: its page opens the viewer for it
+    if(this.chat.type === ChatType.Logs || isRichMessageTarget(target)) return;
+
+    // Prevent recursive click event simulation
+
+    if((e as any)[SimulatedClickSymbol]) return;
+
+    const simulateClickEvent = (target: HTMLElement) => {
+      const event = getSimulatedEvent(CLICK_EVENT_NAME);
+      (event as any)[SimulatedClickSymbol] = true;
+      target.dispatchEvent(event);
+    };
+
+    // * the press is the download's, as one that opens the viewer is the viewer's: nothing after it may act on it
+    // * too - a web page's preview would follow its link, on a touch screen with the click that comes after the
+    // * press. A middle or right one (only a touch screen hands it here, on mousedown) has no click to come, nor has
+    // * one the app made itself (simulateClickEvent: a story link handing its activation on to the media)
+    const pressPreloader = (preloader: HTMLElement) => {
+      simulateClickEvent(preloader);
+      cancelEvent(e);
+      return !(e as MouseEvent).button && e.isTrusted;
+    };
+
+    let pollViewerTarget: HTMLElement | null
+    if(pollViewerTarget = target.closest('[data-poll-viewer-idx]')) {
+      const preloader = pollViewerTarget.querySelector<HTMLElement>('.preloader-container');
+      if(preloader && e) {
+        return pressPreloader(preloader);
+      }
+
+      const bubbleContext = this.contexts.get(bubble);
+      bubbleContext?.pollMessageContentControls?.openMediaViewer?.(+pollViewerTarget.dataset.pollViewerIdx);
+      return true;
+    } else if(target.closest('.poll-message-content')) {
+      return;
+    }
+
+    if(
+      (target.tagName === 'IMG' && !target.classList.contains('emoji') && !target.classList.contains('document-thumb')) ||
+      target.classList.contains('album-item') ||
+      target.classList.contains('album-item-media') ||
+      // || isVideoComponentElement
+      (target.tagName === 'VIDEO' && !bubble.classList.contains('round')) ||
+      (documentDiv && !documentDiv.querySelector('.preloader-container')) ||
+      target.closest('.video-no-thumbnail') ||
+      target.classList.contains('canvas-thumbnail')
+    ) {
+      const groupedItem = findUpClassName(target, 'album-item') || findUpClassName(target, 'document-container');
+      const preloader = (groupedItem || bubble).querySelector<HTMLElement>('.preloader-container');
+      if(preloader && e) {
+        return pressPreloader(preloader);
+      }
+
+      cancelEvent(e);
+      const {fullMid: fullMessageId, index: groupedItemIndex} = getGroupedItemFullMid(bubble, groupedItem);
+      let message = this.chat.getMessage(fullMessageId), isSponsored = false;
+      if(!message) {
+        if(splitFullMid(fullMessageId).mid < 0) {
+          message = (bubble as any).message;
+          isSponsored = true;
+        } else {
+          this.log.warn('no message by messageId:', fullMessageId);
+          return;
+        }
+      }
+
+      if(bubble.classList.contains('story')) {
+        const container = findUpAttribute(target, 'data-story-peer-id');
+        const storyPeerId = container.dataset.storyPeerId.toPeerId();
+        const storyId = +container.dataset.storyId;
+        hotReloadGuard.createStoriesViewerWithPeer({
+          target: () => container.querySelector('.media-container-aspecter') || target,
+          peerId: storyPeerId,
+          id: storyId
+        });
+        return;
+      }
+
+      const SINGLE_MEDIA_CLASSNAME = 'single-media';
+      const isSingleMedia = bubble.classList.contains(SINGLE_MEDIA_CLASSNAME);
+
+      const f = documentDiv ? (media: any) => {
+        return hotReloadGuard.AppMediaViewer.isMediaCompatibleForDocumentViewer(media);
+      } : (media: any) => {
+        return media._ === 'photo' || ['video', 'gif'].includes(media.type);
+      };
+
+      const skipSensitive = !this.chat.isSensitive && !isMessageSensitive(message);
+      const targets: {element: HTMLElement, mid: number, peerId: PeerId, fullMid: string, index?: number}[] = [];
+      const fullMids = isSingleMedia ? [fullMessageId] : this.getRenderedHistory('asc').map((fullMid) => {
+        const bubble = this.getBubble(fullMid);
+        if(!isSingleMedia && bubble.classList.contains(SINGLE_MEDIA_CLASSNAME)) {
+          return;
+        }
+
+        const message = this.chat.getMessage(fullMid);
+        const media = getMediaFromMessage(message);
+
+        if(skipSensitive && isMessageSensitive(message)) {
+          return;
+        }
+
+        return media && f(media) && fullMid;
+      }).filter(Boolean) as FullMid[];
+
+      fullMids.forEach((fullMid) => {
+        let bubble = this.skippedMids.has(fullMid) ? undefined : this.getBubble(fullMid);
+        if(!bubble) {
+          bubble = this.chatInner.querySelector(`.grouped-item:not(.album-item)[data-mid="${fullMid}"]`);
+          if(bubble) {
+            bubble = findUpClassName(bubble, 'bubble');
+          }
+        }
+
+        if(!bubble) {
+          return;
+        }
+
+        let selector: string;
+        if(documentDiv) {
+          selector = '.document-container';
+        } else {
+          const withTail = bubble.classList.contains('with-media-tail');
+          // selector = '.album-item video, .album-item img, .preview video, .preview img, ';
+          selector = '.album-item, .webpage-preview, ';
+          // selector = '.album-item, ';
+          if(withTail) {
+            selector += '.bubble__media-container';
+          } else {
+            selector += '.attachment';
+          }
+        }
+
+        const elements = Array.from(bubble.querySelectorAll(selector)) as HTMLElement[];
+        const parents: Set<HTMLElement> = new Set();
+        if(documentDiv) {
+          elements.forEach((element) => {
+            if(skipSensitive && isMessageSensitive(message)) {
+              return;
+            }
+
+            targets.push({
+              element: element.querySelector('.document-ico'),
+              mid: +element.dataset.mid,
+              peerId: this.peerId,
+              fullMid: getBubbleFullMid(element)
+            });
+          });
+        } else {
+          const hasAspecter = !!bubble.querySelector('.media-container-aspecter');
+          elements.forEach((element) => {
+            element = element.querySelector('video, img') || element;
+            if(hasAspecter && !findUpClassName(element, 'media-container-aspecter')) return;
+            const albumItem = findUpClassName(element, 'album-item');
+            const parent = albumItem || element.parentElement;
+            if(parents.has(parent)) return;
+            parents.add(parent);
+            const _fullMid = groupedItemIndex !== -1 ? fullMid : getBubbleFullMid(albumItem || element) || fullMid;
+            targets.push({
+              element,
+              mid: splitFullMid(_fullMid).mid,
+              peerId: this.peerId,
+              fullMid: _fullMid,
+              index: albumItem && +(albumItem.dataset.index ?? -1)
+            });
+          });
+        }
+      });
+
+      // * filter duplicates (can have them in grouped documents)
+      forEachReverse(targets, (target, idx, arr) => {
+        const foundIndex = arr.findIndex((t) => t.element === target.element);
+        if(foundIndex !== idx) {
+          arr.splice(foundIndex, 1);
+        }
+      });
+
+      // targets.sort((a, b) => a.mid - b.mid);
+
+      const idx = groupedItemIndex === -1 ? targets.findIndex((t) => t.fullMid === fullMessageId) : targets.findIndex((t) => t.index === groupedItemIndex);
+
+      if(DEBUG) {
+        this.log('open mediaViewer single with ids:', fullMids, idx, targets);
+      }
+
+      if(!targets[idx]) {
+        this.log('no target for media viewer!', target);
+        return;
+      }
+
+      new hotReloadGuard.AppMediaViewer(undefined, isSponsored)
+      .setSearchContext({
+        threadId: this.chat.threadId,
+        peerId: this.peerId,
+        monoforumThreadId: this.chat.monoforumThreadId,
+        inputFilter: {_: documentDiv ? 'inputMessagesFilterDocument' : 'inputMessagesFilterPhotoVideo'},
+        useSearch: this.chat.type !== ChatType.Scheduled && !isSingleMedia,
+        skipSensitive,
+        isScheduled: this.chat.type === ChatType.Scheduled
+      })
+      .openMedia({
+        message: message,
+        index: targets[idx].index,
+        target: targets[idx].element,
+        fromRight: 0,
+        reverse: true,
+        prevTargets: targets.slice(0, idx),
+        nextTargets: targets.slice(idx + 1),
+        mediaTimestamp
+      });
+      return true;
+    }
+  }
+
+  public async onGoDownClick() {
+    if(this.followStack.length) {
+      const middleware = this.getMiddleware();
+      const slice = this.followStack.slice();
+      const messages = await Promise.all(slice.map((fullMid) => this.chat.getMessage(fullMid)));
+      if(!middleware()) return;
+
+      // * one followed back to that is not rendered and was scrolled past is not one to go down to
+      const bottomPosition = this.getViewportBottomPosition();
+
+      slice.forEach((fullMid, idx) => {
+        const message = messages[idx];
+
+        const bubble = this.getBubble(fullMid);
+        let bad = true;
+        if(bubble) {
+          const rect = bubble.getBoundingClientRect();
+          bad = (windowSize.height / 2) > rect.top;
+        } else if(message) {
+          bad = this.isScrolledPast(fullMid, bottomPosition);
+        }
+
+        if(bad) {
+          this.followStack.splice(this.followStack.indexOf(fullMid), 1);
+        }
+      });
+    }
+
+    // * nothing followed back to, or all of it behind by now: down is the end
+    if(!this.followStack.length) {
+      this.chat.setMessageId();
+      return;
+    }
+
+    // ! WARNING
+    this.followStack.sort((a, b) => splitFullMid(b).mid - splitFullMid(a).mid);
+
+    const fullMid = this.followStack.pop();
+    const {mid} = splitFullMid(fullMid);
+    this.chat.setMessageId({lastMsgId: mid});
+  }
+
+  /**
+   * Where the newest bubble on screen stands in the history: its place in the list, not its id - an ephemeral one's
+   * is past them all; an ad inside a post is no item
+   */
+  private getViewportBottomPosition() {
+    const onScreen = this.getViewportSlice().visible;
+    for(let i = onScreen.length - 1; i >= 0; --i) {
+      const position = this.bubbleGroups.getItemByBubble(onScreen[i].element)?.timelineKey.position;
+      if(position !== undefined) {
+        return position;
+      }
+    }
+  }
+
+  /**
+   * A message whose bubble is not rendered and is not newer than the bottom of the screen (`getViewportBottomPosition`)
+   * was scrolled past: the viewport slice took it away above
+   */
+  private isScrolledPast(fullMid: FullMid, bottomPosition: number) {
+    return bottomPosition !== undefined && splitFullMid(fullMid).mid <= bottomPosition;
+  }
+
+  public getBubbleByPoint(verticalSide: 'top' | 'bottom') {
+    const slice = this.getViewportSlice();
+    const item = slice.visible[verticalSide === 'top' ? 0 : slice.visible.length - 1];
+    return item?.element;
+  }
+
+  public async getGroupedBubble(peerId: PeerId, groupId: string) {
+    const mids = await this.managers.appMessagesManager.getMidsByGroupedId(groupId);
+    for(const mid of mids) {
+      const fullMid = makeFullMid(peerId, mid);
+      const bubble = this.getBubble(fullMid);
+      if(bubble && !this.skippedMids.has(fullMid)) {
+        // const maxId = Math.max(...mids); // * because in scheduled album can be rendered by lowest mid during sending
+        return {
+          bubble,
+          peerId,
+          mid
+          // message: await this.chat.getMessage(maxId) as Message.message
+        };
+      }
+    }
+  }
+
+  /**
+   * An album comes one message at a time when its items come in updates of their own: an item whose album
+   * already has a bubble, on screen or on its way there, renders that bubble again with the items there are by
+   * now. Returns that render, false when the bubble has the item already, nothing when the item is not one
+   * of a rendered album.
+   */
+  private renderGroupedItem(message: MyMessage) {
+    const groupedId = (message as Message.message).grouped_id;
+    // the pinned list renders an album's items one by one
+    if(!groupedId || this.chat.type === ChatType.Pinned) {
+      return;
+    }
+
+    const messages = apiManagerProxy.getMessagesByGroupedId(groupedId);
+    for(const {mid} of messages) {
+      const fullMid = makeFullMid(message.peerId, mid);
+      const bubble = this.getBubble(fullMid);
+      if(!bubble || this.skippedMids.has(fullMid)) {
+        continue;
+      }
+
+      // by count: a send of one's own keeps its items while their temporary ids become the server's
+      if((bubble as BubbleElementAddons).groupedLength >= messages.length) {
+        return false;
+      }
+
+      return this.rerenderGroupedBubble(bubble, fullMid, getMainGroupedMessage(messages));
+    }
+  }
+
+  /**
+   * Renders an album's bubble, registered under `fullMid`, again with the items the album has now. When its
+   * first item is another one than before, the bubble goes by that one from now on, its grouping item too
+   * (one still on its way to a group gets it from the render below).
+   */
+  private rerenderGroupedBubble(bubble: HTMLElement, fullMid: FullMid, mainMessage: Message.message) {
+    if(fullMid !== makeFullMid(mainMessage)) {
+      if(this.bubbles[fullMid] === bubble) {
+        delete this.bubbles[fullMid];
+      }
+
+      this.updateGroupedMessage(bubble, mainMessage);
+    }
+
+    return this.safeRenderMessage({
+      message: mainMessage,
+      reverse: true,
+      bubble
+    });
+  }
+
+  public getBubbleGroupedItems(bubble: HTMLElement) {
+    return Array.from(bubble.querySelectorAll('.grouped-item')) as HTMLElement[];
+  }
+
+  public async getMountedBubble(fullMid: FullMid | Message.message | Message.messageService) {
+    let message: Message.message | Message.messageService, peerId: PeerId, mid: number;
+    if(typeof(fullMid) === 'string') {
+      const d = splitFullMid(fullMid);
+      peerId = d.peerId;
+      mid = d.mid;
+      message = this.chat.getMessageByPeer(peerId, mid);
+    } else {
+      message = fullMid;
+      peerId = message.peerId;
+      mid = message.mid;
+      fullMid = makeFullMid(peerId, mid);
+    }
+
+    if(!message) {
+      return;
+    }
+
+    const groupedId = (message as Message.message).grouped_id;
+    if(groupedId) {
+      const a = await this.getGroupedBubble(peerId, groupedId);
+      if(a) {
+        a.bubble = a.bubble.querySelector(`.document-container[data-mid="${mid}"]`) || a.bubble;
+        return a;
+      }
+    }
+
+    const bubble = this.getBubble(fullMid);
+    if(!bubble || this.skippedMids.has(fullMid)) return;
+
+    return {bubble, peerId, mid};
+  }
+
+  private findNextMountedBubbleByMsgId(fullMid: FullMid, prev?: boolean) {
+    if(this.chat.type === ChatType.Search) {
+      const fullMids = this.getRenderedHistory('desc', true);
+      const idx = fullMids.indexOf(fullMid);
+      if(idx === -1) return;
+      const nextFullMid = fullMids[idx + (prev ? -1 : 1)];
+      return this.getBubble(nextFullMid);
+    }
+
+    const fullMids = this.getRenderedHistory(prev ? 'desc' : 'asc', true);
+
+    let filterCallback: (_mid: FullMid) => boolean;
+    if(prev) filterCallback = (_mid) => splitFullMid(_mid).mid < splitFullMid(fullMid).mid;
+    else filterCallback = (_mid) => splitFullMid(fullMid).mid < splitFullMid(_mid).mid;
+
+    const foundMid = fullMids.find((fullMid) => {
+      if(!filterCallback(fullMid)) return false;
+      return !!this.getBubble(fullMid)?.parentElement;
+    });
+
+    return this.getBubble(foundMid);
+  }
+
+  private isMessageInCurrentThread(message: MyMessage) {
+    if(message.peerId !== this.peerId) {
+      return false;
+    }
+
+    if(
+      this.chat.threadId &&
+      getMessageThreadId(message, {
+        isForum: this.chat.isForum,
+        isBotforum: this.chat.isBotforum
+      }) !== this.chat.threadId
+    ) {
+      return false;
+    }
+
+    return !this.chat.monoforumThreadId ||
+      getMessageThreadId(message) === this.chat.monoforumThreadId;
+  }
+
+  private isTransientMessageInCurrentChat(message: MyMessage) {
+    return (
+      this.chat.type === ChatType.Chat ||
+      this.chat.type === ChatType.Discussion
+    ) && this.isMessageInCurrentThread(message);
+  }
+
+  private handleStreamedMessageUpdate(
+    message: Message.message,
+    initial: boolean,
+    onMessageEdit: (message: Message.message) => unknown
+  ) {
+    if(initial) {
+      // A streamed draft is a transient history overlay, not a new dialog message. In particular,
+      // it must never enter history_append: that path can navigate an unloaded chat to the bottom.
+      this.renderTransientHistoryMessage(message);
+      return;
+    }
+
+    const fullMid = makeFullMid(message);
+    if(this.renderingMessages.has(fullMid)) {
+      // `renderMessage` can await before mounting the Solid body (for example while resolving a
+      // group read cursor). Keep only the latest revision and reconcile it as soon as that render
+      // settles instead of starting a competing render that `safeRenderMessage` would discard.
+      this.pendingStreamedMessageUpdates.set(fullMid, message);
+      return;
+    }
+
+    onMessageEdit(message);
+  }
+
+  private reconcilePendingStreamedMessageUpdate(fullMid: FullMid) {
+    const pending = this.pendingStreamedMessageUpdates;
+    const message = pending?.get(fullMid);
+    if(!message) return;
+    pending.delete(fullMid);
+
+    if(!this.isTransientMessageInCurrentChat(message)) return;
+    const bubble = this.getBubble(fullMid);
+    if(bubble) {
+      if(!this.updateSolidMessageBody(bubble, message)) {
+        void this.safeRenderMessage({message, bubble});
+      }
+      return;
+    }
+
+    // The initial render may have rejected after the revision was queued. Retry from the latest
+    // manager snapshot; a later peer cleanup clears the pending map before this point.
+    this.renderTransientHistoryMessage(message);
+  }
+
+  private renderTransientHistoryMessage(message: MyMessage, reloadEphemeralHistory = false) {
+    if(!this.isTransientMessageInCurrentChat(message)) {
+      return;
+    }
+
+    if(!this.scrollable.loadedAll.bottom || !this.chatInner.parentElement) {
+      if(reloadEphemeralHistory) {
+        this.ephemeralHistoryLoaded = false;
+        ++this.ephemeralHistoryGeneration;
+      }
+      return;
+    }
+
+    if(liteMode.isAvailable('chat_background')) {
+      this.updateGradient = true;
+    }
+
+    const middleware = this.getMiddleware();
+    const scrolledDown = this.scrolledDown || this.scrollable.isScrolledToEnd;
+    void this.renderNewMessage(message, scrolledDown).then(() => {
+      if(middleware()) {
+        this.updateHasMessages();
+      }
+    });
+  }
+
+  private hasRenderedEphemeralMessages() {
+    return this.bubbleGroups.itemsArr.some(({message}) => isEphemeralMessage(message));
+  }
+
+  private requestEphemeralHistory() {
+    const peerId = this.peerId;
+    const threadId = this.chat.threadId || undefined;
+    const generation = this.ephemeralHistoryGeneration;
+    const promise = this.managers.appMessagesManager.getEphemeralHistory({peerId, threadId});
+    promise.catch(noop);
+    return {peerId, threadId, generation, promise};
+  }
+
+  private getEphemeralHistoryMessages() {
+    if(this.ephemeralHistoryPromise) {
+      return this.ephemeralHistoryPromise;
+    }
+
+    const middleware = this.getMiddleware();
+    const peerId = this.peerId;
+    const generation = this.ephemeralHistoryGeneration;
+    // * the one an opening asked for along with its history, if it is still this chat's
+    const opening = this.openingEphemeralHistory;
+    this.openingEphemeralHistory = undefined;
+    const request = opening?.peerId === peerId && opening.threadId === (this.chat.threadId || undefined) &&
+      opening.generation === generation ? opening : this.requestEphemeralHistory();
+    const promise: Promise<MyEphemeralMessage[]> = request.promise.then((mids) => {
+      if(!middleware() || peerId !== this.peerId) {
+        return [];
+      }
+
+      this.ephemeralHistoryLoaded = generation === this.ephemeralHistoryGeneration;
+      return mids
+        .map((mid) => this.chat.getMessageByPeer(peerId, mid))
+        .filter((message): message is MyEphemeralMessage => (
+          isEphemeralMessage(message) &&
+          this.isMessageInCurrentThread(message)
+        ));
+    }).catch((err) => {
+      this.log.error('load ephemeral history error', err);
+      return [] as MyEphemeralMessage[];
+    });
+
+    this.ephemeralHistoryPromise = promise;
+    void promise.finally(() => {
+      if(this.ephemeralHistoryPromise === promise) {
+        this.ephemeralHistoryPromise = undefined;
+      }
+    });
+
+    return promise;
+  }
+
+  private loadEphemeralHistory() {
+    if(
+      this.ephemeralHistoryLoaded ||
+      !this.scrollable.loadedAll.bottom ||
+      !this.chatInner.parentElement ||
+      (this.chat.type !== ChatType.Chat && this.chat.type !== ChatType.Discussion)
+    ) {
+      return this.ephemeralHistoryPromise;
+    }
+
+    const middleware = this.getMiddleware();
+    return this.getEphemeralHistoryMessages().then(async(messages) => {
+      messages = messages.filter((message) => this.isMessageInCurrentThread(message));
+      const scrolledDown = this.scrolledDown || this.scrollable.isScrolledToEnd;
+      await Promise.all(messages.map((message) => (
+        this.renderNewMessage(message, scrolledDown)
+      )));
+      if(!middleware()) {
+        return;
+      }
+
+      this.updateHasMessages();
+      this.scrollable.onScroll();
+    });
+  }
+
+  public getRenderedHistory(
+    sort: 'asc' | 'desc' = 'desc',
+    clearLocal?: boolean,
+    clearOutgoing = clearLocal
+  ) {
+    let history = flatten(
+      this.bubbleGroups.groups.map((group) => group.items.map((item) => this.makeFullMid(item.message)))
+    );
+
+    if(sort === 'asc') {
+      history.reverse();
+    }
+
+    if(clearLocal || clearOutgoing) {
+      history = history.filter((fullMid) => {
+        const {peerId, mid} = splitFullMid(fullMid);
+        const isEphemeral = isEphemeralMessageId(mid) ||
+          isEphemeralMessage(this.chat.getMessageByPeer(peerId, mid));
+        return (
+          (!clearLocal || (mid > 0 && !isEphemeral)) &&
+          (!clearOutgoing || clearMessageId(mid, false) === mid)
+        );
+      });
+    }
+
+    return history;
+  }
+
+  public loadMoreHistory(top: boolean, justLoad = false) {
+    // this.log('loadMoreHistory', top);
+    if(
+      !this.peerId ||
+      /* TEST_SCROLL || */
+      this.chat.setPeerPromise ||
+      this.firstScreenRestPromise ||
+      this.isHeavyAnimationInProgress ||
+      (top && (this.getHistoryTopPromise || this.scrollable.loadedAll.top)) ||
+      (!top && (this.getHistoryBottomPromise || this.scrollable.loadedAll.bottom))
+    ) {
+      return;
+    }
+
+    const history = this.getRenderedHistory('asc', true);
+
+    if(!history.length) {
+      history.push(EMPTY_FULL_MID);
+    }
+
+    if(top) {
+      if(DEBUG) {
+        this.log('Will load more (up) history by id:', history[0], 'maxId:', history[history.length - 1], justLoad/* , history */);
+      }
+
+      this.getHistory1(history[0], true, undefined, undefined, justLoad, undefined, undefined, true);
+    } else {
+      // let dialog = this.appMessagesManager.getDialogByPeerId(this.peerId)[0];
+      // const historyMaxId = await this.chat.getHistoryMaxId();
+
+      // // if scroll down after search
+      // if(history.indexOf(historyMaxId) !== -1) {
+      //   this.setLoaded('bottom', true);
+      //   return;
+      // }
+
+      if(DEBUG) {
+        this.log('Will load more (down) history by id:', history[history.length - 1], justLoad/* , history */);
+      }
+
+      this.getHistory1(history[history.length - 1], false, true, undefined, justLoad, undefined, undefined, true);
+    }
+  }
+
+  private onScroll = (ignoreHeavyAnimation?: boolean, scrollDimensions?: ScrollStartCallbackDimensions, forceDown?: boolean) => {
+    // return;
+
+    if(this.isHeavyAnimationInProgress) {
+      this.sliceViewportDebounced?.clearTimeout();
+
+      // * В таком случае, кнопка не будет моргать если чат в самом низу, и правильно отработает случай написания нового сообщения и проскролла вниз
+      if(this.scrolledDown && !ignoreHeavyAnimation) {
+        return;
+      }
+    } else {
+      this.chat.topbar.pinnedMessage?.setCorrectIndexThrottled(this.scrollable.lastScrollDirection);
+      this.sliceViewportDebounced?.();
+      this.setStickyDateManually();
+    }
+
+    // lottieLoader.checkAnimations(false, 'chat');
+
+    if(scrollDimensions && scrollDimensions.distanceToEnd < SCROLLED_DOWN_THRESHOLD && this.scrolledDown) {
+      return;
+    }
+
+    const distanceToEnd = forceDown ? 0 : scrollDimensions?.distanceToEnd ?? this.scrollable.getDistanceToEnd();
+    if(/* !IS_TOUCH_SUPPORTED &&  */(this.scrollable.lastScrollDirection !== 0 && distanceToEnd > 0) || scrollDimensions || forceDown) {
+    // if(/* !IS_TOUCH_SUPPORTED &&  */(this.scrollable.lastScrollDirection !== 0 || scrollDimensions) && distanceToEnd > 0) {
+      if(this.isScrollingTimeout) {
+        clearTimeout(this.isScrollingTimeout);
+      } else if(!this.chatInner.classList.contains('is-scrolling')) {
+        this.chatInner.classList.add('is-scrolling');
+      }
+
+      this.isScrollingTimeout = window.setTimeout(() => {
+        this.chatInner.classList.remove('is-scrolling');
+        this.isScrollingTimeout = 0;
+      }, 1350 + (scrollDimensions?.duration ?? 0));
+    }
+
+    if(distanceToEnd < SCROLLED_DOWN_THRESHOLD && (forceDown || this.scrollable.loadedAll.bottom || this.chat.setPeerPromise || !this.peerId)) {
+      this.container.classList.add('scrolled-down');
+      this.scrolledDown = true;
+    } else if(this.container.classList.contains('scrolled-down')) {
+      this.container.classList.remove('scrolled-down');
+      this.scrolledDown = false;
+    }
+    this.updateGoDownVisibility();
+
+    this.checkIntersectingVideos();
+
+    // Recompute visible ranges (also on programmatic scroll); user-activity is fed only by real
+    // input events, so the scroll handler intentionally does NOT register activity here.
+    this.scheduleReadMetricsBatch();
+  };
+
+  private checkIntersectingVideos() {
+    if(!USE_VIDEO_OBSERVER) {
+      return;
+    }
+
+    const intersecting = this.observer?.getIntersecting();
+    if(!intersecting) {
+      return;
+    }
+
+    const videos = Array.from(intersecting).filter((el) => el instanceof HTMLVideoElement && el.mini);
+    const centerY = videos.length ? windowSize.height / 2 : 0;
+    const distances = videos.map((video) => {
+      const bubble = findUpClassName(video, 'bubble');
+      const rect = video.getBoundingClientRect();
+      const rectBubble = bubble.getBoundingClientRect();
+      const distanceToVerticalCenter = Math.abs(rect.top + rect.height / 2 - centerY);
+      let distanceBubbleToVerticalCenter = rectBubble.top > centerY ? rectBubble.top - centerY : centerY - rectBubble.bottom;
+      if(rectBubble.top < centerY && rectBubble.bottom > centerY) { // * if bubble is in the center
+        distanceBubbleToVerticalCenter = 0;
+      }
+      return {
+        video,
+        rect,
+        /* , bubble */
+        distance: distanceToVerticalCenter,
+        distanceBubble: distanceBubbleToVerticalCenter
+      };
+    }).sort((a, b) => a.distance - b.distance);
+    let closest = distances[0];
+    if(this.scrolledDown && closest) { // * if it's the last message
+      distances.sort((a, b) => b.rect.bottom - a.rect.bottom);
+      closest = distances[0];
+    } else if(closest && closest.distance > 150 && closest.distanceBubble > 150) {
+      closest = undefined;
+    }
+
+    const video = closest?.video as HTMLVideoElement;
+    if(this.lastPlayingVideo !== video) {
+      const animationItem = animationIntersector.getAnimations(this.lastPlayingVideo)[0];
+      if(animationItem) {
+        animationIntersector.toggleItemLock(animationItem, true);
+        this.lastPlayingVideo.pause();
+      }
+
+      this.lastPlayingVideo = video;
+
+      if(video) {
+        // console.log('video', video);
+        const animationItem = animationIntersector.getAnimations(video)[0];
+        animationIntersector.toggleItemLock(animationItem, false);
+        safePlay(video);
+      }
+    }
+  }
+
+  private onVideoLoad = async() => {
+    if(!USE_VIDEO_OBSERVER) {
+      return;
+    }
+
+    await getHeavyAnimationPromise();
+    await doubleRaf();
+    if(this.lastPlayingVideo) {
+      return;
+    }
+    this.checkIntersectingVideos();
+  };
+
+  public setScroll() {
+    if(this.scrollable) {
+      this.destroyScrollable();
+    }
+
+    this.scrollable = new Scrollable(null, 'IM', /* 10300 */300);
+    this.scrollable.container.classList.add('bubbles-scrollable');
+    // The history is one of the scrolls that has to be in the tab order — it is
+    // where the arrows scroll the conversation rather than reaching the composer
+    // (see `shouldPreserveKeyboardFocus`). A stop with no role and no name
+    // announces nothing when it is reached, so it carries both.
+    if(Modes.a11y) this.scrollable.container.tabIndex = 0;
+    this.scrollable.container.setAttribute('role', 'region');
+    this.scrollable.container.setAttribute('aria-label', I18n.format('AccDescr.MessageHistory', true));
+    this.setLoaded('top', false, false);
+    this.setLoaded('bottom', false, false);
+
+    this.paddingTop = document.createElement('div');
+    this.paddingTop.classList.add('bubbles-padding', 'bubbles-padding-top');
+    this.paddingTop.style.height = this.chat.chatPaddingTop[0]() + 'px';
+
+    this.paddingBottom = document.createElement('div');
+    this.paddingBottom.classList.add('bubbles-padding', 'bubbles-padding-bottom');
+    this.paddingBottom.style.height = this.chat.chatPaddingBottom[0]() + 'px';
+
+    this.scrollable.container.append(this.paddingTop, this.chatInner, this.paddingBottom);
+
+    /* const getScrollOffset = () => {
+      //return Math.round(Math.max(300, appPhotosManager.windowH / 1.5));
+      return 300;
+    };
+
+    window.addEventListener('resize', () => {
+      this.scrollable.onScrollOffset = getScrollOffset();
+    });
+
+    this.scrollable = new Scrollable(this.bubblesContainer, 'y', 'IM', this.chatInner, getScrollOffset()); */
+
+    this.scrollable.onAdditionalScroll = this.onScroll;
+    this.scrollable.onScrolledTop = () => this.loadMoreHistory(true);
+    this.scrollable.onScrolledBottom = () => this.loadMoreHistory(false);
+    // Keep the reflow anchor fresh so a window/PiP-window resize re-pins the user's real scroll
+    // position. Dedicated listener (not via onScroll) so it fires reliably on every scroll.
+    this.listenerSetter.add(this.scrollable.container)('scroll', this.saveReflowScrollDebounced, {passive: true});
+    // this.scrollable.attachSentinels(undefined, 300);
+
+    if(IS_TOUCH_SUPPORTED && false) {
+      this.scrollable.container.addEventListener('touchmove', () => {
+        if(this.isScrollingTimeout) {
+          clearTimeout(this.isScrollingTimeout);
+        } else if(!this.chatInner.classList.contains('is-scrolling')) {
+          this.chatInner.classList.add('is-scrolling');
+        }
+      }, {passive: true});
+
+      this.scrollable.container.addEventListener('touchend', () => {
+        if(!this.chatInner.classList.contains('is-scrolling')) {
+          return;
+        }
+
+        if(this.isScrollingTimeout) {
+          clearTimeout(this.isScrollingTimeout);
+        }
+
+        this.isScrollingTimeout = window.setTimeout(() => {
+          this.chatInner.classList.remove('is-scrolling');
+          this.isScrollingTimeout = 0;
+        }, 1350);
+      }, {passive: true});
+    }
+  }
+
+  public updateUnreadByDialog() {
+    const historyStorage = this.chat.getHistoryStorage();
+    const maxId = this.peerId === rootScope.myId ? historyStorage.readMaxId : historyStorage.readOutboxMaxId;
+
+    for(const mid of this.unreadOut) {
+      if(mid > 0 && mid <= maxId) {
+        const fullMid = makeFullMid(this.peerId, mid);
+        const bubble = this.getBubble(fullMid);
+        if(!bubble) {
+          continue;
+        }
+
+        this.unreadOut.delete(mid);
+
+        if(bubble.classList.contains('is-outgoing') || bubble.classList.contains('is-error')) {
+          continue;
+        }
+
+        this.setBubbleSendingStatus(bubble, 'read');
+      }
+    }
+  }
+
+  /**
+   * The observers let go of a bubble taken out of the list - deleted, or replaced by one rendered anew (that one
+   * registers its own as it renders). The observer holds what it watches: a bubble ejected still watched stayed in
+   * memory, with its DOM, until the chat was left. What is watched to be read may be the bubble's time (a post's)
+   */
+  private unobserveBubble(bubble: HTMLElement) {
+    const {observer} = this;
+    if(!observer) {
+      return;
+    }
+
+    for(const target of [bubble, bubble.timeSpan]) {
+      if(!target) continue;
+      observer.unobserve(target, this.unreadedObserverCallback);
+      this.unreaded.delete(target);
+      observer.unobserve(target, this.unreadedContentObserverCallback);
+      this.unreadedContent.delete(target);
+    }
+
+    observer.unobserve(bubble, this.viewsObserverCallback);
+    observer.unobserve(bubble, this.readMetricsObserverCallback);
+    this.readMetricsBubbles.delete(bubble);
+    observer.unobserve(bubble, this.stickerEffectObserverCallback);
+    observer.unobserve(bubble, this.messageEffectObserverCallback);
+    observer.unobserve(bubble, this.guestChatHintObserverCallback);
+  }
+
+  /** Takes a bubble out for good (`ejectBubble`), its observers letting it go first */
+  private ejectWatchedBubble(bubble: HTMLElement) {
+    this.unobserveBubble(bubble);
+    ejectBubble(bubble);
+  }
+
+  public destroyBubble(
+    bubble: HTMLElement,
+    animate?: boolean,
+    fullMid = getBubbleFullMid(bubble)
+  ) {
+    const replacement = this.findPendingBubbleReplacement(bubble);
+    if(replacement) {
+      const {candidate, transaction} = replacement;
+      this.bubblesToReplace.delete(candidate);
+      if(this.bubbles[transaction.fullMid] === candidate) {
+        delete this.bubbles[transaction.fullMid];
+      }
+      this.skippedMids.delete(transaction.fullMid);
+      this.bubbleGroups.changeBubbleByBubble(candidate, transaction.source);
+      this.hiddenLinksPendingBubbles.delete(candidate);
+      this.ejectWatchedBubble(candidate);
+      bubble = transaction.source;
+      fullMid = getBubbleFullMid(bubble) || fullMid;
+    }
+
+    let placeholder: HTMLElement, canBeDeleted: {
+      element: HTMLElement,
+      parentElement: HTMLElement,
+      index: number,
+      rect: DOMRect,
+      marginBottom?: number,
+      previousElement?: HTMLElement,
+      previousSameKindElement?: HTMLElement
+    }[], wasScrollSize: number, padding: ReturnType<ChatBubbles['setTopPadding']>;
+    if(animate && bubble.isConnected) {
+      const goodSelectors: string[] = ['.bubbles-date-group', '.bubbles-group', '.bubble'];
+      canBeDeleted = [bubble, ...getParents(bubble, goodSelectors[0])].map((element, idx, arr) => {
+        const length = arr.length;
+        const selectors = goodSelectors.slice(0, length - idx);
+        const sameKind = Array.from(arr[length - 1].parentElement.querySelectorAll<HTMLElement>(selectors.join(' ')));
+        const previousSameKindElement = sameKind[sameKind.indexOf(element) - 1];
+        return {
+          element,
+          parentElement: element.parentElement,
+          index: whichChild(element, false),
+          rect: element.getBoundingClientRect(),
+          previousElement: element.previousElementSibling as HTMLElement,
+          marginBottom: parseInt(window.getComputedStyle(element).marginBottom),
+          previousSameKindElement
+        };
+      });
+
+      padding = this.setTopPadding();
+      wasScrollSize = this.scrollable.scrollSize;
+      placeholder = document.createElement('div');
+      placeholder.classList.add('bubble-delete-placeholder');
+    }
+
+    // this.log.warn('destroy bubble', bubble, mid);
+
+    /* const mounted = this.getMountedBubble(mid);
+    if(!mounted) return; */
+
+    if(this.getBubble(fullMid) === bubble) { // have to check because can clear bubble with same id later
+      delete this.bubbles[fullMid];
+    }
+
+    this.skippedMids.delete(fullMid);
+    this.hiddenLinksPendingBubbles.delete(bubble);
+
+    if(this.firstUnreadBubble === bubble) {
+      this.firstUnreadBubble = null;
+    }
+
+    const scrollSaver = canBeDeleted && this.createScrollSaver(false);
+    scrollSaver?.save();
+
+    this.bubbleGroups.removeAndUnmountBubble(bubble);
+    if(this.observer) {
+      this.unobserveBubble(bubble);
+      this.viewsMids.delete(fullMid);
+    }
+
+    bubble.timeAppenders = bubble.timeSpan = undefined;
+
+    if(canBeDeleted) {
+      let deletingItem: typeof canBeDeleted[0];
+      canBeDeleted.forEach((item) => {
+        if(!item.element.parentElement) {
+          deletingItem = item;
+        }
+      });
+
+      const height = wasScrollSize - this.scrollable.scrollSize;
+      const isDeletingOnlyBubble = deletingItem === canBeDeleted[0];
+      const isGroupLastBubble = bubble.classList.contains('is-group-last');
+      const isGroupFirstBubble = bubble.classList.contains('is-group-first');
+
+      placeholder.style.cssText = `width: 100%; height: ${height}px;`;
+      // top is in the remover container's coordinate system — the container fills .bubbles
+      // which extends past the visible viewport via inset-block: -page-chats-padding.
+      const removerRect = this.remover.parentElement.getBoundingClientRect();
+      deletingItem.element.style.cssText = `position: absolute; z-index: 0; left: 0; right: 0; top: ${deletingItem.rect.top - removerRect.top}px; height: ${deletingItem.rect.height}px;`;
+
+      this.remover.append(deletingItem.element);
+
+      canBeDeleted.forEach((item) => {
+        if(!item.element.parentElement) {
+          positionElementByIndex(item.element, item.parentElement, item.index, -1);
+        }
+      });
+
+      // * if joined groups that were splitted before with this bubble, let's insert placeholder inside of a new group
+      if(deletingItem.previousElement && !deletingItem.previousElement.parentElement && canBeDeleted[0].previousSameKindElement) {
+        canBeDeleted[0].previousSameKindElement.after(placeholder);
+      } else {
+        positionElementByIndex(placeholder, deletingItem.parentElement, deletingItem.index, -1);
+      }/*  else if(canBeDeleted[0].nextSameKindElement) {
+        canBeDeleted[0].nextSameKindElement.before(placeholder);
+      } */
+
+      // if(false && isDeletingOnlyBubble && isGroupLastBubble && !isGroupFirstBubble) {
+      //   canBeDeleted[1].element.after(placeholder);
+      // } else if(deletingItem.previousElement?.parentElement) {
+      //   deletingItem.previousElement.after(placeholder);
+      // } else if(deletingItem.nextElement?.parentElement) {
+      //   deletingItem.nextElement.before(placeholder);
+      // } else {
+      //   positionElementByIndex(placeholder, deletingItem.parentElement, deletingItem.index, -1);
+      // }
+
+      scrollSaver.restore();
+      scrollSaver.save(); // * save again after moving elements
+
+      const {duration, easing} = getTransition('standard');
+      const options: KeyframeAnimationOptions = {duration, fill: 'forwards', easing};
+
+      // const contentWrapper = bubble.querySelector<HTMLElement>('.bubble-content-wrapper');
+      // const bubbleDeleteKeyframe: Keyframe = {transform: 'scale(0)'};
+      // const bubbleDeleteKeyframe: Keyframe = {transform: `translateX(${3 * (bubble.classList.contains('is-out') ? 1 : -1)}rem)`};
+      // const avatarContainer = isDeletingOnlyBubble && isGroupLastBubble && !isGroupFirstBubble && deletingItem.parentElement.querySelector<HTMLElement>('.bubbles-group-avatar-container');
+      const avatarContainer = isDeletingOnlyBubble && isGroupLastBubble && !isGroupFirstBubble && deletingItem.parentElement.querySelector<HTMLElement>('.bubbles-group-avatar');
+      // const avatarForDeletion = isGroupLastBubble && isGroupFirstBubble && bubble.parentElement.querySelector<HTMLElement>('.bubbles-group-avatar');
+      // false && [contentWrapper, avatarForDeletion].filter(Boolean).forEach((element) => {
+      //   element.style.transformOrigin = `var(--transform-origin-inline-${bubble.classList.contains('is-out') ? 'end' : 'start'}) top`;
+      // });
+      // * fix jumping floating avatar when height reaches 0px
+      const placeholderAnimation = placeholder.animate([/* {height: `${rect.height}px`},  */{height: '0.01px', marginBottom: '0px'}], options);
+      const deletionAnimation = deletingItem.element.animate([/* {opacity: 1},  */{/* filter: 'blur(8px)',  */opacity: 0/* , ...(isDeletingOnlyBubble ? bubbleDeleteKeyframe : {}) */}], options);
+      // const bubbleDeletionAnimation = /* deletingItem !== canBeDeleted[0] &&  */false && contentWrapper.animate([bubbleDeleteKeyframe], options);
+      // const avatarDeletionAnimation = false && avatarForDeletion && avatarForDeletion.animate([bubbleDeleteKeyframe], options);
+      // const avatarAnimation = avatarContainer ? avatarContainer.animate([{transform: `translateY(0px)`}, {transform: `translateY(-${deletingItem.marginBottom}px)`}], {...options/* , duration: +options.duration + 2000, fill: 'auto' */}) : undefined;
+      const avatarAnimation = avatarContainer ? avatarContainer.animate([{transform: `translateY(-${deletingItem.marginBottom}px)`}, {transform: `translateY(-${deletingItem.marginBottom}px)`}], options) : undefined;
+      // const avatarAnimation = avatarContainer && avatarContainer.animate([{bottom: `0px`}, {bottom: `${deletingItem.marginBottom}px`}], {...options, duration: +options.duration + 200, fill: 'auto'});
+      const promises = [placeholderAnimation, deletionAnimation, avatarAnimation/* , bubbleDeletionAnimation, avatarDeletionAnimation */].filter(Boolean).map((animation) => animation.finished);
+      const promise = Promise.all(promises).then(() => {
+        placeholder.remove();
+        deletingItem.element.remove();
+        avatarAnimation?.cancel();
+        bubble.middlewareHelper.destroy();
+        getHeavyAnimationPromise().then(() => {
+          padding.unsetPadding?.();
+        });
+      });
+
+      this.animateSomethingWithScroll(promise, scrollSaver, placeholder);
+    } else {
+      bubble.middlewareHelper.destroy();
+    }
+
+    // this.reactions.delete(mid);
+  }
+
+  public animateSomethingWithScroll(promise: Promise<any>, scrollSaver?: ScrollSaver, resizeTarget?: Element) {
+    if(!scrollSaver) {
+      scrollSaver = this.createScrollSaver(true);
+      scrollSaver.save();
+    }
+
+    animateSomethingWithScroll(promise, this.scrollable, scrollSaver, resizeTarget);
+  }
+
+  public deleteMessagesByIds(fullMids: FullMid[], permanent = true, ignoreOnScroll?: boolean) {
+    fullMids = fullMids.filter((fullMid) => {
+      return !!this.getBubble(fullMid);
+    });
+
+    if(!fullMids.length) {
+      return;
+    }
+
+    const rendered = this.getRenderedHistory('desc');
+    const indexes: Record<FullMid, number> = {};
+    rendered.forEach((mid, idx) => indexes[mid] = idx);
+
+    fullMids
+    .slice()
+    .sort((a, b) => (indexes[a] ?? 0) - (indexes[b] ?? 0))
+    .forEach((fullMid) => {
+      const bubble = this.getBubble(fullMid);
+      this.destroyBubble(bubble, permanent && liteMode.isAvailable('animations'));
+    });
+
+    this.scrollable.ignoreNextScrollEvent();
+    if(permanent && this.chat.selection.isSelecting) {
+      let releaseBatch: () => void;
+      fullMids.forEach((fullMid) => {
+        const {peerId, mid} = splitFullMid(fullMid);
+        releaseBatch = this.chat.selection.deleteSelectedMids(peerId, [mid], true);
+      });
+      releaseBatch?.();
+    }
+
+    animationIntersector.checkAnimations(false, this.chat.animationGroup);
+    this.deleteEmptyDateGroups();
+
+    if(!ignoreOnScroll) {
+      this.scrollable.onScroll();
+      // this.onScroll();
+    }
+  }
+
+  private pollExtendedMediaMessages() {
+    // * of what can be seen, as tdesktop polls the items it paints: not of a chat another one is opened over, nor of
+    // * one whose column a phone has left for the chat list or the profile (a preview stands by itself, over the
+    // * others), nor in a hidden tab - the next round asks once it is seen again
+    const {appImManager} = this.chat;
+    const isOffScreen = appImManager.chats.includes(this.chat) &&
+      (appImManager.chat !== this.chat || !appImManager.isChatColumnShown());
+    if(isOffScreen || getAppWindow().document.hidden) {
+      return;
+    }
+
+    // * of the list on screen: one on its way out keeps its bubbles, and their mids, until it is taken out
+    const mids = Array.from(this.extendedMediaMessages).filter((mid) => this.getBubble(this.peerId, mid));
+    return mids.length ? this.managers.appMessagesManager.getExtendedMedia(this.peerId, mids) : undefined;
+  }
+
+  /**
+   * Paid media not bought yet is asked for every 30 seconds while bubbles of it are rendered and seen (tdesktop's
+   * `ViewsManager::pollExtendedMedia`): what is bought comes as updates. A round that failed is over too
+   */
+  private setExtendedMediaMessagesPollInterval() {
+    if(this.pollExtendedMediaMessagesPromise || !this.extendedMediaMessages.size) {
+      return;
+    }
+
+    this.pollExtendedMediaMessagesPromise = pause(30000)
+    .then(() => this.pollExtendedMediaMessages())
+    .catch(noop)
+    .then(() => {
+      this.pollExtendedMediaMessagesPromise = undefined;
+      this.setExtendedMediaMessagesPollInterval();
+    });
+  }
+
+  private setTopPadding(middleware = this.getMiddleware()) {
+    let isPaddingNeeded = false;
+    let setPaddingTo: HTMLElement;
+    if(!this.isTopPaddingSet && this.chat.type !== ChatType.Scheduled) {
+      const {clientHeight, scrollHeight} = this.scrollable.container;
+      isPaddingNeeded = clientHeight === scrollHeight;
+      /* const firstEl = this.chatInner.firstElementChild as HTMLElement;
+      if(this.chatInner.firstElementChild) {
+        const visibleRect = getVisibleRect(firstEl, this.scrollable.container);
+        isPaddingNeeded = !visibleRect.overflow.top && (visibleRect.rect.top - firstEl.offsetTop) !== this.scrollable.container.getBoundingClientRect().top;
+      } else {
+        isPaddingNeeded = true;
+      } */
+
+      if(isPaddingNeeded) {
+        /* const add = clientHeight - scrollHeight;
+        this.chatInner.style.paddingTop = add + 'px';
+        this.scrollable.scrollTop += add; */
+        // * on top of the list's least height (`.bubbles-inner` is `content-box`): what fills the list, the
+        // * unknown user's card, keeps its height
+        setPaddingTo = this.chatInner;
+        setPaddingTo.style.paddingTop = clientHeight + 'px';
+        this.scrollable.setScrollPositionSilently(scrollHeight);
+        this.isTopPaddingSet = true;
+      }
+    }
+
+    return {
+      isPaddingNeeded,
+      unsetPadding: isPaddingNeeded ? () => {
+        if(!middleware()) {
+          return;
+        }
+
+        setPaddingTo.style.paddingTop = '';
+        this.isTopPaddingSet = false;
+      } : undefined
+    };
+  }
+
+  private renderNewMessage(message: MyMessage, scrolledDown?: boolean, sendFlight?: SendFlight) {
+    const promise = this._renderNewMessage(message, scrolledDown, sendFlight);
+    this.renderNewPromises.add(promise);
+    promise.catch(noop).finally(() => {
+      this.renderNewPromises.delete(promise);
+      // a message that is not shown at the end of the list after all does not fly
+      if(sendFlight && !sendFlight.launched) {
+        sendFlight.abort(true);
+      }
+    });
+    return promise;
+  }
+
+  private async _renderNewMessage(message: MyMessage, scrolledDown?: boolean, sendFlight?: SendFlight) {
+    if(!this.scrollable.loadedAll.bottom) { // seems search active or sliced
+      // this.log('renderNewMessagesByIds: seems search is active, skipping render:', mids);
+      const setPeerPromise = this.chat.setPeerPromise;
+      if(setPeerPromise) {
+        const middleware = this.getMiddleware();
+        setPeerPromise.then(() => {
+          if(!middleware()) return;
+          const newMessage = this.chat.getMessageByPeer(message.peerId, message.mid);
+          this.renderNewMessage(newMessage);
+        });
+      }
+
+      return;
+    }
+
+    if(this.chat.threadId && getMessageThreadId(message, {isForum: this.chat.isForum}) !== this.chat.threadId) {
+      return;
+    }
+
+    if(this.chat.monoforumThreadId && getMessageThreadId(message) !== this.chat.monoforumThreadId) return;
+
+    const {savedReaction} = this.chat;
+    if(savedReaction?.length) {
+      const {reactions} = message as Message.message;
+      const foundReaction = reactions?.results && savedReaction.every((reaction) => {
+        return reactions.results.some((reactionCount) => reactionsEqual(reactionCount.reaction, reaction));
+      });
+
+      if(!foundReaction) {
+        return;
+      }
+    }
+
+    const fullMid = makeFullMid(message);
+    if(this.getBubble(fullMid)) {
+      return;
+    }
+
+    const groupedBubbleRender = this.renderGroupedItem(message);
+    if(groupedBubbleRender === false) {
+      return;
+    }
+    // ! should scroll even without new messages
+    /* if(!mids.length) {
+      return;
+    } */
+
+    const isSponsored = message._ === 'message' && message.pFlags.sponsored;
+    if(isSponsored) {
+      scrolledDown = false;
+    } else if(!scrolledDown) {
+      scrolledDown = this.scrolledDown && (
+        !this.scrollingToBubble ||
+        this.scrollingToBubble === this.getLastBubble() ||
+        this.scrollingToBubble === this.chatInner
+      );
+    }
+
+    const middleware = this.getMiddleware();
+    if(isEphemeralMessage(message) && this.emptyPlaceholderBubble) {
+      const placeholder = this.emptyPlaceholderBubble;
+      this.emptyPlaceholderBubble = undefined;
+      this.cleanupPlaceholders(placeholder);
+    }
+
+    // * the room for the list to go up to the message in: only the scroll there takes it back
+    const {isPaddingNeeded, unsetPadding} = scrolledDown ? this.setTopPadding(middleware) : {};
+
+    if(scrolledDown) {
+      // A forward/reply send collapses the input helper, kicking off
+      // chat.preservePaddingScroll() — a 250ms loop pinning the view to the absolute
+      // bottom every frame. That pin would follow the new bubble down instantly,
+      // leaving the animated scrollToEnd() below with nothing to animate (no reveal,
+      // most visibly when forwarding a tall message). Cancel it before the new bubble
+      // inflates scrollHeight so the reveal animation owns the scroll.
+      this.chat.cancelPreservePaddingScroll();
+    }
+
+    // * at the end the list goes to the message, which goes in in sight; anywhere else it goes in out of sight (sight is
+    // * a widget's: it keeps its place and starts as it comes near the screen, holding none of the queue up)
+    const promise = groupedBubbleRender ?
+      groupedBubbleRender.then(() => this.messagesQueuePromise) :
+      this.performHistoryResult({history: [message]}, false, undefined, scrolledDown ? undefined : OUT_OF_SIGHT);
+    if(scrolledDown) {
+      promise.then(() => {
+        if(!middleware()) return;
+        // this.log('renderNewMessagesByIDs: messagesQueuePromise after', this.scrollable.isScrolledDown);
+        // this.scrollable.scrollTo(this.scrollable.scrollHeight, 'top', true, true, 5000);
+
+        let bubble: HTMLElement;
+        if(this.chat.type === ChatType.Scheduled) {
+          bubble = this.getBubble(fullMid);
+        }
+
+        // the composer may have shrunk since the message came (a multi-line draft cleared), pinning the view
+        // to the bottom: the pin would jump to the new end before the scroll below has started
+        this.chat.cancelPreservePaddingScroll();
+        // a message that flies in has the list follow it as iOS has it: in the time and the curve of its way up
+        const promise = bubble ? this.scrollToBubbleEnd(bubble) : this.scrollToEnd(sendFlight && SEND_FLIGHT_SCROLL);
+        if(isPaddingNeeded) {
+          // it will be called only once even if was set multiple times (that won't happen)
+          promise.then(unsetPadding);
+        }
+
+        // the message may have been sent before its bubble came out, and the bubble is under its new id then
+        sendFlight?.launch(this.getBubble(message.peerId, this.changedMids.get(message.mid) ?? message.mid));
+
+        // this.scrollable.scrollIntoViewNew(this.chatInner, 'end');
+
+        /* setTimeout(() => {
+          this.log('messagesQueuePromise afterafter:', this.chatInner.childElementCount, this.scrollable.scrollHeight);
+        }, 10); */
+      });
+    }
+
+    return promise;
+  }
+
+  public getLastBubble() {
+    const group = this.bubbleGroups.lastGroup;
+    return group?.lastItem?.bubble;
+  }
+
+  public scrollToBubble(
+    element: HTMLElement,
+    position: ScrollLogicalPosition,
+    forceDirection?: FocusDirection,
+    forceDuration?: number,
+    focusOn?: MessageFocus,
+    transitionFunction?: (value: number) => number
+  ) {
+    const bubble = findUpClassName(element, 'bubble');
+
+    if(!element.parentElement) {
+      this.log.error('element is not connected', bubble);
+    }
+
+    // * the text about to be lit up may sit in a collapsed details of a rich message: opened before anything here is
+    // * measured, so the scroll lands where it would if it had been open
+    if(focusOn?.textHighlight) {
+      this.expandBubbleTextDetails(element, focusOn.textHighlight);
+    }
+
+    let fallbackToElementStartWhenCentering: HTMLElement;
+    // * if it's a start, then scroll to start of the group
+    if(bubble && position !== 'end') {
+      const item = this.bubbleGroups.getItemByBubble(bubble);
+      if(item && item.group.firstItem === item && whichChild(item.group.container) === (this.stickyIntersector ? STICKY_OFFSET : 1)) {
+        const dateGroup = item.group.container.parentElement;
+        // if(whichChild(dateGroup) === 0) {
+        fallbackToElementStartWhenCentering = dateGroup;
+        // position = 'start';
+        // element = dateGroup;
+        // }
+      }
+    }
+
+    // const isLastBubble = this.getLastBubble() === bubble;
+    /* if(isLastBubble) {
+      element = this.getLastDateGroup();
+    } */
+
+    // Scroll positions are computed against bubblesViewport (the visible bubble area)
+    // rather than scrollable.container, which extends into the topbar and chat-input
+    // zones via inset-block: -page-chats-padding.
+    const bubblesViewportRect = this.chat.bubblesViewport.getBoundingClientRect();
+    const containerRect = this.scrollable.container.getBoundingClientRect();
+    // For 'end', fastSmoothScroll's path uses raw containerRect.bottom and isn't
+    // overridable, so compensate via margin to land at viewport.bottom instead.
+    const margin = 4 + (position === 'end' ? containerRect.bottom - bubblesViewportRect.bottom : 0);
+
+    // * a bubble that does not fit the screen is centered by its start, so the part we are
+    // * jumping to can stay far below it — center that part instead then: measured as the scroll
+    // * starts and again on the way, a widget above it in the bubble starting moves it, and may make
+    // * the bubble taller than the screen
+    const measureFocus = position === 'center' && focusOn ?
+      () => this.measureFocus(element, focusOn, bubblesViewportRect.height, {
+        startElement: fallbackToElementStartWhenCentering || element,
+        margin
+      }) :
+      undefined;
+
+    const isTogglingHelper = this.chat.container.classList.contains('is-toggling-helper');
+    const isChangingHeight = isTogglingHelper || (
+      this.chat.input.messageInput &&
+      this.chat.input.messageInput.classList.contains('is-changing-height')
+    );
+    const isAddingHelper = this.chat.container.classList.contains('is-helper-active');
+    const promise = this.scrollable.scrollIntoViewNew({
+      element,
+      position,
+      margin,
+      forceDirection,
+      forceDuration,
+      transitionFunction,
+      axis: 'y',
+      // a jump to a message: what changes height on the way — a widget starting as it comes near the screen — moves the
+      // bubble, and the scroll lands where the bubble is then; the end of the list keeps itself (sending, new messages)
+      follow: position !== 'end',
+      getFocus: measureFocus,
+      getNormalSize: isChangingHeight ? ({rect}) => {
+        // return rect.height;
+
+        let height = windowSize.height;
+        // height -= this.chat.topbar.container.getBoundingClientRect().height;
+        height -= this.container.offsetTop;
+        height -= mediaSizes.isMobile || windowSize.height < 570 ? 58 : 78;
+        if(isTogglingHelper && isAddingHelper) {
+          height -= mediaSizes.isMobile || windowSize.height < 570 ? 40 : 36;
+        }
+        return height;
+
+        /* const rowsWrapperHeight = this.chat.input.rowsWrapper.getBoundingClientRect().height;
+        const diff = rowsWrapperHeight - 54;
+        return rect.height + diff; */
+      } : () => bubblesViewportRect.height,
+      // * the position is read again when the scroll starts
+      getElementPosition: ({elementRect}) => elementRect.top - bubblesViewportRect.top,
+      // * not where there is a part to center (getFocus)
+      fallbackToElementStartWhenCentering,
+      startCallback: (dimensions) => {
+        // this.onScroll(true, this.scrolledDown && dimensions.distanceToEnd <= SCROLLED_DOWN_THRESHOLD ? undefined : dimensions);
+        this.onScroll(true, dimensions);
+
+        if(this.updateGradient) {
+          const {gradientRenderer} = this.chat;
+          gradientRenderer?.toNextPosition(dimensions.getProgress);
+          // * the outgoing bubbles' freeform gradient moves with it, and a copy flying into it lands in its new colour
+          if(advanceOutgoingMessageGradient(this.container, dimensions.duration)) {
+            this.sendFlights?.followGradient();
+          }
+          this.updateGradient = undefined;
+        }
+      }
+    });
+
+    // fix flickering date when opening unread chat and focusing message
+    if(forceDirection === FocusDirection.Static) {
+      this.scrollable.lastScrollPosition = this.scrollable.scrollPosition;
+    }
+
+    return promise;
+  }
+
+  public scrollToEnd(scroll?: ScrollTiming) {
+    return this.scrollToBubbleEnd(this.chatInner, scroll);
+  }
+
+  public async scrollToBubbleEnd(bubble: HTMLElement, scroll?: ScrollTiming) {
+    /* if(DEBUG) {
+      this.log('scrollToNewLastBubble: will scroll into view:', bubble);
+    } */
+
+    if(bubble) {
+      this.scrollingToBubble = bubble;
+      const middleware = this.getMiddleware();
+      await this.scrollToBubble(bubble, 'end', undefined, scroll?.duration, undefined, scroll?.transition);
+      if(!middleware()) return;
+      this.scrollingToBubble = undefined;
+    }
+  }
+
+  // ! can't get it by chatInner.lastElementChild because placeholder can be the last...
+  // private getLastDateGroup() {
+  //   let lastTime = 0, lastElem: HTMLElement;
+  //   for(const i in this.dateMessages) {
+  //     const dateMessage = this.dateMessages[i];
+  //     if(dateMessage.firstTimestamp > lastTime) {
+  //       lastElem = dateMessage.container;
+  //       lastTime = dateMessage.firstTimestamp;
+  //     }
+  //   }
+
+  //   return lastElem;
+  // }
+
+  public async scrollToBubbleIfLast(bubble: HTMLElement) {
+    if(this.getLastBubble() === bubble) {
+      // return this.scrollToBubbleEnd(bubble);
+      return this.scrollToEnd();
+    }
+  }
+
+  /**
+   * What a jump lights up waits for: the scroll to it to settle, and a list rendered anew to have come in — lit up
+   * while it zooms in, the bubble flashes unseen and the text is measured at the zoom's scale, the found words
+   * painted off their place
+   */
+  private waitForJumpToSettle(scroll: Promise<any>) {
+    return Promise.all([scroll, this.ladderAppearance]);
+  }
+
+  public highlightBubble(element: HTMLElement, textHighlight?: TextHighlightMatch) {
+    const datasetKey = 'highlightTimeout';
+    if(element.dataset[datasetKey]) {
+      clearTimeout(+element.dataset[datasetKey]);
+      element.classList.remove('is-highlighted');
+      void element.offsetWidth; // reflow
+    }
+
+    element.classList.add('is-highlighted');
+    element.dataset[datasetKey] = '' + setTimeout(() => {
+      element.classList.remove('is-highlighted');
+      delete element.dataset[datasetKey];
+    }, BUBBLE_HIGHLIGHT_DURATION);
+
+    this.highlightBubbleText(element, textHighlight);
+  }
+
+  /**
+   * Marks the bubble (or a single grouped document inside it) as the active one — the target of an
+   * opened context menu. Paints the very same highlight ChatSelection paints on a selected message,
+   * but never doubles it: an already selected element is left alone.
+   */
+  public toggleActiveBubble(element: HTMLElement, active: boolean) {
+    const datasetKey = 'activeTimeout';
+    if(element.dataset[datasetKey]) {
+      clearTimeout(+element.dataset[datasetKey]);
+      delete element.dataset[datasetKey];
+    }
+
+    if(active) {
+      element.classList.remove('is-active-backwards');
+      element.classList.toggle('is-active', !element.classList.contains('is-selected'));
+      return;
+    }
+
+    if(!element.classList.contains('is-active')) {
+      return;
+    }
+
+    // * the selection has taken the highlight over in the meantime (or there is nothing to animate)
+    if(element.classList.contains('is-selected') || !liteMode.isAvailable('animations')) {
+      element.classList.remove('is-active', 'is-active-backwards');
+      return;
+    }
+
+    element.classList.add('is-active-backwards');
+    element.dataset[datasetKey] = '' + setTimeout(() => {
+      delete element.dataset[datasetKey];
+      element.classList.remove('is-active', 'is-active-backwards');
+    }, BUBBLE_ACTIVE_DURATION);
+  }
+
+  /**
+   * Lights up the search query / the quote inside the bubble text. Together with the flash
+   * above it looks the way tdesktop does it: the whole bubble flashes, the flash "collapses"
+   * onto the found text, which stays a while and fades away.
+   */
+  private highlightBubbleText(element: HTMLElement, match?: TextHighlightMatch) {
+    this.bubbleTextHighlights.get(element)?.();
+    this.bubbleTextHighlights.delete(element);
+    if(!match) {
+      return;
+    }
+
+    // * the collapsed details holding it are opened on the way here already, unless no scroll took it here
+    const prepared = this.expandBubbleTextDetails(element, match);
+    if(!prepared) {
+      return;
+    }
+
+    const {container, match: containerMatch} = prepared;
+
+    // * `.message` is positioned and paints below `.bubble-content` background — full line boxes,
+    // * appearing iOS-style: the whole text selected, then narrowing down onto the match
+    const highlight = highlightText({
+      container,
+      match: containerMatch,
+      skip: BUBBLE_TEXT_HIGHLIGHT_SKIP,
+      lineBoxes: true,
+      animateIn: true
+    });
+    if(!highlight.found) {
+      highlight.dispose();
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      this.bubbleTextHighlights.delete(element);
+      highlight.fadeOut();
+    }, BUBBLE_TEXT_HIGHLIGHT_DURATION);
+
+    this.bubbleTextHighlights.set(element, () => {
+      clearTimeout(timeout);
+      highlight.dispose();
+    });
+  }
+
+  /**
+   * opens, at once, the collapsed details of a rich message that hold the match a highlight is about to light up;
+   * gives back the text container and the match as that container counts it, ready to be highlighted
+   */
+  private expandBubbleTextDetails(element: HTMLElement, match: TextHighlightMatch) {
+    const container = this.getBubbleTextContainer(element);
+    if(!container) {
+      return;
+    }
+
+    const containerMatch = this.getBubbleTextMatch(container, match);
+    expandTextMatchDetails(container, containerMatch, BUBBLE_TEXT_HIGHLIGHT_SKIP);
+    return {container, match: containerMatch};
+  }
+
+  /** a match as the text it is looked for in counts: a rich message's quote counts its offset in its texts */
+  private getBubbleTextMatch(container: HTMLElement, match: TextHighlightMatch): TextHighlightMatch {
+    return match?.type === 'quote' && match.offset !== undefined ?
+      {...match, offset: getRichQuoteTextOffset(container, match.offset, BUBBLE_TEXT_HIGHLIGHT_SKIP)} :
+      match;
+  }
+
+  /** the text a highlight applies to — `element` is either the bubble or an album/document item inside it */
+  private getBubbleTextContainer(element: HTMLElement) {
+    // * an album has one caption, the bubble's — a document of a group has its own
+    if(element.classList.contains('album-item')) {
+      element = findUpClassName(element, 'bubble');
+    }
+
+    return element.classList.contains('bubble') ? element.querySelector<HTMLElement>('.message') : element;
+  }
+
+  /**
+   * Where the focused part sits inside the bubble (its offset from the bubble's top and its
+   * height), but only when the bubble is too tall to be centered as a whole and the scroll that
+   * happens instead — the start of `plainScroll.startElement` put at the top of the viewport —
+   * does not bring that part into view either (tdesktop: AdjustScrollForRange).
+   */
+  private measureFocus(
+    element: HTMLElement,
+    focusOn: MessageFocus,
+    viewportHeight: number,
+    plainScroll: {startElement: HTMLElement, margin: number}
+  ) {
+    // * the same size fastSmoothScroll compares against before it gives up on centering
+    if(element.scrollHeight < viewportHeight) {
+      return;
+    }
+
+    let rect: DOMRect;
+    if(focusOn.element) {
+      rect = focusOn.element.getBoundingClientRect();
+    } else {
+      const container = this.getBubbleTextContainer(element);
+      rect = container && findTextRect(container, this.getBubbleTextMatch(container, focusOn.textHighlight), BUBBLE_TEXT_HIGHLIGHT_SKIP);
+    }
+
+    if(!rect) {
+      return;
+    }
+
+    const {startElement, margin} = plainScroll;
+    if(rect.bottom - startElement.getBoundingClientRect().top + margin <= viewportHeight) { // * shown anyway
+      return;
+    }
+
+    return {offset: rect.top - element.getBoundingClientRect().top, height: rect.height};
+  }
+
+  /**
+   * What a jump to `fullMid` lands on — lights up, plays: the one item of an album (or of a group
+   * of documents) it points at, as the other clients do, or every item when a link names the album
+   * as a whole — a message link without `?single`. `element` is the bubble, or the item
+   * `getMountedBubble` found.
+   */
+  private getJumpTargets(element: HTMLElement, fullMid: FullMid, wholeAlbum?: boolean): HTMLElement[] {
+    const bubble = findUpClassName(element, 'bubble');
+    const items = bubble ? this.getBubbleGroupedItems(bubble) : [];
+    if(items.length < 2) {
+      return [element];
+    }
+
+    if(wholeAlbum) {
+      // * a group of documents paints no flash of its own, only its items do
+      return bubble.classList.contains('is-multiple-documents') ? items : [bubble];
+    }
+
+    const {peerId, mid} = splitFullMid(fullMid);
+    const item = items.find((item) => +item.dataset.mid === mid && item.dataset.peerId === '' + peerId);
+    return [item || element];
+  }
+
+  /**
+   * what the jump is about inside the message: the text about to be lit up, the poll answer, or
+   * the item of an album (`targets`, see `getJumpTargets`) — unless the text is, which is the
+   * album's caption then
+   */
+  private getMessageFocus(
+    bubble: HTMLElement,
+    fullMid: FullMid,
+    highlight?: TextHighlightMatch,
+    pollOption?: string | Uint8Array,
+    targets?: HTMLElement[]
+  ): MessageFocus {
+    const index = this.getBubblePollAnswerIndex(bubble, fullMid, pollOption);
+    let element = index === -1 ? undefined : bubble.querySelector<HTMLElement>(`[data-poll-option-idx="${index}"]`);
+    if(!element && !highlight && targets?.length === 1 && targets[0].classList.contains('album-item')) {
+      element = targets[0];
+    }
+
+    return highlight || element ? {textHighlight: highlight, element} : undefined;
+  }
+
+  private createDateBubble(timestamp: number, date: Date = new Date(timestamp * 1000)) {
+    return createDateBubble(
+      timestamp,
+      date,
+      this.chat.type === ChatType.Scheduled,
+      this.chat.type === ChatType.Welcome ? i18n('WelcomeMessages.PreviewAbout') : undefined
+    );
+  }
+
+  public getDateForDateContainer(timestamp: number) {
+    // welcome messages are not a timeline: one heading over all of them, as on Android
+    if(this.chat.type === ChatType.Welcome) {
+      return {date: new Date(1000), dateTimestamp: 1000};
+    }
+
+    const date = new Date(timestamp * 1000);
+    if(timestamp !== SEND_WHEN_ONLINE_TIMESTAMP) {
+      date.setHours(0, 0, 0);
+    }
+    return {date, dateTimestamp: date.getTime()};
+  }
+
+  public getDateContainerByTimestamp(timestamp: number) {
+    const {date, dateTimestamp} = this.getDateForDateContainer(timestamp);
+    let ret = this.dateMessages[dateTimestamp];
+    if(ret) {
+      return ret;
+    }
+
+    const bubble = this.createDateBubble(timestamp, date);
+    // bubble.classList.add('is-sticky');
+    const fakeBubble = this.createDateBubble(timestamp, date);
+    fakeBubble.classList.add('is-fake');
+
+    const container = document.createElement('section');
+    container.className = 'bubbles-date-group';
+    container.append(bubble, fakeBubble);
+
+    ret = this.dateMessages[dateTimestamp] = {
+      div: bubble,
+      container,
+      firstTimestamp: date.getTime(),
+      groupsLength: 0
+    };
+
+    const haveTimestamps = getObjectKeysAndSort(this.dateMessages, 'asc');
+    const length = haveTimestamps.length;
+    let i = 0, insertBefore: HTMLElement; // there can be 'first bubble' (e.g. bot description) so can't insert by index
+    for(; i < haveTimestamps.length; ++i) {
+      const t = haveTimestamps[i];
+      insertBefore = this.dateMessages[t].container;
+      if(dateTimestamp < t) {
+        break;
+      }
+    }
+
+    if(i === length && insertBefore) {
+      insertBefore = insertBefore.nextElementSibling as HTMLElement;
+    }
+
+    if(!insertBefore) {
+      this.chatInner.append(container);
+    } else {
+      this.chatInner.insertBefore(container, insertBefore);
+    }
+
+    this.stickyIntersector?.observeStickyHeaderChanges(container);
+
+    if(this.chatInner.parentElement) {
+      this.container.classList.add('has-groups');
+    }
+
+    return ret;
+  }
+
+  private destroyScrollable() {
+    this.scrollable.destroy();
+  }
+
+  public destroy() {
+    // this.chat.log.error('Bubbles destroying');
+
+    this.readMetricsTracker?.finalizeAll();
+    this.releaseChatInnerMiddleware();
+    this.sendFlights.abortAll();
+    dropReactionFlights(this.scrollable.container);
+    this.gradientUnion.destroy();
+
+    this.destroyScrollable();
+
+    this.listenerSetter.removeAll();
+    this.appWindowUnsubs.forEach((unsub) => unsub());
+    this.disposeDirectionEffect();
+    this.saveReflowScrollDebounced?.clearTimeout();
+
+    this.lazyLoadQueue.clear();
+    this.observer && this.observer.disconnect();
+    this.stickyIntersector && this.stickyIntersector.disconnect();
+
+    delete this.lazyLoadQueue;
+    this.observer && delete this.observer;
+    this.stickyIntersector && delete this.stickyIntersector;
+  }
+
+  private placeBubbleTimesAnew = () => {
+    for(const fullMid in this.bubbles) {
+      const timeSpan = this.bubbles[fullMid].timeSpan;
+      const text = timeSpan && bubbleTimeTexts.get(timeSpan);
+      if(text !== undefined) placeBubbleTime(timeSpan, text);
+    }
+  };
+
+  public updateStickyIntersectorRootMargin = () => {
+    const top = this.chat.chatPaddingTop[0]();
+    const bottom = this.chat.chatPaddingBottom[0]();
+    this.stickyIntersector?.setRootMargin(`-${top}px 0px -${bottom}px 0px`);
+    this.separatorIntersectorRoot?.setTopOffset(top);
+  };
+
+  public updateGoDownVisibility() {
+    const visible = (!this.scrolledDown || !this.scrollable.loadedAll.bottom) &&
+                    !this.container.classList.contains('search-results-active');
+    this.chat.container.classList.toggle('is-go-down-visible', visible);
+  }
+
+  public cleanup(bubblesToo = false) {
+    this.log('cleanup');
+
+    // Content is about to be wiped (peer switch / screen teardown) — end every read-metrics phase.
+    this.readMetricsTracker?.finalizeAll();
+    this.readMetricsBubbles.clear();
+
+    this.bubbles = {}; // clean it before so sponsored message won't be deleted faster on peer changing
+    // //console.time('appImManager cleanup');
+    this.setLoaded('top', false, false);
+    this.setLoaded('bottom', false, false);
+
+    // cancel scroll
+    cancelAnimationByKey(this.scrollable.container);
+
+    // do not wait ending of previous scale animation
+    interruptHeavyAnimation();
+
+    // if(TEST_SCROLL !== undefined) {
+    //   TEST_SCROLL = TEST_SCROLL_TIMES;
+    // }
+
+    this.guestChatHintShown = false; // re-arm the guest-bot hint for the next chat-open (capped total by seenTooltips)
+    this.skippedMids.clear();
+    this.dateMessages = {};
+    this.bubbleGroups?.cleanup();
+    this.bubbleGroups = new BubbleGroups(this.chat);
+    this.unreadOut.clear();
+    this.needUpdate = [];
+    this.lazyLoadQueue.clear();
+    this.renderNewPromises.clear();
+    this.changedMids.clear();
+
+    // clear messages
+    if(bubblesToo) {
+      this.scrollable.replaceChildren(this.paddingTop, this.paddingBottom);
+      this.chatInner.replaceChildren();
+      this.cleanupPlaceholders();
+    }
+
+    this.firstUnreadBubble = null;
+    this.firstUnreadFullMid = undefined;
+    this.attachedUnreadBubble = false;
+    // * a bubble of the chat being left: re-pinning to it means nothing now, and keeping it kept its subtree
+    this.reflowAnchor = undefined;
+
+    this.batchProcessor.clear();
+
+    this.getHistoryTopPromise = this.getHistoryBottomPromise = undefined;
+    this.firstScreenRestPromise = undefined;
+    this.fetchNewPromise = undefined;
+    this.updateGradient = undefined;
+    this.ephemeralHistoryPromise = undefined;
+    this.ephemeralHistoryLoaded = false;
+    this.openingEphemeralHistory = undefined;
+    this.ephemeralHistoryGeneration = 0;
+    this.pendingEphemeralHistory = 0;
+
+    this.getSponsoredMessagePromise = undefined;
+    this.sponsoredMessagesLoaded = false;
+    this.sponsoredMessagesMids = [];
+    // * the next chat's ads have the same ids
+    this.sponsoredMessages = [];
+    this.sponsoredMessagesAvailable = [];
+    this.sponsoredAfterMids.clear();
+
+    if(this.stickyIntersector) {
+      this.stickyIntersector.disconnect();
+    }
+
+    if(this.observer) {
+      this.observer.disconnect();
+
+      this.unreaded.clear();
+      this.unreadedContent.clear();
+      this.unreadedSeen.clear();
+      this.unreadedContentSeen.clear();
+      this.unreadedChat = undefined;
+      this.readPromise = undefined;
+      this.readContentPromise = undefined;
+
+      this.viewsMids.clear();
+    }
+
+    this.middlewareHelper.clean();
+    this.releaseChatInnerMiddleware();
+    this.sendFlights.abortAll();
+    dropReactionFlights(this.scrollable.container);
+    this.solidMessageBodies.clear();
+    this.pendingStreamedMessageUpdates.clear();
+    this.pendingRerenders.clear();
+    this.hiddenLinksPendingBubbles.forEach((bubble) => {
+      setBubbleHiddenLinksPending(bubble, false);
+      setBubbleHiddenLinksFallback(bubble, true);
+    });
+    this.hiddenLinksPendingBubbles.clear();
+    this.streamedMessageFinals.forEach(({timeout}) => window.clearTimeout(timeout));
+    this.streamedMessageFinals.clear();
+    this.pendingSolidMessageBodyLayouts.clear();
+    if(this.solidMessageBodyLayoutFrame) {
+      this.solidMessageBodyLayoutFrame.win.cancelAnimationFrame(this.solidMessageBodyLayoutFrame.id);
+      this.solidMessageBodyLayoutFrame = undefined;
+    }
+    this.solidMessageBodyFollow = undefined;
+    // a change of a bubble still being shown goes on in the chat it leaves: the new one does not wait for it; nor are the
+    // changes still to be made to its bubbles made (they would act on the new one: its unread messages, its pins)
+    this.bubbleTransitionPromise = this.bubbleTransition = undefined;
+    this.batchingModifying = this.batchingTransitions = undefined;
+    this.batchingModified?.resolve();
+    this.batchingModified = undefined;
+
+    this.onAnimateLadder = undefined;
+    this.resolveLadderAnimation = undefined;
+    this.ladderMountedIn = undefined;
+    this.ladderAppearance?.resolve();
+    this.ladderAppearance = undefined;
+    this.attachPlaceholderOnRender = undefined;
+    this.emptyPlaceholderBubble = undefined;
+    this.previousStickyDate = undefined;
+    this.peerSettings = undefined;
+    this.testPeerNonContactState = undefined;
+    ++this.testPeerNonContactRequest;
+
+    this.scrollingToBubble = undefined;
+    // //console.timeEnd('appImManager cleanup');
+
+    this.isTopPaddingSet = false;
+
+    this.renderingMessages.clear();
+    this.bubblesToReplace.clear();
+
+    // this.reactions.clear();
+
+    if(this.isScrollingTimeout) {
+      clearTimeout(this.isScrollingTimeout);
+      this.isScrollingTimeout = 0;
+    }
+
+    this.container.classList.remove('has-sticky-dates');
+    this.scrollable.cancelMeasure();
+  }
+
+  private cleanupPlaceholders(bubble = this.emptyPlaceholderBubble) {
+    if(bubble) {
+      this.destroyBubble(bubble);
+    }
+  }
+
+  // * settles the bot START button once the history has loaded, like iOS and Android: shown only
+  // * for a chat that turned out empty, and never a /start sent on the user's behalf, while a start
+  // * parameter from a link goes out at once when the chat already has messages. A link to the
+  // * chat that is already open (`startAtOnce`) starts it even when it is empty, as every official
+  // * client does — but not a blocked bot (tdesktop): START unblocks it on a tap
+  private settleBotStart(middleware: () => boolean, startAtOnce?: boolean) {
+    if(!this.chat.isBot) {
+      return;
+    }
+
+    const startParam = this.chat.input.startParam;
+    this.chat.isStartButtonNeeded().then((isNeeded) => {
+      if(!middleware() || this.chat.input.startParam !== startParam) {
+        return;
+      }
+
+      if(startParam === undefined || startParam === BOT_START_PARAM) {
+        this.chat.input.setStartParam(isNeeded ? BOT_START_PARAM : undefined);
+      } else if(!isNeeded || (startAtOnce && !this.chat.isUserBlocked)) {
+        this.chat.input.startBot();
+      } else { // * the parameter waits for a tap on START, which an empty history only now asks for
+        this.chat.input.center(true);
+      }
+    });
+  }
+
+  private getReadMaxIdAndDialog(peerId: PeerId) {
+    return Promise.all([
+      this.managers.appMessagesManager.getReadMaxIdIfUnread(peerId, this.chat.threadId),
+      this.chat.getDialogOrTopic()
+    ]);
+  }
+
+  public async setPeer(options: ChatSetPeerOptions & {samePeer: boolean, sameSearch: boolean, forceIsFirstLoad?: boolean}): Promise<{cached?: boolean, promise: Chat['setPeerPromise']}> {
+    const {samePeer, sameSearch, peerId, stack, monoforumThreadId, forceIsFirstLoad, pollOption, highlight, wholeAlbum} = options;
+    let {lastMsgId, lastMsgPeerId, startParam} = options;
+    const tempId = ++this.setPeerTempId;
+
+    let lastMsgFullMid: FullMid, topMessageFullMid: FullMid;
+
+    if(!peerId) {
+      this.cleanup(true);
+      this.preloader.detach();
+      return null;
+    }
+
+    const perf = performance.now();
+    const log = this.log.bindPrefix('setPeer');
+    log.warn('start');
+
+    const middleware = () => {
+      return this.setPeerTempId === tempId;
+    };
+
+    const m = middlewarePromise(middleware, PEER_CHANGED_ERROR);
+
+    // * where the chat opens is asked of the worker while the chat's flags are, not a round trip after them
+    let readMaxIdAndDialogPromise: ReturnType<ChatBubbles['getReadMaxIdAndDialog']>;
+    // * the sender's settings the worker already has go into the first render: put up with the chat's other parts,
+    // * after the bubbles are built, they would take an unknown sender's links away a frame later
+    let cachedPeerSettings: PeerSettings;
+    if(!samePeer) {
+      // await pause(2000); // * test some bugs
+      const changePeerPromise = this.chat.onChangePeer(options, m);
+      // * `onChangePeer` has set the chat type by now; a topic may have to be loaded first, so a thread asks later
+      if(!lastMsgId && !options.savedReaction && !this.chat.threadId && !monoforumThreadId) {
+        readMaxIdAndDialogPromise = this.getReadMaxIdAndDialog(peerId);
+        readMaxIdAndDialogPromise.catch(noop);
+      }
+
+      const peerSettingsPromise = peerId.isUser() ? this.managers.acknowledged.appProfileManager.getPeerSettings(peerId).then(
+        (acked) => acked.cached ? acked.result : undefined,
+        (): PeerSettings => undefined
+      ) : undefined;
+
+      await m(changePeerPromise);
+      cachedPeerSettings = await m(peerSettingsPromise);
+    }
+
+    /* if(samePeer && this.chat.setPeerPromise) {
+      return {cached: true, promise: this.chat.setPeerPromise};
+    } */
+
+    const chatType = this.chat.type;
+
+    if(chatType === ChatType.Scheduled || chatType === ChatType.Welcome || this.chat.isRestricted) {
+      lastMsgFullMid = EMPTY_FULL_MID;
+    } else if(lastMsgId) {
+      lastMsgFullMid = makeFullMid(lastMsgPeerId ?? peerId, lastMsgId);
+    } else {
+      lastMsgFullMid = EMPTY_FULL_MID;
+    }
+
+    const historyStorage = this.chat.getHistoryStorage();
+    if(chatType === ChatType.Pinned) {
+      topMessageFullMid = makeFullMid(peerId, await m(this.managers.appMessagesManager.getPinnedMessagesMaxId(peerId, this.chat.threadId)));
+    } else if(historyStorage.searchHistory) {
+      topMessageFullMid = (historyStorage.searchHistory.first[0] as FullMid) ?? EMPTY_FULL_MID;
+    } else if(chatType !== ChatType.Static && this.chat.type !== ChatType.Logs) {
+      topMessageFullMid = historyStorage.maxId ? makeFullMid(peerId, historyStorage.maxId) : EMPTY_FULL_MID;
+    } else {
+      topMessageFullMid = EMPTY_FULL_MID;
+    }
+    const isTarget = lastMsgFullMid !== EMPTY_FULL_MID;
+
+    // * this one will fix topMessage for null message in history (e.g. channel comments with only 1 comment and it is a topMessage)
+    /* if(chatType !== 'pinned' && topMessage && !historyStorage.history.slice.includes(topMessage)) {
+      topMessage = 0;
+    } */
+
+    if(stack) {
+      this.chat.appImManager.clickIfSponsoredMessage(stack.message);
+    }
+
+    let followingUnread: boolean;
+    let readMaxId = 0, savedPosition: ReturnType<AppImManager['getChatSavedPosition']>, overrideAdditionMsgId: number;
+    if(!isTarget) {
+      if(!samePeer) {
+        savedPosition = this.chat.appImManager.getChatSavedPosition(this.chat);
+      }
+
+      // `savedPosition` may carry only a pinned hint (no `mids`/`top`) when
+      // the user left the chat scrolled to the bottom. Treat such entries
+      // as "no scroll restore" — only the topbar plate consumes the hint.
+      if(savedPosition?.mids) {
+
+      } else if(this.chat.type === ChatType.Search) {
+        lastMsgFullMid = topMessageFullMid;
+      } else if(topMessageFullMid !== EMPTY_FULL_MID) {
+        let dialog: Awaited<ReturnType<Chat['getDialogOrTopic']>>;
+        if(!options.savedReaction) {
+          [readMaxId, dialog] = await m(readMaxIdAndDialogPromise || this.getReadMaxIdAndDialog(peerId));
+        }
+
+        if(/* dialog.unread_count */
+          readMaxId &&
+          (!samePeer || (sameSearch && !this.shouldJumpToEndInsteadOfUnread(readMaxId))) &&
+          (!dialog || (!isSavedDialog(dialog) && dialog.unread_count !== 1))
+        ) {
+          const foundSlice = historyStorage.history.findSliceOffset(readMaxId);
+          if(foundSlice && foundSlice.slice.isEnd(SliceEnd.Bottom)) {
+            overrideAdditionMsgId = foundSlice.slice[foundSlice.offset - 25] || foundSlice.slice[0] || readMaxId;
+          }
+
+          followingUnread = !isTarget;
+          lastMsgFullMid = makeFullMid(peerId, readMaxId);
+        } else {
+          lastMsgFullMid = topMessageFullMid;
+        }
+      }
+    }
+
+    const isGoingToBottomEnd = lastMsgFullMid === topMessageFullMid || (lastMsgFullMid === EMPTY_FULL_MID && !followingUnread);
+    const isJump = lastMsgFullMid !== topMessageFullMid/*  && overrideAdditionMsgId === undefined */;
+
+    if(isGoingToBottomEnd && lastMsgFullMid !== EMPTY_FULL_MID) {
+      const message = this.chat.getMessage(lastMsgFullMid);
+      if(!message) {
+        this.log('fix going to bottom end without existing message', lastMsgFullMid);
+        lastMsgFullMid = EMPTY_FULL_MID;
+      }
+    }
+
+    // * a start parameter from a link to the bot chat that is already open (`reload` re-renders
+    // * the same chat for an in-chat search and leaves the input alone)
+    const startsBotFromLink = samePeer && sameSearch && !!startParam;
+    // * only a bot has a START button
+    if(startParam === undefined && this.chat.isBot && await m(this.chat.isStartButtonNeeded())) {
+      startParam = BOT_START_PARAM;
+    }
+
+    if(samePeer && sameSearch) {
+      if(stack && lastMsgFullMid !== EMPTY_FULL_MID && stack.peerId === peerId) {
+        this.followStack.push(makeFullMid(stack.peerId, stack.mid));
+      }
+
+      // * the input is not rebuilt for the same chat, so a start parameter has to reach it here —
+      // * also when there is no bubble to land on (an empty chat is rendered again below)
+      if(startParam !== undefined) {
+        this.chat.input.setStartParam(startParam);
+      }
+
+      const mounted = await m(this.getMountedBubble(lastMsgFullMid));
+      let bubble = mounted?.bubble;
+      if(!bubble && this.skippedMids.has(lastMsgFullMid)) {
+        bubble = this.findNextMountedBubbleByMsgId(lastMsgFullMid, false) || this.findNextMountedBubbleByMsgId(lastMsgFullMid, true);
+      }
+
+      // * `lastMsgFullMid` is the read cursor here, but we have to land on the delimiter after it
+      if(followingUnread) {
+        bubble = this.getFirstUnreadBubble(readMaxId) || bubble;
+      }
+
+      // * only a list on screen is scrolled to: a jump this one took over from may have rendered the
+      // * target into its own list, which nothing mounts now — that one is built again below
+      if(bubble && !bubble.isConnected) {
+        bubble = undefined;
+      }
+
+      if(bubble) {
+        if(followingUnread) {
+          this.scrollToFirstUnread(bubble);
+          this.chat.dispatchEvent('setPeer', lastMsgId, false);
+        } else if(isTarget) {
+          // * the highlight waits for the scroll to settle (iOS does the same) — otherwise it
+          // * plays while the message is still travelling
+          const targets = this.getJumpTargets(bubble, lastMsgFullMid, wholeAlbum);
+          const focusOn = this.getMessageFocus(bubble, lastMsgFullMid, highlight, pollOption, targets);
+          this.waitForJumpToSettle(this.scrollToBubble(bubble, 'center', undefined, undefined, focusOn)).then(() => {
+            if(!middleware()) return;
+            targets.forEach((target) => this.highlightBubble(target, highlight));
+            this.highlightBubblePollAnswer(bubble, lastMsgFullMid, pollOption);
+          });
+          this.chat.dispatchEvent('setPeer', lastMsgId, false);
+        } else if(topMessageFullMid !== EMPTY_FULL_MID && !isJump) {
+          // log('will scroll down', this.scroll.scrollTop, this.scroll.scrollHeight);
+          // scrollable.setScrollTopSilently(scrollable.scrollHeight);
+          this.scrollToEnd();
+          this.chat.dispatchEvent('setPeer', lastMsgId, true);
+        }
+
+        if(startParam !== undefined) {
+          this.settleBotStart(middleware, startsBotFromLink);
+        }
+
+        if(options.mediaTimestamp) {
+          getHeavyAnimationPromise().then(() => {
+            this.playMediaWithTimestampAndMid({
+              lastMsgFullMid,
+              middleware,
+              mediaTimestamp: options.mediaTimestamp
+            });
+          });
+        }
+
+        // * set draft if already in this peer
+        if(options.text) {
+          this.managers.appDraftsManager.setDraft(this.peerId, this.chat.threadId, options.text);
+        }
+
+        return null;
+      }
+    } else {
+      if(this.peerId) { // * set new queue id if new peer (setting not from 0)
+        this.lazyLoadQueue.queueId = ++queueId;
+        this.managers.apiFileManager.setQueueId(this.chat.bubbles.lazyLoadQueue.queueId);
+      }
+
+      this.followStack.length = 0;
+
+      this.passEntities = {
+        messageEntityBotCommand: this.chat.isAnyGroup || this.chat.isBot
+      };
+    }
+
+    if(DEBUG) {
+      log('setPeer peerId:', peerId, historyStorage, lastMsgFullMid, topMessageFullMid);
+    }
+
+    // add last message, bc in getHistory will load < max_id
+    const additionalMid = isJump || [ChatType.Search, ChatType.Scheduled, ChatType.Welcome].includes(chatType) || this.chat.isRestricted ? undefined : overrideAdditionMsgId ?? splitFullMid(topMessageFullMid).mid;
+    const additionalFullMid = additionalMid ? makeFullMid(peerId, additionalMid) : undefined;
+
+    let maxBubbleFullMid = EMPTY_FULL_MID;
+    if(samePeer) {
+      const el = this.getBubbleByPoint('bottom'); // ! this may not work if being called when chat is hidden
+      // this.chat.log('[PM]: setCorrectIndex: get last element perf:', performance.now() - perf, el);
+      if(el) {
+        maxBubbleFullMid = getBubbleFullMid(el);
+      }
+
+      if(!maxBubbleFullMid) {
+        const rendered = this.getRenderedHistory('desc', true);
+        maxBubbleFullMid = rendered[0] || EMPTY_FULL_MID;
+      }
+
+      if(forceIsFirstLoad) this.isFirstLoad = true;
+    } else {
+      this.isFirstLoad = true;
+      this.destroyResizeObserver();
+    }
+
+    const oldChatInner = this.chatInner;
+    const oldPlaceholderBubble = this.emptyPlaceholderBubble;
+    const retainedMessageLinkPolicy = retainMessageLinkPolicyOnCleanup(
+      samePeer,
+      this.peerSettings,
+      this.testPeerNonContactState
+    );
+    this.cleanup();
+    if(samePeer) {
+      this.peerSettings = retainedMessageLinkPolicy.peerSettings;
+      this.testPeerNonContactState = retainedMessageLinkPolicy.testPeerNonContactState;
+    } else {
+      this.peerSettings = cachedPeerSettings;
+    }
+    this.refreshTestPeerNonContactState();
+    const chatInner = this.chatInner = this.createChatInner();
+    this.gradientUnion.setInner(chatInner);
+    if(samePeer) {
+      chatInner.className = oldChatInner.className;
+      chatInner.classList.remove('disable-hover', 'is-scrolling');
+    } else {
+      chatInner.classList.add('bubbles-inner');
+    }
+
+    if(!samePeer && !savedPosition?.mids && isGoingToBottomEnd &&
+      (chatType === ChatType.Chat || chatType === ChatType.Discussion)) {
+      // * it only reads the worker's cache: asked for along with the history, not in the middle of rendering its first
+      // * screen. Merging it and the loaded flag stay with performHistoryResult, so they still make the first frame
+      this.openingEphemeralHistory = this.requestEphemeralHistory();
+    }
+
+    this.lazyLoadQueue.lock();
+
+    const canScroll = samePeer && sameSearch;
+    // const haveToScrollToBubble = (topMessage && (isJump || samePeer)) || isTarget;
+    const haveToScrollToBubble = canScroll || (topMessageFullMid !== EMPTY_FULL_MID && isJump) || isTarget;
+    const fromUp = maxBubbleFullMid !== EMPTY_FULL_MID && (lastMsgFullMid === EMPTY_FULL_MID/*  || lastMsgId < 0 */ || await (async() => {
+      const historyStorage = this.chat.getHistoryStorage();
+      const slicedArray = historyStorage.searchHistory || historyStorage.history;
+      if(slicedArray === historyStorage.searchHistory) {
+        const lastIndex = slicedArray.first.indexOf(lastMsgFullMid);
+        const maxIndex = slicedArray.first.indexOf(maxBubbleFullMid);
+        return lastIndex < maxIndex;
+      } else {
+        return splitFullMid(maxBubbleFullMid).mid < splitFullMid(lastMsgFullMid).mid;
+      }
+    })());
+    const scrollFromDown = !fromUp && canScroll;
+    const scrollFromUp = !scrollFromDown && fromUp && canScroll/*  && (samePeer || forwardingUnread) */;
+    this.willScrollOnLoad = scrollFromDown || scrollFromUp;
+
+    this.setPeerOptions = {
+      lastMsgFullMid,
+      topMessageFullMid,
+      savedPosition
+    };
+
+    if(this.chat.isBroadcast && this.chat.type === ChatType.Chat/*  && false */) {
+      this.loadSponsoredMessages();
+    }
+
+    if(!samePeer) {
+      this.ranks = undefined;
+      this.ranksChatId = undefined;
+      this.ranksFromMessages = false;
+      this.pendingRankChanges = undefined;
+      this.processRanks = undefined;
+      this.rankRenderers = new Map();
+      this.canShowRanks = false;
+
+      // a welcome message is signed by nobody's role (Android drops the admin tag there)
+      let chatId = this.peerId.toChatId();
+      let canShowRanks = this.chat.type !== ChatType.Welcome && this.peerId.isAnyChat() && canHaveMemberTags(apiManagerProxy.getChat(chatId));
+      if(this.chat.type === ChatType.Saved && !this.chat.threadId.isUser()) {
+        const chat = apiManagerProxy.getChat(chatId = this.chat.threadId.toChatId());
+        canShowRanks = chat?._ === 'channel';
+      }
+
+      if(canShowRanks) {
+        this.canShowRanks = true;
+        this.ranksChatId = chatId;
+        const processRanks = this.processRanks = new Set();
+        // * a basic group has every member's tag in its full chat, a supergroup tells only its admins' apart from the messages
+        const isBasicGroup = apiManagerProxy.getChat(chatId)?._ === 'chat';
+
+        const promise = this.managers.acknowledged.appProfileManager.getParticipants({
+          id: chatId,
+          filter: {_: isBasicGroup ? 'channelParticipantsRecent' : 'channelParticipantsAdmins'},
+          limit: 100
+        });
+        // * a basic group's list is all there is, a supergroup's messages carry their members' tags
+        this.ranksFromMessages = !isBasicGroup;
+        const pendingRankChanges: Array<() => void> = this.pendingRankChanges = [];
+
+        const installRanks = (ranks: Map<PeerId, BubbleNameRank>) => {
+          if(this.processRanks !== processRanks) {
+            return;
+          }
+
+          this.ranks = ranks;
+          // * what changed while the list was on its way goes over it
+          this.pendingRankChanges = undefined;
+          pendingRankChanges.forEach((callback) => callback());
+
+          getHeavyAnimationPromise().then(() => {
+            if(this.processRanks !== processRanks) {
+              return;
+            }
+
+            processRanks.forEach((callback) => callback());
+            this.processRanks = undefined;
+          });
+        };
+
+        const ackedResult = await m(promise);
+        const setRanksPromise = ackedResult.result.then((channelParticipants) => {
+          const ranks: Map<PeerId, BubbleNameRank> = new Map();
+          (channelParticipants.participants as (ChatParticipant | ChannelParticipant)[]).forEach((participant) => {
+            // * a basic group shows the tags it has, with no "admin" for an admin without one (as desktop)
+            const rank = isBasicGroup ? (participant as ChatParticipant).rank : getParticipantRank(participant);
+            if(rank) {
+              ranks.set(getParticipantPeerId(participant), {rank, role: getMemberTagRole(participant)});
+            }
+          });
+
+          installRanks(ranks);
+        }, (err) => {
+          if((err as ApiError).type !== 'CHAT_ADMIN_REQUIRED') {
+            this.log.error('ranks error', err);
+          }
+
+          installRanks(new Map());
+        });
+
+        if(ackedResult.cached) {
+          await m(setRanksPromise);
+        }
+      }
+    }
+
+    let openingReadMaxId: ChatBubbles['openingReadMaxId'];
+    if(peerId.isAnyChat()) {
+      const promise = this.managers.appMessagesManager.getInboxReadMaxId(peerId, this.chat.threadId);
+      promise.catch(noop);
+      this.openingReadMaxId = openingReadMaxId = {key: getReadMaxIdKey(peerId, this.chat.threadId), promise};
+    }
+
+    const dropOpeningReadMaxId = () => {
+      if(this.openingReadMaxId === openingReadMaxId) {
+        this.openingReadMaxId = undefined;
+      }
+    };
+
+    const finishPeerChangeOptions: Parameters<Chat['finishPeerChange']>[0] = {
+      peerId,
+      isTarget,
+      isJump,
+      lastMsgId,
+      startParam,
+      middleware,
+      text: options.text,
+      entities: options.entities
+    };
+
+    // * from the cache the chat's other parts get ready while its bubbles are built - started as soon as the history
+    // * is in hand, not after its first screen is rendered - and are put up in the same task as they are mounted
+    let applyPeerChangePromise: ReturnType<Chat['prepareFinishPeerChange']>;
+    let applyInputLayout: () => void;
+    const prepareCachedPeerChange = samePeer ? undefined : () => {
+      if(!middleware() || applyPeerChangePromise) return;
+      // * the input is measured with the new list mounted, not the outgoing one
+      finishPeerChangeOptions.deferInputLayout = (layout) => applyInputLayout = layout;
+      applyPeerChangePromise = this.chat.prepareFinishPeerChange(finishPeerChangeOptions);
+      applyPeerChangePromise.catch(noop);
+    };
+
+    // * the first frame gets what fills the screen where the chat opens
+    const firstScreen = this.getFirstScreen({chatType, peerId, savedPosition, followingUnread, readMaxId, isTarget, isJump, lastMsgFullMid});
+    let result: Awaited<ReturnType<ChatBubbles['getHistory']>>;
+    if(!savedPosition?.mids) {
+      result = await m(this.getHistory1(
+        !isJump && !additionalFullMid && lastMsgFullMid === topMessageFullMid ? EMPTY_FULL_MID : lastMsgFullMid,
+        true,
+        isJump,
+        additionalFullMid,
+        undefined,
+        firstScreen,
+        prepareCachedPeerChange
+      ));
+    } else {
+      if(prepareCachedPeerChange) {
+        prepareCachedPeerChange();
+        await m(Promise.resolve());
+      }
+
+      const {promise, restPromise} = this.renderFirstScreen({history: savedPosition.mids}, firstScreen, (historyResult, sight) => {
+        return getHeavyAnimationPromise().then(() => this.performHistoryResult(historyResult, true, true, sight));
+      });
+
+      result = {
+        promise,
+        cached: true,
+        waitPromise: restPromise || Promise.resolve()
+      };
+    }
+
+    this.setPeerCached = result.cached;
+
+    log.warn('got history');// warning
+
+    const {promise, cached} = result;
+    if(cached) prepareCachedPeerChange?.();
+
+    if(!cached && !samePeer) {
+      (await m(this.chat.prepareFinishPeerChange(finishPeerChangeOptions, true)))?.();
+      // Flip the staging-slot wallpaper that `finishPeerChange` prepared, in the same sync
+      // block as clearing the old bubbles. Otherwise the bg DOM swap (running inside the
+      // Solid effect's `await built.readyPromise`) can paint a frame ahead of the cleared
+      // bubbles, briefly showing the new wallpaper behind the old chat's messages.
+      this.chat.revealPreparedBackground();
+      this.scrollable.replaceChildren(this.paddingTop, this.paddingBottom);
+      this.preloader.attach(this.container);
+    }
+
+    animationIntersector.lockGroup(this.chat.animationGroup);
+    const setPeerPromise = m(promise).then(async() => {
+      dropOpeningReadMaxId();
+      log.warn('promise fulfilled');
+
+      const mountedByLastMsgId = haveToScrollToBubble ? await m(lastMsgFullMid !== EMPTY_FULL_MID ? this.getMountedBubble(lastMsgFullMid) : {bubble: this.getLastBubble()}) : undefined;
+      if(cached && !samePeer) {
+        log.warn('finishing peer change');
+        const applyPeerChange = await m(applyPeerChangePromise || this.chat.prepareFinishPeerChange(finishPeerChangeOptions)); // * костыль
+        // * the outgoing list is replaced below in this same task: what the parts measure while they are put up must
+        // * not lay it out
+        oldChatInner.remove();
+        applyPeerChange?.();
+        log.warn('finished peer change');
+      }
+
+      this.preloader.detach();
+      this.startHeldLadder();
+      this.setPeerCached = undefined;
+
+      const scrollable = this.scrollable;
+      scrollable.lastScrollDirection = 0;
+      scrollable.lastScrollPosition = 0;
+      // Flip the staged wallpaper sync with bubbles mount — see the matching call in the
+      // not-cached branch above.
+      this.chat.revealPreparedBackground();
+      scrollable.replaceChildren(this.paddingTop, chatInner, this.paddingBottom);
+      // * the input's height and centering, with the history it goes with mounted - before the initial scroll
+      applyInputLayout?.();
+      applyInputLayout = undefined;
+
+      if(oldPlaceholderBubble) {
+        this.cleanupPlaceholders(oldPlaceholderBubble);
+      }
+
+      this.attachPlaceholderOnRender?.();
+
+      if(!isTarget && this.chat.isPinnedMessagesNeeded()) {
+        const pinnedMessage = this.chat.topbar.pinnedMessage;
+        // * at the end the last bubble is the one at the bottom: no need to lay the new list out to find it
+        const lastMid = isGoingToBottomEnd && !savedPosition?.mids ? this.getLastBubble()?.dataset.mid : undefined;
+        if(lastMid !== undefined) pinnedMessage?.testMid(+lastMid, 0);
+        else pinnedMessage?.setCorrectIndex(0);
+      }
+
+      this.container.classList.toggle('has-groups', !!Object.keys(this.dateMessages).length);
+
+      log.warn('mounted chat', this.chatInner === chatInner, this.chatInner.parentElement, performance.now() - perf);
+
+      animationIntersector.unlockGroup(this.chat.animationGroup);
+      animationIntersector.checkAnimations(false, this.chat.animationGroup/* , true */);
+
+      // fastRaf(() => {
+      this.lazyLoadQueue.unlock();
+      // });
+
+      // a flow the next one has taken over (`setPeerTempId`, a jump made while this one still loads)
+      // ends in PEER_CHANGED_ERROR: what waits for it here checks `middleware()` instead, rather than
+      // leave a rejection nobody handles
+      const afterSetPromise = Promise.all([
+        setPeerPromise,
+        getHeavyAnimationPromise()
+      ]).catch((err) => {
+        if(middleware()) throw err;
+      });
+
+      // if(dialog && lastMsgID && lastMsgID !== topMessage && (this.bubbles[lastMsgID] || this.firstUnreadBubble)) {
+      if(savedPosition?.mids) {
+        // * the message the chat was left at goes back where it stood: what stood above it may not be rendered yet
+        const anchor = savedPosition.anchor && this.getBubble(savedPosition.anchor.fullMid);
+        if(anchor?.isConnected) {
+          this.pinBubble(anchor, savedPosition.anchor.top);
+        } else {
+          scrollable.setScrollPositionSilently(savedPosition.top);
+        }
+      } else if(haveToScrollToBubble) {
+        let unsetPadding: () => void;
+        if(scrollFromDown) {
+          scrollable.setScrollPositionSilently(99999);
+        } else if(scrollFromUp) {
+          const set = this.setTopPadding();
+          if(set.isPaddingNeeded) {
+            unsetPadding = set.unsetPadding;
+          }
+
+          scrollable.setScrollPositionSilently(0);
+        }
+
+        // const mountedByLastMsgId = lastMsgId ? this.getMountedBubble(lastMsgId) : {bubble: this.getLastBubble()};
+        let bubble: HTMLElement = (followingUnread && this.firstUnreadBubble) || mountedByLastMsgId?.bubble;
+        const foundTarget = !!bubble?.parentElement;
+        if(!foundTarget) {
+          bubble = this.findNextMountedBubbleByMsgId(lastMsgFullMid, false) || this.findNextMountedBubbleByMsgId(lastMsgFullMid, true);
+        }
+
+        let promise: Promise<void>;
+        // ! sometimes there can be no bubble
+        if(bubble) {
+          const lastBubble = this.getLastBubble();
+          const position: ScrollLogicalPosition = followingUnread ? 'start' : (!isJump && !isTarget && lastBubble === bubble ? 'end' : 'center');
+          const willHighlight = !followingUnread && isTarget && foundTarget;
+          const targets = willHighlight && this.getJumpTargets(bubble, lastMsgFullMid, wholeAlbum);
+
+          if(position === 'end' && lastBubble === bubble && samePeer) {
+            promise = this.scrollToEnd();
+          } else {
+            promise = this.scrollToBubble(
+              bubble,
+              position,
+              !samePeer ? FocusDirection.Static : undefined,
+              undefined,
+              willHighlight ? this.getMessageFocus(bubble, lastMsgFullMid, highlight, pollOption, targets) : undefined
+            );
+          }
+
+          if(willHighlight) {
+            // * after the scroll settles, see the same-peer branch above
+            this.waitForJumpToSettle(promise).then(() => {
+              if(!middleware()) return;
+              targets.forEach((target) => this.highlightBubble(target, highlight));
+              this.highlightBubblePollAnswer(bubble, lastMsgFullMid, pollOption);
+            });
+          }
+        }
+
+        if(isTarget && !foundTarget) {
+          afterSetPromise.then(() => {
+            if(!middleware()) return;
+            toastNew({langPackKey: 'MessageNotFound'});
+          });
+        }
+
+        if(unsetPadding) {
+          (promise || Promise.resolve()).then(() => {
+            unsetPadding();
+          });
+        }
+      } else {
+        scrollable.setScrollPositionSilently(99999);
+      }
+
+      scrollable.updateThumb(scrollable.lastScrollPosition);
+
+      // if(!cached) {
+      this.onRenderScrollSet();
+      // }
+
+      this.onScroll();
+      void this.loadEphemeralHistory();
+
+      // * once it has settled: for the next opening of a chat like it
+      afterSetPromise.then(() => pause(1000)).then(() => fastRaf(() => middleware() && this.rememberLayout())).catch(noop);
+
+      afterSetPromise.then(() => { // check whether list isn't full
+        if(!middleware()) {
+          return;
+        }
+
+        // * have to refresh scroll position, not just check with previous position - once the scroll to where the chat
+        // * opens is over: it is no scroll of the user's (as a static one is not, `scrollToBubble`), and its direction
+        // * must not keep a side from loading. A jump down to the end from far up leaves the list short of the screen
+        // * (a page of one-line messages), and only what is above can fill it
+        getHeavyAnimationPromise().then(() => {
+          if(!middleware()) {
+            return;
+          }
+
+          scrollable.lastScrollPosition = scrollable.scrollPosition;
+          scrollable.onScroll();
+        });
+
+        if(options.mediaTimestamp !== undefined) {
+          // ! :(
+          const p = cached && !samePeer && liteMode.isAvailable('animations') && this.chat.appImManager.chats.length > 1 ?
+            pause(400) :
+            Promise.resolve();
+          p.then(() => {
+            return this.playMediaWithTimestampAndMid({
+              lastMsgFullMid,
+              middleware,
+              mediaTimestamp: options.mediaTimestamp
+            });
+          });
+        }
+
+        this.settleBotStart(middleware, startsBotFromLink);
+
+        // if(cached) {
+        // this.onRenderScrollSet();
+        // }
+      });
+
+      this.chat.dispatchEvent('setPeer', lastMsgId, !isJump);
+
+      Promise.all([
+        this.setFetchReactionsInterval(afterSetPromise),
+        this.setFetchHistoryInterval({
+          afterSetPromise,
+          samePeer,
+          savedPosition
+        })
+      ]).then(() => {
+        if(!middleware()) return;
+        this.requestMissingPeerSettings(peerId);
+        log('scrolledAllDown:', scrollable.loadedAll.bottom);
+        if(scrollable.loadedAll.bottom && topMessageFullMid !== EMPTY_FULL_MID && !this.unreaded.size) {
+          this.onScrolledAllDown();
+        }
+      });
+
+      if(chatType === ChatType.Chat && !this.chat.isForumTopic) {
+        const dialog = await m(
+          monoforumThreadId ?
+            this.managers.monoforumDialogsStorage.getDialogByParent(peerId, monoforumThreadId) :
+            this.managers.appMessagesManager.getDialogOnly(peerId)
+        );
+
+        if(dialog?.pFlags.unread_mark) {
+          this.managers.appMessagesManager.markDialogUnread({peerId, monoforumThreadId: this.chat.monoforumThreadId, read: true});
+        }
+      }
+
+      // this.chatInner.classList.remove('disable-hover', 'is-scrolling'); // warning, performance!
+    }).catch((err) => {
+      dropOpeningReadMaxId();
+      log.error('setPeer promise error:', err);
+      if(!middleware()) {
+        this.preloader.detach();
+      }
+
+      throw err;
+    });
+
+    return {cached, promise: setPeerPromise};
+  }
+
+  public playMediaWithTimestampAndMid({
+    middleware,
+    lastMsgFullMid,
+    mediaTimestamp
+  }: {
+    middleware: () => boolean,
+    lastMsgFullMid: FullMid,
+    mediaTimestamp: number
+  }) {
+    this.getMountedBubble(lastMsgFullMid).then((mounted) => {
+      if(!middleware() || !mounted) {
+        return;
+      }
+
+      this.playMediaWithTimestamp(this.getJumpTargets(mounted.bubble, lastMsgFullMid)[0], mediaTimestamp);
+    });
+  }
+
+  public playMediaWithTimestamp(element: HTMLElement, timestamp: number) {
+    const bubble = findUpClassName(element, 'bubble');
+    const groupedItem = findUpClassName(element, 'grouped-item');
+    const groupedItemMid = groupedItem ? +groupedItem.dataset.mid : +bubble.dataset.textMid;
+    let attachment = bubble.querySelector<HTMLElement>('.attachment');
+    if(attachment) {
+      if(groupedItemMid) {
+        attachment = attachment.querySelector(`[data-mid="${groupedItemMid}"]`);
+      }
+
+      const media = attachment.querySelector<HTMLElement>('img, video, canvas');
+      this.checkTargetForMediaViewer(media, undefined, timestamp);
+      return;
+    }
+
+    const audio = (groupedItem || bubble).querySelector<AudioElement>('.audio');
+    if(audio) {
+      audio.playWithTimestamp(timestamp);
+      return;
+    }
+
+    const replyToPeerId = bubble.dataset.replyToPeerId.toPeerId();
+    const replyToMid = +bubble.dataset.replyToMid;
+    if(replyToPeerId && replyToMid) {
+      if(replyToPeerId === this.peerId) {
+        this.chat.setMessageId({lastMsgId: replyToMid, mediaTimestamp: timestamp});
+      } else {
+        this.chat.appImManager.setInnerPeer({
+          stack: this.chat.appImManager.getStackFromElement(bubble),
+          peerId: replyToPeerId,
+          mediaTimestamp: timestamp
+        });
+      }
+    }
+  }
+
+  private async setFetchReactionsInterval(afterSetPromise: Promise<any>) {
+    const middleware = this.getMiddleware();
+    const needReactionsInterval = this.chat.isChannel;
+    if(needReactionsInterval) {
+      const fetchReactions = () => {
+        if(!middleware()) return;
+
+        const rendered = this.getRenderedHistory(undefined, true);
+        const map: Map<PeerId, Set<number>> = new Map();
+        for(const fullMid of rendered) {
+          let message = this.chat.getMessage(fullMid);
+          if(!message) continue
+
+          if(message._ === 'message') {
+            message = apiManagerProxy.getGroupsFirstMessage(message);
+          }
+
+          const {peerId, mid} = message;
+
+          let mids = map.get(peerId);
+          if(!mids) {
+            map.set(peerId, mids = new Set());
+          }
+
+          mids.add(mid);
+        }
+
+        const promises = [...map.entries()].map(([peerId, mids]) => {
+          return this.managers.appReactionsManager.getMessagesReactions(peerId, [...mids]);
+        });
+
+        // * a round the server refused is over too: the next one asks again
+        Promise.all(promises).catch(noop).then(() => {
+          setTimeout(fetchReactions, 10e3);
+        });
+      };
+
+      Promise.all([afterSetPromise, getHeavyAnimationPromise(), pause(500)]).then(() => {
+        fetchReactions();
+      });
+    }
+  }
+
+  private async setFetchHistoryInterval({
+    // lastMsgId,
+    // topMessage,
+    afterSetPromise,
+    savedPosition,
+    samePeer
+  }: {
+    // lastMsgId: number,
+    // topMessage: number,
+    afterSetPromise: Promise<any>,
+    savedPosition: ChatSavedPosition,
+    samePeer: boolean
+  }) {
+    const peerId = this.peerId;
+    if(peerId.isUser()) {
+      return;
+    }
+
+    const middleware = this.getMiddleware();
+    const needFetchInterval = await this.managers.appMessagesManager.isFetchIntervalNeeded(peerId);
+    const needFetchNew = !!savedPosition?.mids || needFetchInterval;
+    if(!needFetchNew) {
+      return;
+    }
+
+    await afterSetPromise;
+    if(!middleware()) {
+      return;
+    }
+
+    const chatId = peerId.toChatId();
+    middleware.onClean(() => {
+      this.managers.apiUpdatesManager.unsubscribeFromChannelUpdates(chatId);
+    });
+
+    this.managers.apiUpdatesManager.subscribeToChannelUpdates(chatId);
+    // return;
+
+    // this.setLoaded('bottom', false);
+    // this.scrollable.checkForTriggers();
+
+    // if(!needFetchInterval) {
+    //   return;
+    // }
+
+    // const f = () => {
+    //   this.fetchNewPromise = new Promise<void>(async(resolve) => {
+    //     if(!middleware() || !(await this.managers.appMessagesManager.isFetchIntervalNeeded(peerId))) {
+    //       resolve();
+    //       return;
+    //     }
+
+    //     this.managers.appMessagesManager.getNewHistory(peerId, this.chat.threadId).then((result) => {
+    //       if(!middleware() || !result) {
+    //         resolve();
+    //         return;
+    //       }
+
+    //       const {isBottomEnd} = result;
+    //       if(this.scrollable.loadedAll.bottom && this.scrollable.loadedAll.bottom !== isBottomEnd) {
+    //         this.setLoaded('bottom', isBottomEnd);
+    //         this.onScroll();
+    //       }
+
+    //       setTimeout(f, 30e3);
+    //       resolve();
+    //     });
+    //   }).finally(() => {
+    //     this.fetchNewPromise = undefined;
+    //   });
+    // };
+
+    // if(samePeer) {
+    //   setTimeout(f, 30e3);
+    // } else {
+    //   f();
+    // }
+  }
+
+  /**
+   * The history is read where it is shown as itself: a chat, a thread of comments. A list of its pinned messages, of
+   * its recent actions or of search results shows some of them and reads nothing (tdesktop's PinnedWidget and admin
+   * log neither), nor does a preview
+   */
+  private isHistoryRead() {
+    return !this.chat.isPreview && (this.chat.type === ChatType.Chat || this.chat.type === ChatType.Discussion);
+  }
+
+  public onScrolledAllDown() {
+    if(this.isHistoryRead()) {
+      const {peerId, threadId, monoforumThreadId} = this.chat;
+      const historyMaxId = this.chat.getHistoryMaxId();
+
+      this.managers.appMessagesManager.readHistory({
+        peerId,
+        maxId: historyMaxId,
+        threadId,
+        monoforumThreadId,
+        force: true
+      });
+    }
+  }
+
+  public async finishPeerChange() {
+    const {canWrite, hasMessages} = await namedPromises({
+      canWrite: this.chat.canSend(),
+      hasMessages: this.chat.hasMessages()
+    });
+
+    const middleware = this.getMiddleware();
+
+    const {isBroadcast, isLikeGroup, peerId, isTemporaryThread, noInput} = this.chat;
+
+    return () => {
+      this.chatInner.classList.toggle('has-rights', canWrite);
+      this.container.classList.toggle('is-chat-input-hidden', !canWrite && !this.chat.appConfig.freeze_since_date);
+
+      const tmpThreadCls = 'is-temporary-thread';
+      if(!isTemporaryThread && this.container.classList.contains(tmpThreadCls)) {
+        setTimeout(() => {
+          if(!middleware()) return;
+          this.container.classList.remove(tmpThreadCls);
+        }, 200); // leave some time for the message to appear
+      }
+      if(isTemporaryThread) {
+        this.container.classList.add(tmpThreadCls);
+      }
+
+      [this.chatInner, this.remover].forEach((element) => {
+        element.classList.toggle('is-chat', isLikeGroup);
+        element.classList.toggle('no-messages', !hasMessages);
+        element.classList.toggle('with-message-avatars', isVerificationBot(peerId));
+        element.classList.toggle('is-broadcast', isBroadcast);
+      });
+
+      this.createResizeObserver();
+      // Baseline the container width once the chat is laid out, so the very first window resize already detects the
+      // width change and re-pins scroll, instead of just setting the baseline. Read in the next frame: this runs right
+      // before the new bubbles are mounted, and a read here laid out the list on its way out
+      fastRaf(() => {
+        if(!middleware()) return;
+        this.reflowWasWidth = this.scrollable.container.offsetWidth || this.reflowWasWidth;
+      });
+    };
+  }
+
+  public updateHasMessages() {
+    const hasMessages = this.hasRenderedEphemeralMessages() || this.chat.hasMessages();
+    [this.chatInner, this.remover].forEach((element) => {
+      element.classList.toggle('no-messages', !hasMessages);
+    });
+  }
+
+  private async processBatch(...args: Parameters<ChatBubbles['batchProcessor']['process']>) {
+    let [loadQueue, m, log] = args;
+
+    const filterQueue = (queue: typeof loadQueue) => {
+      return queue.filter((details) => {
+        if(!details) {
+          return false;
+        }
+
+        // message can be deleted during rendering, or sent: `message_sent` has moved a send confirmed while
+        // it was rendering to its server id, and `history_update` gives its item that identity once this
+        // batch is done. Dropping it here left its bubble out of every group, unseen until the chat reopened
+        const {message} = details;
+        const sentMid = this.changedMids.get(getMid(message));
+        if(sentMid === undefined || !isMessage(message)) {
+          return this.getBubble(this.makeFullMid(message)) === details.bubble;
+        }
+
+        if(this.getBubble(makeFullMid(message.peerId, sentMid)) !== details.bubble) {
+          return false;
+        }
+
+        // a scheduled chat has no `history_update`, nor an item yet for `message_sent` to give the id to: it is
+        // grouped by the message it has become
+        if(this.chat.type === ChatType.Scheduled) {
+          details.message = this.chat.getMessageByPeer(message.peerId, sentMid) as MyMessage || message;
+        }
+
+        return true;
+      });
+    };
+
+    loadQueue = filterQueue(loadQueue);
+
+    log('messages rendered');
+
+    const {firstGroup, lastGroup} = this.bubbleGroups;
+    const firstMid = firstGroup?.firstMid;
+    const lastMid = lastGroup?.lastMid;
+
+    const {groups, avatarPromises} = this.groupBubbles(loadQueue.filter((details) => details.updatePosition));
+
+    const {firstGroup: newFirstGroup, lastGroup: newLastGroup} = this.bubbleGroups;
+    const newFirstMid = newFirstGroup?.firstMid;
+    let newLastMid = newLastGroup?.lastMid;
+
+    // * fix slicing sponsored before render
+    const sponsoredItem = loadQueue.find(({message}) => message?._ === 'message' && message.pFlags.sponsored);
+    if(sponsoredItem) {
+      newLastMid = getMid(sponsoredItem.message);
+    }
+
+    const changedTop = firstMid !== newFirstMid;
+    const changedBottom = !!lastGroup && lastMid !== newLastMid; // if has no groups then save bottom scroll position
+
+    const firstItem = loadQueue?.[0];
+    const firstReverse = firstItem?.reverse;
+    const isOneSide = loadQueue.every(({reverse}) => reverse === firstReverse);
+    // const reverse = loadQueue[0]?.reverse;
+    const reverse = isOneSide ? firstReverse : changedTop && !changedBottom;
+
+    log('changed ends', changedTop, changedBottom);
+
+    // if(groups.length > 2 && loadQueue.length === 1) {
+    //   debugger;
+    // }
+
+    const promises = loadQueue.reduce((acc, details) => {
+      const perf = performance.now();
+
+      const promises = details.promises.slice();
+      const timePromises = promises.map(async(promise) => (await promise, performance.now() - perf));
+      Promise.all(timePromises).then((times) => {
+        log.groupCollapsed('media message time', performance.now() - perf, details, times);
+        times.forEach((time, idx) => {
+          log('media message time', time, idx, promises[idx]);
+        });
+        log.groupEnd();
+      });
+
+      // if(details.updatePosition) {
+      //   if(res) {
+      //     groups.add(res.group);
+      //     if(details.needAvatar) {
+      //       details.promises.push(res.group.createAvatar(details.message));
+      //     }
+      //   }
+      // }
+
+      acc.push(...details.promises);
+      return acc;
+    }, [] as Promise<any>[]);
+
+    promises.push(...avatarPromises);
+    // promises.push(pause(200));
+
+    // * это нужно для того, чтобы если захочет подгрузить reply или какое-либо сообщение, то скролл не прервался и не сдвинулся
+    // * если добавить этот промис - в таком случае нужно сделать, чтобы скроллило к последнему сообщению после рендера
+    // * например, к рекламе
+    promises.push(getHeavyAnimationPromise());
+    // a change still being shown goes to its end first: a bubble rendered anew goes from there
+    if(this.bubbleTransitionPromise) promises.push(this.bubbleTransitionPromise);
+
+    log('media promises to call', promises, loadQueue, this.isHeavyAnimationInProgress);
+    // * `.catch(noop)` only covers a rejection — a promise that simply never settles slips straight
+    // * through it and parks this batch forever. Everything behind the queue then hangs with it
+    // * (`performHistoryResult` → `Chat.setPeerPromise`), which leaves the chat permanently
+    // * unopenable with no error anywhere. Bound the wait: the bubbles are already built, so at
+    // * worst some media finishes loading after mount instead of before it.
+    await m(withTimeout(Promise.all([...promises, this.setUnreadDelimiter()]).catch(noop), MEDIA_PROMISES_TIMEOUT)); // не нашёл места лучше
+    // * a list built off screen (an opening) has no scroll or live layout to keep: it is mounted by setPeer, without
+    // * waiting for a frame first. Updates to a mounted list keep the frame boundary
+    if(this.chatInner.parentElement) await m(fastRafPromise()); // have to be the last
+    log('media promises end');
+
+    loadQueue = filterQueue(loadQueue);
+
+    const {restoreScroll, scrollSaver} = this.prepareToSaveScroll(
+      reverse,
+      firstMid === newFirstMid,
+      lastMid === newLastMid
+    );
+    // if(this.messagesQueueOnRender) {
+    // this.messagesQueueOnRender();
+    // }
+
+    if(loadQueue.some((details) => details.canAnimateLadder)) {
+      this.messagesQueueOnRenderAdditional?.();
+    }
+
+    const renderedBubbles = new Set(loadQueue.map(({bubble}) => bubble));
+    const replacementTransition = this.captureReplacementTransition(renderedBubbles);
+    // what it is shown changing from lives on till it is shown: its pictures may still be on their way (a sticker's
+    // frame, asked of the worker that draws it)
+    const replacedSources: HTMLElement[] = [];
+    this.commitBubbleReplacements(renderedBubbles, scrollSaver, groups, replacementTransition && replacedSources);
+
+    if(this.chat.selection.isSelecting) {
+      loadQueue.forEach(({bubble}) => {
+        this.chat.selection.toggleElementCheckbox(bubble, true);
+      });
+    }
+
+    loadQueue.forEach(({message, bubble, updatePosition}) => {
+      if(isMessage(message) && message.pFlags.local && updatePosition) {
+        this.chatInner[(message as Message.message).pFlags.sponsored ? 'append' : 'prepend'](bubble);
+        return;
+      }
+    });
+
+    this.bubbleGroups.mountUnmountGroups(groups);
+    if(this.chat.selection.isSelecting) {
+      this.chat.selection.refreshSelectionGroup();
+    }
+    // this.bubbleGroups.findIncorrentPositions();
+
+    this.updatePlaceholderPosition?.();
+
+    restoreScroll?.();
+    this.showBubbleTransition(replacementTransition);
+    if(replacedSources.length) {
+      (this.bubbleTransitionPromise || Promise.resolve()).then(() => {
+        replacedSources.forEach((bubble) => bubble.middlewareHelper.destroy());
+      });
+    }
+
+    m(pause(!this.chat.setPeerPromise ? 0 : 1000))
+    .then(() => m(getHeavyAnimationPromise()))
+    .then(() => {
+      this.lazyLoadQueue.setAllSeen();
+    }).catch(noop);
+
+    // this.setStickyDateManually();
+  }
+
+  public renderMessagesQueue(options: ReturnType<ChatBubbles['safeRenderMessage']>) {
+    return this.batchProcessor.addToQueue(options);
+  }
+
+  /**
+   * Bubbles rendered anew in place of ones that can be seen (an edit that changed what a bubble is made of: a reply)
+   * are shown changing into them (`bubbleTransitions`) — when that is all the batch does, as what it adds moves the
+   * list by itself, and no other change is being shown: what is moving cannot be read where it stands
+   */
+  private captureReplacementTransition(renderedBubbles: ReadonlySet<HTMLElement>) {
+    if(this.bubbleTransitionPromise) {
+      return;
+    }
+
+    const replaced = new Map<HTMLElement, HTMLElement>();
+    for(const [bubble, transaction] of this.bubblesToReplace) {
+      if(
+        renderedBubbles.has(bubble) &&
+        this.getBubble(transaction.fullMid) === bubble &&
+        transaction.source.isConnected
+      ) {
+        replaced.set(transaction.source, bubble);
+      }
+    }
+
+    if(!replaced.size || replaced.size !== renderedBubbles.size) {
+      return;
+    }
+
+    const transition = captureBubbleTransition({
+      bubbles: replaced.keys(),
+      container: this.scrollable.container,
+      busy: (bubble) => !!this.sendFlights?.whenLanded(bubble),
+      replacing: true
+    });
+    replaced.forEach((bubble, source) => transition?.replace(source, bubble));
+    return transition;
+  }
+
+  /**
+   * @param keptSources where to put the bubbles replaced, taken out but not torn down: the caller does that later
+   */
+  private commitBubbleReplacements(
+    renderedBubbles: ReadonlySet<HTMLElement>,
+    scrollSaver: ScrollSaver,
+    groups: ReturnType<ChatBubbles['groupBubbles']>['groups'],
+    keptSources?: HTMLElement[]
+  ) {
+    for(const [bubble, transaction] of this.bubblesToReplace) {
+      if(!renderedBubbles.has(bubble)) {
+        continue;
+      }
+
+      if(this.getBubble(transaction.fullMid) !== bubble) {
+        // Another synchronous owner (deletion/rekey) won while this batch was waiting. Do not let
+        // the stale transaction eject the visible source when its old queue entry finally arrives.
+        this.bubblesToReplace.delete(bubble);
+        this.bubbleGroups.changeBubbleByBubble(bubble, transaction.source);
+        this.hiddenLinksPendingBubbles.delete(bubble);
+        this.ejectWatchedBubble(bubble);
+        continue;
+      }
+
+      if(scrollSaver) {
+        scrollSaver.replaceSaved(transaction.source, bubble);
+      }
+
+      this.hiddenLinksPendingBubbles.delete(transaction.source);
+      if(keptSources) {
+        this.unobserveBubble(transaction.source);
+        transaction.source.remove();
+        keptSources.push(transaction.source);
+      } else {
+        this.ejectWatchedBubble(transaction.source);
+      }
+
+      const regroupMessage = transaction.regroupMessage;
+      if(regroupMessage) {
+        // Recreate the logical item in this same commit turn, after the old DOM has remained visible
+        // through all async work. Passing `false` defers every affected group mount to the single
+        // `mountUnmountGroups` call below.
+        const regrouped = this.repositionMessageBubble(bubble, regroupMessage, false);
+        for(const group of regrouped) {
+          if(!groups.includes(group)) groups.push(group);
+        }
+      }
+
+      const item = this.bubbleGroups.getItemByBubble(bubble);
+      if(!item) {
+        this.log.error('NO ITEM BY BUBBLE', bubble);
+      } else {
+        item.mounted = false;
+        if(item.group && !groups.includes(item.group)) {
+          groups.push(item.group);
+        }
+      }
+
+      this.bubblesToReplace.delete(bubble);
+    }
+  }
+
+  private findPendingBubbleReplacement(bubble: HTMLElement) {
+    const direct = this.bubblesToReplace.get(bubble);
+    if(direct) return {candidate: bubble, transaction: direct};
+
+    for(const [candidate, transaction] of this.bubblesToReplace) {
+      if(transaction.source === bubble) return {candidate, transaction};
+    }
+  }
+
+  private adoptBubbleReplacementSource(transaction: BubbleReplacementTransaction) {
+    const message = transaction.regroupMessage;
+    if(!message) return;
+
+    const bubble = transaction.source;
+    const previousFullMid = getBubbleFullMid(bubble);
+    const previousMid = +bubble.dataset.mid;
+    if(previousFullMid && previousFullMid !== transaction.fullMid && this.bubbles[previousFullMid] === bubble) {
+      delete this.bubbles[previousFullMid];
+    }
+
+    this.bubbles[transaction.fullMid] = bubble;
+    this.skippedMids.delete(transaction.fullMid);
+    bubble.dataset.mid = '' + message.mid;
+    bubble.dataset.timestamp = '' + message.date;
+    this.repositionMessageBubblePreservingScroll(bubble, message);
+    this.updateSolidMessageBodyIdentity(bubble, message, previousMid, true);
+  }
+
+  private cancelPendingBubbleReplacement(bubble: HTMLElement) {
+    const replacement = this.findPendingBubbleReplacement(bubble);
+    if(!replacement) return {bubble, cancelled: false};
+    const {candidate, transaction} = replacement;
+
+    // A server-id rekey owns the visible message, not an uncommitted staging render. Cancel the
+    // replacement transaction first; the normal message_sent path below can then move the live
+    // bubble/controller to the final id. A late staging resolve/reject no longer owns any mapping.
+    this.bubblesToReplace.delete(candidate);
+    if(this.bubbles[transaction.fullMid] === candidate) {
+      if(transaction.rollbackFullMidBubble) {
+        this.bubbles[transaction.fullMid] = transaction.rollbackFullMidBubble;
+      } else {
+        delete this.bubbles[transaction.fullMid];
+      }
+    }
+    this.skippedMids.delete(transaction.fullMid);
+    this.bubbleGroups.changeBubbleByBubble(candidate, transaction.source);
+    this.hiddenLinksPendingBubbles.delete(candidate);
+    this.hiddenLinksPendingBubbles.delete(transaction.source);
+    setBubbleHiddenLinksPending(transaction.source, false);
+    setBubbleHiddenLinksFallback(transaction.source, false);
+    delete transaction.source.dataset.hiddenLinks;
+    this.ejectWatchedBubble(candidate);
+    return {bubble: transaction.source, cancelled: true};
+  }
+
+  public groupBubbles(items: Array<{
+    // Awaited<ReturnType<ChatBubbles['safeRenderMessage']>> &
+    bubble: HTMLElement,
+    message: Message.message | Message.messageService | AdminLog,
+    reverse: boolean
+  }/*  & {
+    unmountIfFound?: boolean
+  } */>) {
+    let modifiedGroups: typeof groups;
+
+    if(this.chat.type === ChatType.Scheduled) {
+      modifiedGroups = new Set();
+      items.forEach(({bubble, message}) => {
+        const item = this.bubbleGroups.getItemByBubble(bubble);
+        const group = item?.group;
+        if(group && item.message.date !== message.date) {
+          this.bubbleGroups.removeItem(item);
+          modifiedGroups.add(group);
+        }
+      });
+    }
+
+    // an ephemeral message takes its place from the history around it, so that history goes in first
+    const [ephemeralItems, historyItems] = partition(items, ({message}) => isEphemeralMessage(message));
+    for(const {bubble, message, reverse} of historyItems.concat(ephemeralItems)) {
+      this.bubbleGroups.prepareForGrouping(bubble, message, reverse);
+    }
+
+    const groups = this.bubbleGroups.groupUngrouped();
+
+    const avatarPromises = Array.from(groups).map((group) => {
+      const firstItem = group.firstItem;
+      if(!firstItem) {
+        return;
+      }
+
+      const shouldHaveAvatar = this.isAvatarNeeded(firstItem.message);
+      if(shouldHaveAvatar) {
+        if(group.avatar) {
+          return;
+        }
+
+        return group.createAvatar(firstItem.message);
+      }
+    }).filter(Boolean);
+
+    if(modifiedGroups) {
+      for(const group of modifiedGroups) {
+        groups.add(group);
+      }
+    }
+
+    return {
+      groups: [...groups],
+      avatarPromises
+    };
+  }
+
+  public getMiddleware(additionalCallback?: () => boolean) {
+    return this.middlewareHelper.get(additionalCallback);
+  }
+
+  private async wrapMediaSpoiler({
+    media,
+    promise,
+    middleware,
+    attachmentDiv,
+    sensitive,
+    inLink
+  }: {
+    media: Photo.photo | MyDocument,
+    promise: Promise<any>,
+    middleware: Middleware,
+    attachmentDiv: HTMLElement,
+    sensitive?: boolean,
+    inLink?: boolean
+  }) {
+    // * out of sight until it is covered: what shows a message before its promises settle (a poll's link preview)
+    // * would show the media first; and covered even if it failed to load
+    attachmentDiv.classList.add('is-spoiler-pending');
+    const result = await promise.catch(noop);
+    if(!middleware()) {
+      return;
+    }
+
+    const {width, height} = attachmentDiv.style;
+    const container = await wrapMediaSpoiler({
+      media,
+      width: parseInt(width),
+      height: parseInt(height),
+      middleware,
+      sensitive,
+      inLink,
+      video: result?.video instanceof HTMLVideoElement ? result.video : undefined,
+      animationGroup: this.chat.animationGroup
+    });
+
+    if(!middleware()) {
+      return;
+    }
+
+    attachmentDiv.append(container);
+    attachmentDiv.classList.remove('is-spoiler-pending');
+  }
+
+  public wrapSticker(
+    context: BubbleContext,
+    options: {
+      doc: MyDocument | Promise<MyDocument>,
+      size?: MediaSize,
+      container: HTMLElement,
+      loop?: boolean,
+      play?: boolean,
+      boxSize?: MediaSize,
+      manual?: boolean,
+      initFrame?: number,
+      // it flies into its message as the list scrolls to it, while the list's queue is locked: it is loaded at once,
+      // to fly as itself
+      eager?: boolean,
+      noFadeIn?: boolean,
+      width?: number,
+      height?: number,
+      sensitive?: boolean
+    }
+  ) {
+    const {
+      size,
+      loop = true,
+      play = true,
+      manual,
+      initFrame,
+      eager,
+      container,
+      noFadeIn,
+      doc,
+      width,
+      height,
+      sensitive
+    } = options;
+    let {boxSize} = options;
+    context.bubble.classList.add('sticker');
+    context.canHaveTail = false;
+    context.isStandaloneMedia = true;
+
+    const isAnimated = !!size || (doc as MyDocument).animated;
+    if(isAnimated) {
+      context.bubble.classList.add('sticker-animated');
+    }
+
+    const sizes = mediaSizes.active;
+    const isEmoji = context.bubble.classList.contains('emoji-big');
+    boxSize ||= isEmoji ? sizes.emojiSticker : (isAnimated ? sizes.animatedSticker : sizes.staticSticker);
+    setAttachmentSize({
+      photo: size ? undefined : doc as MyDocument,
+      size,
+      element: container,
+      boxWidth: boxSize.width,
+      boxHeight: boxSize.height,
+      noMinSize: true
+    });
+    context.bubbleContainer.style.minWidth = container.style.width;
+    context.bubbleContainer.style.minHeight = container.style.height;
+    if(sensitive) {
+      this.coverSensitiveSticker(container, context.middleware);
+    }
+
+    const noPremium = (context.messageMedia as MessageMedia.messageMediaDocument)?.pFlags?.nopremium;
+    return callbackify(doc, (doc) => {
+      if(!context.middleware()) {
+        return;
+      }
+
+      const ret = wrapSticker({
+        doc,
+        div: container,
+        middleware: context.middleware,
+        lazyLoadQueue: manual || eager ? undefined : this.lazyLoadQueue,
+        group: manual ? 'none' : this.chat.animationGroup,
+        play,
+        liteModeKey: manual ? false : 'stickers_chat',
+        loop: isEmoji ? false : loop, // * big emoji should be played once
+        emoji: isEmoji ? context.messageMessage : undefined,
+        withThumb: true,
+        loadPromises: context.loadPromises,
+        isOut: context.isOut,
+        noPremium,
+        scrollable: this.scrollable,
+        showPremiumInfo: () => {
+          const a = anchorCallback(() => {
+            hideToast();
+            showStickersPopup(doc.stickerSetInput, undefined, this.chat.input);
+          });
+
+          toastNew({
+            langPackKey: 'Sticker.Premium.Click.Info',
+            langPackArguments: [a]
+          });
+        },
+        initFrame,
+        needFadeIn: noFadeIn ? false : undefined,
+        width,
+        height
+      });
+
+      const effectThumb = getStickerEffectThumb(doc);
+      // * a premium one's effect would play it over the chat, out of its cover
+      if((effectThumb || isEmoji) && !sensitive && (context.isInUnread || context.isOutgoing)/*  || true */) {
+        this.observer.observe(context.bubble, this.stickerEffectObserverCallback);
+      }
+
+      return ret;
+    });
+  }
+
+  // * it stands blurred and still until it is revealed
+  private coverSensitiveSticker(container: HTMLElement, middleware: Middleware) {
+    container.classList.add('is-sensitive-sticker', 'is-blurred');
+    let release = animationIntersector.holdUnder(container);
+    const letGo = () => {
+      release?.();
+      release = undefined;
+    };
+    middleware.onClean(letGo);
+    container.append(wrapSensitiveStickerSpoiler({
+      middleware,
+      onReveal: () => {
+        container.classList.remove('is-blurred');
+        letGo();
+      }
+    }));
+  }
+
+  public getBubble(peerId: PeerId | string, mid?: number) {
+    let fullMid: string;
+    if(mid) {
+      fullMid = makeFullMid(peerId as PeerId, mid);
+    } else {
+      fullMid = peerId as string;
+    }
+
+    return this.bubbles[fullMid];
+  }
+
+  /**
+   * Render a poll-link preview through the regular message renderer. Keeping the
+   * preview on this path means every webpage kind (documents, stories, gifts,
+   * sticker sets, large/small photos, Instant View, and future additions) stays
+   * identical to a webpage in a chat bubble.
+   */
+  public async renderWebPagePreview({
+    message,
+    media,
+    middleware
+  }: {
+    message: Message.message,
+    media: MessageMedia.messageMediaWebPage,
+    middleware: Middleware
+  }) {
+    const middlewareHelper = getMiddleware();
+    const previewMiddleware = middlewareHelper.get();
+    middleware.onDestroy(() => middlewareHelper.destroy());
+
+    const url = media.webpage._ === 'webPage' ? media.webpage.url : '';
+    const urlEntity: MessageEntity.messageEntityUrl = {
+      _: 'messageEntityUrl',
+      offset: 0,
+      length: url.length
+    };
+    const previewMessage: Message.message = {
+      ...message,
+      pFlags: {
+        out: message.pFlags.out,
+        is_outgoing: message.pFlags.is_outgoing
+      },
+      message: url,
+      entities: [urlEntity],
+      media,
+      grouped_id: undefined,
+      reply_markup: undefined,
+      reply_to: undefined,
+      replies: undefined,
+      reactions: undefined,
+      fwd_from: undefined,
+      fwdFromId: undefined,
+      via_bot_id: undefined,
+      viaBotId: undefined,
+      post_author: undefined,
+      factcheck: undefined,
+      suggested_post: undefined,
+      rich_message: undefined,
+      sponsoredMessage: undefined,
+      totalEntities: [urlEntity]
+    };
+
+    const {bubble} = await this.renderPreviewBubble(previewMessage, middlewareHelper);
+    if(!middleware() || !previewMiddleware()) return;
+
+    const box = bubble.querySelector<HTMLAnchorElement>('.webpage');
+    box?.remove();
+    return box;
+  }
+
+  /**
+   * A message rendered by the regular renderer into a bubble of its own, outside the list (`previewOnly`), alive while
+   * `middlewareHelper` is
+   */
+  public async renderPreviewBubble(message: Message.message, middlewareHelper: MiddlewareHelper) {
+    const bubble = document.createElement('div');
+    bubble.middlewareHelper = middlewareHelper;
+    bubble.dataset.mid = '' + message.mid;
+    bubble.dataset.peerId = '' + message.peerId;
+    bubble.dataset.timestamp = '' + message.date;
+    const result = await this.renderMessage({message, bubble, middleware: middlewareHelper.get(), previewOnly: true});
+    return {bubble, result};
+  }
+
+  /** Dispatch the same webpage action used by the chat's delegated listener. */
+  public dispatchWebPageClick(webPageContainer: HTMLAnchorElement, event: MouseEvent) {
+    const target = event.target instanceof Element ? event.target : undefined;
+    // * as in the chat, which sees it first: a spoiler over the preview's media is revealed, the link is not followed
+    const mediaSpoiler = target?.closest<HTMLElement>('.media-spoiler-container');
+    if(mediaSpoiler) {
+      onMediaSpoilerClick({mediaSpoiler, event});
+      cancelWebPageLink(event);
+      return false;
+    }
+
+    if(target?.closest('.webpage-name-tip')) return false;
+    if(target?.closest('.webpage-preview-resizer')) {
+      event.preventDefault();
+      cancelWebPageLink(event);
+      return false;
+    }
+
+    const targetAnchor = target?.closest('a') || webPageContainer;
+
+    const callback = webPageContainer.dataset.callback as Parameters<typeof addAnchorListener>[0]['name'];
+    if(callback) {
+      (window as any)[callback](targetAnchor, event);
+      cancelWebPageLink(event);
+    }
+
+    // * a footer button has an action of its own (a shared contact's MESSAGE / ADD)
+    const footerButton = target?.closest<HTMLElement>('.webpage-footer-button');
+    const webPageCallback = (footerButton && this.webPageClickCallbacks.get(footerButton)) ||
+      this.webPageClickCallbacks.get(webPageContainer);
+    webPageCallback?.(event);
+    return true;
+  }
+
+  private async safeRenderMessage({
+    message,
+    reverse,
+    bubble,
+    updatePosition = true,
+    processResult,
+    canAnimateLadder,
+    sight
+  }: {
+    message: Message.message | Message.messageService | AdminLog,
+    reverse?: boolean,
+    bubble?: HTMLElement,
+    updatePosition?: boolean,
+    processResult?: (result: ReturnType<ChatBubbles['renderMessage']>, bubble: HTMLElement) => typeof result,
+    canAnimateLadder?: boolean,
+    sight?: RenderSight
+  }) {
+    const fullMid = this.makeFullMid(message);
+    if(!message) {
+      return;
+    }
+
+    if(this.renderingMessages.has(fullMid)) {
+      // an update of a message still being rendered (an edit, the next items of an album) is not dropped: it
+      // runs on that render's bubble once it is done, the latest one only
+      if(bubble) {
+        this.pendingRerenders.set(fullMid, {message, reverse, updatePosition, processResult, canAnimateLadder});
+      }
+
+      return;
+    }
+
+    if(this.getBubble(fullMid) && !bubble) {
+      return;
+    }
+
+    const chatInnerMiddlewareHelper = this.chatInnerMiddlewareHelper;
+    if(!chatInnerMiddlewareHelper) return;
+    const chatInner = this.chatInner;
+    const middlewareHelper = chatInnerMiddlewareHelper.get().create();
+    const middleware = middlewareHelper.get();
+    const realMiddleware = this.getMiddleware();
+    const replacedBubble = bubble;
+    const previousFullMidBubble = this.bubbles[fullMid];
+    const previousFullMidSkipped = this.skippedMids.has(fullMid);
+    const bubbleGroups = this.bubbleGroups;
+    let newBubble: HTMLElement;
+    let replacementTransaction: BubbleReplacementTransaction;
+    let discarded = false;
+    const discardUncommittedBubble = () => {
+      if(discarded || !newBubble) return;
+      discarded = true;
+
+      const ownsFullMid = this.bubbles[fullMid] === newBubble;
+      const ownsReplacement = !!replacementTransaction &&
+        this.bubblesToReplace.get(newBubble) === replacementTransaction;
+
+      if(ownsFullMid) {
+        const rollbackBubble = ownsReplacement ?
+          (replacementTransaction.regroupMessage ?
+            replacementTransaction.source :
+            replacementTransaction.rollbackFullMidBubble) :
+          previousFullMidBubble;
+        if(rollbackBubble) this.bubbles[fullMid] = rollbackBubble;
+        else delete this.bubbles[fullMid];
+
+        if(replacedBubble) {
+          if(ownsReplacement && replacementTransaction.regroupMessage) {
+            this.skippedMids.delete(fullMid);
+          } else {
+            const wasSkipped = ownsReplacement ?
+              replacementTransaction.previousFullMidSkipped :
+              previousFullMidSkipped;
+            if(wasSkipped) this.skippedMids.add(fullMid);
+            else this.skippedMids.delete(fullMid);
+          }
+        }
+      }
+
+      if(ownsReplacement) {
+        this.bubblesToReplace.delete(newBubble);
+        bubbleGroups.changeBubbleByBubble(newBubble, replacementTransaction.source);
+        if(ownsFullMid && replacementTransaction.regroupMessage) {
+          this.adoptBubbleReplacementSource(replacementTransaction);
+        }
+      }
+
+      this.hiddenLinksPendingBubbles.delete(newBubble);
+
+      // Once the peer middleware is stale, an already-visible bubble inside its captured root must
+      // survive until that root detaches. Every other undefined result is uncommitted: this includes
+      // disconnected bubbles, current-generation failures, and stale processResult mounts in a newer root.
+      const keepVisibleUntilGenerationDetach = !realMiddleware() &&
+        newBubble.isConnected &&
+        chatInner.contains(newBubble);
+      if(!keepVisibleUntilGenerationDetach) {
+        // * what its render registered with the observers (an unread one, a post's views) goes with it
+        this.unobserveBubble(newBubble);
+        newBubble.remove();
+        middlewareHelper.destroy();
+      }
+    };
+
+    if(this.chat.isBotforum && this.chat.threadId && message?._ === 'messageService' && message?.action?._ === 'messageActionTopicEdit' && this.placeholderTopicIconContainer) (async() => {
+      const topic = await this.managers.dialogsStorage.getForumTopic(this.peerId, this.chat.threadId);
+      if(!realMiddleware()) return;
+      this.placeholderTopicIconContainer.replaceChildren(
+        await wrapTopicIcon({topic, middleware: this.getMiddleware(), customEmojiSize: TOPIC_ICON_SIZE})
+      );
+    })();
+
+    let result: Awaited<ReturnType<ChatBubbles['renderMessage']>> & {
+      updatePosition: typeof updatePosition,
+      canAnimateLadder?: boolean
+    };
+    try {
+      this.renderingMessages.add(fullMid);
+
+      // const groupedId = (message as Message.message).grouped_id;
+      newBubble = document.createElement('div');
+      if(isMessage(message)) {
+        // a click on a focusable bubble takes the focus, and restoring it scrolls the chat
+        if(Modes.a11y) newBubble.tabIndex = 0;
+        newBubble.setAttribute('role', 'article');
+      }
+      newBubble.middlewareHelper = middlewareHelper;
+      newBubble.dataset.mid = '' + (isMessage(message) ? message.mid : message.id);
+      newBubble.dataset.peerId = '' + (isMessage(message) ? message.peerId : this.chat.peerId);
+      newBubble.dataset.timestamp = '' + message.date;
+      realMiddleware.onClean(destroyDetachedBubble.bind(null, new WeakRef(newBubble), middlewareHelper));
+
+      // const bubbleNew: Bubble = this.bubblesNew[message.mid] ??= {
+      //   bubble: newBubble,
+      //   mids: new Set(),
+      //   groupedId
+      // };
+
+      // bubbleNew.mids.add(message.mid);
+
+      if(bubble) {
+        const previousTransaction = this.bubblesToReplace.get(bubble);
+        let source = bubble;
+        let rollbackFullMidBubble = previousFullMidBubble;
+        let rollbackFullMidSkipped = previousFullMidSkipped;
+        if(previousTransaction) {
+          source = previousTransaction.source;
+          this.bubblesToReplace.delete(bubble);
+
+          if(previousTransaction.fullMid === fullMid) {
+            rollbackFullMidBubble = previousTransaction.rollbackFullMidBubble;
+            rollbackFullMidSkipped = previousTransaction.previousFullMidSkipped;
+          } else if(this.bubbles[previousTransaction.fullMid] === bubble) {
+            if(previousTransaction.rollbackFullMidBubble) {
+              this.bubbles[previousTransaction.fullMid] = previousTransaction.rollbackFullMidBubble;
+            } else {
+              delete this.bubbles[previousTransaction.fullMid];
+            }
+            if(previousTransaction.previousFullMidSkipped) {
+              this.skippedMids.add(previousTransaction.fullMid);
+            } else {
+              this.skippedMids.delete(previousTransaction.fullMid);
+            }
+          }
+
+          this.hiddenLinksPendingBubbles.delete(bubble);
+        }
+
+        this.skippedMids.delete(fullMid);
+        replacementTransaction = {
+          source,
+          fullMid,
+          rollbackFullMidBubble,
+          previousFullMidSkipped: rollbackFullMidSkipped,
+          regroupMessage: previousTransaction?.regroupMessage && message._ === 'message' ?
+            message :
+            previousTransaction?.regroupMessage
+        };
+        this.bubblesToReplace.set(newBubble, replacementTransaction);
+        this.bubbleGroups.changeBubbleByBubble(bubble, newBubble);
+        if(previousTransaction) this.ejectWatchedBubble(bubble);
+      }
+
+      bubble = this.bubbles[fullMid] = newBubble;
+      let originalPromise: ReturnType<ChatBubbles['renderMessage']>;
+
+      if(isMessage(message)) {
+        originalPromise = this.renderMessage({message, reverse, bubble, middleware, sight});
+      } else {
+        originalPromise = this.renderLog({log: message, bubble, reverse, middleware})
+        .then(ret => {
+          ret.message = message;
+          return ret;
+        });
+      }
+
+      if(processResult) {
+        originalPromise = processResult(originalPromise, bubble);
+      }
+
+      const promise = originalPromise.then((r) => {
+        if(!r || !realMiddleware()) return;
+        // Both renderers use the delegated media click path. Expose only the
+        // innermost preview, leaving embedded players and their own controls alone.
+        makeMediaPreviewsAccessible(bubble);
+        return {...r, updatePosition, canAnimateLadder} as typeof result;
+      });
+
+      this.renderMessagesQueue(promise.then((result) => {
+        if(!result) discardUncommittedBubble();
+        return result;
+      }, (): undefined => {
+        discardUncommittedBubble();
+        return undefined;
+      }));
+
+      result = await promise;
+      if(!realMiddleware()) {
+        discardUncommittedBubble();
+        return;
+      }
+
+      if(!result) {
+        discardUncommittedBubble();
+        if(!replacedBubble) this.skippedMids.add(fullMid);
+      }
+    } catch(err) {
+      discardUncommittedBubble();
+      this.log.error('renderMessage error:', err);
+    }
+
+    if(!realMiddleware()) {
+      return;
+    }
+
+    this.renderingMessages.delete(fullMid);
+    this.reconcilePendingStreamedMessageUpdate(fullMid);
+    this.renderPendingRerender(fullMid);
+    return result;
+  }
+
+  private renderPendingRerender(fullMid: FullMid) {
+    const options = this.pendingRerenders?.get(fullMid);
+    if(!options) return;
+    this.pendingRerenders.delete(fullMid);
+
+    const bubble = this.getBubble(fullMid);
+    if(!bubble) {
+      return;
+    }
+
+    // an edit applied in place meanwhile (`updateSolidMessageBody`) is newer than the one that waited
+    const {message} = options;
+    void this.safeRenderMessage({
+      ...options,
+      message: isMessage(message) ? this.getMessageAsItIsNow(message as MyMessage) : message,
+      bubble
+    });
+  }
+
+  /**
+   * Renders a message's bubble again once what its render waited for has come (the story it shows, loaded or gone) -
+   * while it is still this list's bubble of the message. By then the message may be deleted, its bubble sliced away or
+   * rendered anew, another chat opened: rendered all the same, it came back, or went into that chat's list
+   */
+  private rerenderWhenLoaded(bubble: HTMLElement, message: MyMessage) {
+    if(this.getBubble(makeFullMid(message)) !== bubble) {
+      return;
+    }
+
+    void this.safeRenderMessage({message: this.getMessageAsItIsNow(message), reverse: true, bubble});
+  }
+
+  /**
+   * A message as the mirror has it now, by `mid` (its server id when its send was confirmed meanwhile); as it
+   * was passed when the mirror holds no such message of that chat. A local one is what it is.
+   */
+  private getMessageAsItIsNow(message: MyMessage, mid = message.mid) {
+    if(message.pFlags.local) {
+      return message;
+    }
+
+    const current = this.chat.getMessageByPeer(message.peerId, mid) as MyMessage;
+    return current?.peerId === message.peerId && current.mid === mid ? current : message;
+  }
+
+  private setBubbleSendingStatus(bubble: HTMLElement, status?: SendingStatusIconState, first?: boolean) {
+    !first && bubble.classList.remove('is-sending', 'is-error', 'is-sent', 'is-read');
+    status && bubble.classList.add('is-' + status);
+    bubble.querySelectorAll('.time, .time-inner').forEach((element) => {
+      // * the status is not necessarily the first child anymore (the replies counter can be
+      // * prepended after it), so look up the previous status itself instead of assuming
+      // * its position - otherwise the new icon replaces a foreign element and the old status stays
+      const previous = element.querySelector<HTMLElement>(':scope > .time-sending-status');
+      if(!status) {
+        previous?.remove();
+        return;
+      }
+
+      // * the icon that is there grows into the new status (the clock into a check and so on); the copy
+      // * in .time only holds the place (visibility: hidden), the one in .time-inner is the one seen
+      if(previous && setSendingStatusIconState(previous, status, !first && element.classList.contains('time-inner'))) {
+        return;
+      }
+
+      const newIcon = SendingStatusIcon(status, 'time-sending-status');
+      if(previous) {
+        previous.replaceWith(newIcon);
+      } else {
+        element.prepend(newIcon);
+      }
+    });
+  }
+
+  // the pin in a bubble's time (`MessageRender.setTime`), put in or taken out by itself: the rest of the time stays as it
+  // was laid out (over a picture, in a line)
+  private setBubblePinned(bubble: HTMLElement, pinned: boolean) {
+    bubble.querySelectorAll('.time, .time-inner').forEach((element) => {
+      const icon = element.querySelector(':scope > .time-pinned');
+      if(!pinned || icon) {
+        if(!pinned) icon?.remove();
+        return;
+      }
+
+      // after the count of replies, which is put in before everything (`setBubbleRepliesCount`)
+      const pin = Icon('pinnedchat_filled', 'time-icon', 'time-pinned', 'time-part');
+      const replies = element.querySelector(':scope > .time-replies');
+      if(replies) replies.after(pin);
+      else element.prepend(pin);
+    });
+  }
+
+  private setBubbleRepliesCount(bubble: HTMLElement, count: number) {
+    if(this.chat.threadId) return;
+    bubble.querySelectorAll('.time, .time-inner').forEach((element) => {
+      let previous = element.querySelector(':scope > .time-replies');
+      if(!count) {
+        previous?.remove();
+        return;
+      }
+
+      if(!previous) {
+        previous = document.createElement('span');
+        previous.classList.add('time-replies');
+        previous.append(document.createTextNode(''), Icon('reply_filled', 'time-replies-icon', 'time-icon'));
+      }
+
+      previous.firstChild.textContent = numberThousandSplitter(count);
+
+      if(!previous.parentElement) {
+        element.prepend(previous);
+      }
+    });
+  }
+
+  private setUnreadObserver(type: 'history' | 'content', bubble: HTMLElement, mid?: number, element: HTMLElement = bubble) {
+    // * elsewhere a pin seen read the chat up to it, the newest one up to the chat's last message
+    if(!this.isHistoryRead()) return;
+    mid ??= (bubble as any).maxBubbleMid;
+    // registration always happens while rendering the current chat, so this snapshot is the
+    // authoritative owner of every mid in the unreaded maps/sets
+    const {peerId, threadId, monoforumThreadId} = this.chat;
+    this.unreadedChat = {peerId, threadId, monoforumThreadId};
+    // this.log('not our message', message, message.pFlags.unread);
+    this.observer.observe(element, type === 'history' ? this.unreadedObserverCallback : this.unreadedContentObserverCallback);
+    (type === 'history' ? this.unreaded : this.unreadedContent).set(element, mid);
+  }
+
+  // * a mention or the reactions of a message, once seen, read that very message: `readUnreaded('content')` checks it
+  // * under this mid. A service message without reactions has a mention all the same; an ephemeral message is never
+  // * read on the server (`readMessages` drops it)
+  private observeUnreadContent(bubble: HTMLElement, message: Message.message | Message.messageService) {
+    if(!this.observer || isEphemeralMessage(message)) return;
+    if(isMentionUnread(message) || getUnreadReactions(message)) {
+      this.setUnreadObserver('content', bubble, message.mid);
+    }
+  }
+
+  // Re-arm the unread-content (mention/reaction) observer for a freshly-focused
+  // message. Jumping to a mention/reaction via the corner buttons scrolls the
+  // bubble into view, but the actual read is driven solely by the intersection
+  // observer, which only fires on an intersection CHANGE. When the target is
+  // already on screen (typical for reactions, which sit on our own recent
+  // messages) the programmatic scroll is a no-op, so no callback ever fires and
+  // the content stays unread. Re-registering the observer forces a fresh
+  // intersection entry for the current position — it reads only if the bubble
+  // is actually intersecting, so the "read == seen" guarantee is preserved.
+  public reobserveUnreadContent(peerId: PeerId, mid: number) {
+    if(!this.observer) return;
+    const bubble = this.getBubble(peerId, mid);
+    if(!bubble || !this.unreadedContent.has(bubble)) return;
+    this.observer.reobserve(bubble);
+  }
+
+  public flushBubbleModifications() {
+    const callbacks = this.batchingModifying;
+    // Release the batch handle before running anything. While it is set no further flush is
+    // scheduled, so a callback that throws — or a callback that queues another modification —
+    // would otherwise leave every later Solid body update in this chat queued forever.
+    this.batchingModifying = undefined;
+    const transitions = this.batchingTransitions;
+    this.batchingTransitions = undefined;
+    const modified = this.batchingModified;
+    this.batchingModified = undefined;
+    if(!callbacks?.length) {
+      modified?.resolve();
+      return;
+    }
+
+    const scrollSaver = this.createScrollSaver(false);
+    scrollSaver.save();
+    // read where the layout is read anyway: before the changes, and after the view is kept in place
+    const transition = transitions && captureBubbleTransition({
+      bubbles: transitions.keys(),
+      container: this.scrollable.container,
+      busy: (bubble) => !!this.sendFlights?.whenLanded(bubble),
+      // what its text is is read only where it may change
+      textOf: (bubble) => transitions.get(bubble) === 'edit'
+    });
+    batch(() => callbacks.forEach((callback) => {
+      try {
+        callback();
+      } catch(err) {
+        this.log.error('modifyBubble callback error:', err);
+      }
+    }));
+    scrollSaver.restore();
+    // a rich text puts its leaves in a microtask of its own (`createMessageTextRevealCoordinator`): what changed is
+    // measured once that is done
+    queueMicrotask(() => {
+      this.showBubbleTransition(transition);
+      (this.bubbleTransitionPromise || Promise.resolve()).then(() => modified?.resolve());
+    });
+  }
+
+  /** what an element of a bubble shows changes the bubble's size (`changeBubble`): made in the batch, shown changing */
+  public changeBubble(element: HTMLElement, callback: () => void) {
+    const bubble = findUpClassName(element, 'bubble');
+    return this.modifyBubble(callback, bubble && this.chatInner.contains(bubble) ? bubble : undefined, 'meta');
+  }
+
+  // a change shown to its end before the next one is made: it goes from there
+  private showBubbleTransition(transition: BubbleTransition) {
+    const promise = transition?.play();
+    if(promise) {
+      this.bubbleTransition = transition;
+      this.bubbleTransitionPromise = promise;
+      promise.then(() => {
+        // a spoiler measured as the bubble changed (its first reactions make it taller) is masked by the colour under
+        // it: the bubble's own is back only now
+        transition.bubbles.forEach(updateMessageSpoilerOverlays);
+        if(this.bubbleTransitionPromise !== promise) return;
+        this.bubbleTransitionPromise = this.bubbleTransition = undefined;
+      });
+    }
+  }
+
+  /**
+   * @param transition the bubble the change is to a message shown in it (an edit, its reactions, its views): shown
+   * as it changes rather than at once (`bubbleTransitions`)
+   * @param change what of it changes: its text may (an edit), or only what is around it
+   * @returns the change made, and shown to its end
+   */
+  private modifyBubble = (callback: () => void, transition?: HTMLElement, change: BubbleChange = 'edit'): Promise<void> => {
+    const setBatch = !this.batchingModifying;
+    (this.batchingModifying ??= []).push(callback);
+    if(transition) {
+      const transitions = this.batchingTransitions ??= new Map();
+      if(transitions.get(transition) !== 'edit') transitions.set(transition, change);
+    }
+
+    const modified = this.batchingModified ??= deferredPromise<void>();
+    if(setBatch) {
+      // this batch's, not one after a chat it was for was left (`cleanup`), which waits for its own way
+      const batch = this.batchingModifying;
+      const flush = () => this.batchingModifying === batch && this.flushBubbleModifications();
+      // a change being shown goes to its end first: the next one goes from there
+      pause(0)
+      .then(() => getHeavyAnimationPromise())
+      .then(() => this.bubbleTransitionPromise)
+      .then(flush, flush);
+    }
+
+    return modified;
+  };
+
+  private getSolidMessageBody(bubble: HTMLElement, mid?: number) {
+    const entries = this.solidMessageBodies.get(bubble);
+    if(!entries) return;
+    if(mid !== undefined) return entries.get(mid);
+    if(entries.size === 1) return entries.values().next().value as SolidMessageBodyEntry;
+  }
+
+  private registerSolidMessageBody(bubble: HTMLElement, entry: SolidMessageBodyEntry) {
+    let entries = this.solidMessageBodies.get(bubble);
+    if(!entries) this.solidMessageBodies.set(bubble, entries = new Map());
+    entries.set(entry.message.mid, entry);
+  }
+
+  private unregisterSolidMessageBody(bubble: HTMLElement, entry: SolidMessageBodyEntry) {
+    const entries = this.solidMessageBodies.get(bubble);
+    if(!entries || entries.get(entry.message.mid) !== entry) return;
+    entries.delete(entry.message.mid);
+    if(!entries.size) this.solidMessageBodies.delete(bubble);
+  }
+
+  private rekeySolidMessageBody(bubble: HTMLElement, entry: SolidMessageBodyEntry, previousMid: number) {
+    const entries = this.solidMessageBodies.get(bubble);
+    if(!entries || entries.get(previousMid) !== entry) return false;
+    entries.delete(previousMid);
+    entries.set(entry.message.mid, entry);
+    return true;
+  }
+
+  private isSolidMessageBodyRegistered(bubble: HTMLElement, entry: SolidMessageBodyEntry) {
+    return this.solidMessageBodies.get(bubble)?.get(entry.message.mid) === entry;
+  }
+
+  /**
+   * Takes an edit into the bubble as it stands, where its parts can: false when it is to be rendered anew — nothing takes
+   * it, or a part says it cannot (`updateLocalOnEdit` gives `false`: a widget's), whatever the others would take.
+   */
+  private editInPlace(bubble: HTMLElement, message: Message.message | Message.messageService) {
+    const updateLocalOnEdit = this.updateLocalOnEdit.get(bubble);
+    if(updateLocalOnEdit?.(message as Message.message) === false) return false;
+    const updatedBody = message._ === 'message' && this.updateSolidMessageBody(bubble, message);
+    return !!updateLocalOnEdit || updatedBody;
+  }
+
+  private updateSolidMessageBody(bubble: HTMLElement, message: Message.message) {
+    const entry = this.getSolidMessageBody(bubble, message.mid);
+    if(!entry) return false;
+
+    const streaming = !!message.pFlags.currentlyTyping;
+    const nextStructure = getSolidMessageBodyStructure(message);
+    if(!streaming && !deepEqual(entry.structure, nextStructure)) {
+      return false;
+    }
+
+    const revision = ++entry.revision;
+    entry.message = message;
+    entry.structure = nextStructure;
+    this.modifyBubble(() => {
+      if(!this.isSolidMessageBodyRegistered(bubble, entry) || entry.revision !== revision) return;
+      // its comments (a footer, beside it), which are no part of what it is made of: an edit may bring them too
+      bubble.querySelectorAll<RepliesElement>('replies-element').forEach((element) => {
+        if(!deepEqual(element.message?.replies, message.replies)) {
+          element.message = message;
+          element.render();
+        }
+      });
+
+      entry.controller.update(makeSolidMessageBodySnapshot(
+        message,
+        revision,
+        streaming ? 'streaming' : 'final'
+      ));
+      this.updateSolidMessageBodyContext(bubble, entry, message, false);
+      entry.reconcileShell?.(message);
+      if(!streaming && entry.ownsTime) this.updateSolidMessageBodyTime(bubble, message);
+    }, streaming ? undefined : bubble);
+    return true;
+  }
+
+  private updateSolidMessageBodyIdentity(
+    bubble: HTMLElement,
+    message: Message.message,
+    previousMid?: number,
+    preserveStructure = false
+  ) {
+    const entry = this.getSolidMessageBody(bubble, previousMid) ||
+      this.getSolidMessageBody(bubble, message.mid) ||
+      // * the only body a bubble of one message holds is its own; the one of an album is the caption of whichever
+      // * of its messages has one, which every other's sending would have taken over, the last one leaving it empty
+      (message.grouped_id ? undefined : this.getSolidMessageBody(bubble));
+    if(!entry) return;
+
+    previousMid = entry.message.mid;
+    const revision = ++entry.revision;
+    entry.message = message;
+    if(!preserveStructure) entry.structure = getSolidMessageBodyStructure(message);
+    if(!this.rekeySolidMessageBody(bubble, entry, previousMid)) return;
+    this.modifyBubble(() => {
+      if(!this.isSolidMessageBodyRegistered(bubble, entry) || entry.revision !== revision) return;
+      entry.controller.update(makeSolidMessageBodySnapshot(message, revision, 'final'));
+      this.updateSolidMessageBodyContext(bubble, entry, message, true);
+      entry.reconcileShell?.(message);
+    });
+  }
+
+  private retryCancelledBubbleReplacement(
+    bubble: HTMLElement,
+    message: Message.message,
+    fullMid: FullMid
+  ) {
+    const middleware = this.getMiddleware();
+    const retry = () => {
+      if(!middleware() || this.getBubble(fullMid) !== bubble) return;
+      const currentMessage = this.chat.getMessageByPeer(message.peerId, message.mid) as Message.message || message;
+      const entry = this.getSolidMessageBody(bubble, message.mid);
+      if(!entry || deepEqual(entry.structure, getSolidMessageBodyStructure(currentMessage))) return;
+      void this.safeRenderMessage({message: currentMessage, bubble, reverse: true});
+    };
+    const pendingRender = this.messagesQueuePromise;
+    if(pendingRender) pendingRender.then(retry).catch(noop);
+    else queueMicrotask(retry);
+  }
+
+  private updateSolidMessageBodyContext(
+    bubble: HTMLElement,
+    entry: SolidMessageBodyEntry,
+    message: Message.message,
+    identityChanged: boolean
+  ) {
+    if(!entry.ownsTime) return;
+
+    const context = this.contexts.get(bubble);
+    if(context) {
+      context.messageMessage = message.message || '';
+      context.messageMedia = message.media;
+      context.isOut = this.chat.isOutMessage(message);
+    }
+
+    const item = this.bubbleGroups.getItemByBubble(bubble);
+    if(item) {
+      if(identityChanged || item.mid !== message.mid) {
+        // runs in `flushBubbleModifications`, which keeps the view in place around it
+        this.updateGroupedMessage(bubble, message, {preserveScroll: false});
+      } else {
+        item.message = message;
+      }
+    }
+  }
+
+  /**
+   * Gives a bubble's grouping item its message's new identity, regrouping the bubble when that identity no
+   * longer fits where it stands. When it is a send taking its server id, the sends made after it go first
+   * (`BubbleGroups.raiseLaterSends`). Returns whether the bubble was regrouped.
+   *
+   * @param preserveScroll keep the view in place: saved once, before the first bubble moves. Off where the
+   * caller already keeps it (`flushBubbleModifications`)
+   * @param regroup regroup the bubble even when the new identity would fit in place
+   */
+  private updateGroupedMessage(
+    bubble: HTMLElement,
+    message: MyMessage,
+    {preserveScroll = true, regroup = false}: {preserveScroll?: boolean, regroup?: boolean} = {}
+  ) {
+    const scroll: {preserve: boolean, saver?: ScrollSaver} = {preserve: preserveScroll};
+    const regrouped = this.applyGroupedMessage(bubble, message, regroup, scroll);
+    scroll.saver?.restore();
+    return regrouped;
+  }
+
+  private applyGroupedMessage(
+    bubble: HTMLElement,
+    message: MyMessage,
+    regroup: boolean,
+    scroll: {preserve: boolean, saver?: ScrollSaver}
+  ) {
+    const before = this.bubbleGroups.getItemByBubble(bubble)?.timelineKey;
+    // the later sends go first, so that this one has nothing to step past on its way
+    if(before?.pending && !message.pending) {
+      for(const item of this.bubbleGroups.raiseLaterSends(before, message.mid)) {
+        this.applyGroupedMessage(item.bubble, item.message as MyMessage, false, scroll);
+      }
+    }
+
+    if(!regroup && this.bubbleGroups.changeBubbleMessage(bubble, message)) {
+      return false;
+    }
+
+    // a replacement still being staged keeps the visible bubble's place until its batch commits it, and
+    // the commit regroups it with the identity it has by then
+    const transaction = this.bubblesToReplace.get(bubble);
+    if(transaction && message._ === 'message') {
+      transaction.regroupMessage = message;
+      return false;
+    }
+
+    if(scroll.preserve && !scroll.saver) {
+      scroll.saver = this.createScrollSaver(false);
+      scroll.saver.save();
+    }
+
+    this.repositionMessageBubble(bubble, message);
+    return true;
+  }
+
+  /**
+   * Regroups a bubble by its message's identity. The ephemeral messages filed right after it go along
+   * (`BubbleGroups.takeEphemeralFollowers`), on every path that changes an identity this way.
+   */
+  private repositionMessageBubble(bubble: HTMLElement, message: MyMessage, mount = true) {
+    const item = this.bubbleGroups.getItemByBubble(bubble);
+    if(!item) return [];
+
+    const {reverse, timelineKey: before} = item;
+    const deferredGroups = mount ? undefined :
+      new Set<Parameters<BubbleGroups['mountUnmountGroups']>[0][number]>();
+    this.bubbleGroups.removeAndUnmountBubble(bubble, deferredGroups);
+    const {groups} = this.groupBubbles([{bubble, message, reverse}]);
+    if(deferredGroups) {
+      for(const group of deferredGroups) {
+        if(!groups.includes(group)) groups.push(group);
+      }
+    }
+    if(mount) this.bubbleGroups.mountUnmountGroups(groups);
+
+    const after = this.bubbleGroups.getItemByBubble(bubble)?.timelineKey;
+    if(after && after.position !== before.position) {
+      for(const follower of this.bubbleGroups.takeEphemeralFollowers(before.position, after.position, message.date)) {
+        for(const group of this.repositionMessageBubble(follower.bubble, follower.message as MyMessage, mount)) {
+          if(!groups.includes(group)) groups.push(group);
+        }
+      }
+    }
+
+    return groups;
+  }
+
+  private repositionMessageBubblePreservingScroll(bubble: HTMLElement, message: MyMessage) {
+    const scrollSaver = this.createScrollSaver(false);
+    scrollSaver.save();
+    this.repositionMessageBubble(bubble, message);
+    scrollSaver.restore();
+  }
+
+  private updateSolidMessageBodyTime(bubble: HTMLElement, message: Message.message) {
+    const previous = bubble.timeSpan;
+    if(!previous?.isConnected) return;
+
+    const status = (['error', 'sending', 'sent', 'read'] as const)
+    .find((status) => bubble.classList.contains('is-' + status));
+    // the count of the replies it shows in its time is put there by itself (`setBubbleRepliesCount`)
+    const hadReplies = !!previous.querySelector('.time-replies');
+    // drawn over the media's corner (a caption above it, a widget with none): where the bubble put it, not the time's own
+    const floating = previous.classList.contains('is-floating');
+    const next = MessageRender.setTime({
+      chat: this.chat,
+      chatType: this.chat.type,
+      message,
+      reactionsMessage: message,
+      isOut: this.chat.isOutMessage(message),
+      middleware: bubble.middlewareHelper.get(),
+      loadPromises: []
+    });
+
+    for(const attribute of Array.from(previous.attributes)) {
+      previous.removeAttribute(attribute.name);
+    }
+    for(const attribute of Array.from(next.attributes)) {
+      previous.setAttribute(attribute.name, attribute.value);
+    }
+    previous.replaceChildren(...Array.from(next.childNodes));
+    previous.classList.toggle('is-floating', floating);
+    placeBubbleTime(previous, message.message || '');
+    if(status) this.setBubbleSendingStatus(bubble, status);
+    // as in a group the bubble shows them when it is rendered, if not as a footer of comments: an edit may bring the
+    // first of them, the count being no part of what it is made of
+    if(hadReplies || (message.replies && this.chat.isAnyGroup && !bubble.querySelector('replies-element'))) {
+      this.setBubbleRepliesCount(bubble, message.replies?.replies);
+    }
+  }
+
+  private onSolidMessageBodyLayout = (entry: SolidMessageBodyEntry) => {
+    this.pendingSolidMessageBodyLayouts.add(entry);
+    // a body laid out again may have grown (a streamed draft, late resources): the list keeps up with it before the
+    // frame is drawn, or that frame would show what it pushed where it went, for the way there to start a frame later
+    if(this.laidOutSolidMessageBodies.has(entry) && !this.solidMessageBodyFollow) {
+      const follow = this.solidMessageBodyFollow = {};
+      queueMicrotask(() => {
+        if(this.solidMessageBodyFollow !== follow) return;
+        this.solidMessageBodyFollow = undefined;
+        this.followSolidMessageBodies();
+      });
+    }
+
+    if(this.solidMessageBodyLayoutFrame) return;
+
+    const container = this.scrollable?.container;
+    const win = container?.ownerDocument.defaultView;
+    if(!container || !win) return;
+
+    const id = win.requestAnimationFrame(() => {
+      this.solidMessageBodyLayoutFrame = undefined;
+      const entries = Array.from(this.pendingSolidMessageBodyLayouts);
+      this.pendingSolidMessageBodyLayouts.clear();
+      entries.forEach((entry) => {
+        if(!this.isSolidMessageBodyRegistered(entry.bubble, entry)) return;
+        if(hasMessageTextSpoilers(entry.controller.getSnapshot().message)) entry.ensureSpoilers?.();
+        entry.updateSpoilers?.();
+        // a streamed draft laid out first: its first growth is followed from here (only such a one: the bodies of a
+        // chat being opened are laid out by the dozen)
+        if(!this.laidOutSolidMessageBodies.has(entry) && entry.controller.getSnapshot().phase === 'streaming') {
+          noteGrowth(container, entry.bubble);
+        }
+
+        this.laidOutSolidMessageBodies.add(entry);
+      });
+    });
+    this.solidMessageBodyLayoutFrame = {win, id};
+  };
+
+  /**
+   * Following is for a body that GROWS at the bottom — a streamed draft, late resources. A
+   * body's first layout is its bubble arriving, and whoever rendered it owns the scroll:
+   * renderNewMessage animates to the end, and a jump from here lands first and leaves that
+   * animation nothing to do, so every message of a burst snapped instead of gliding. Nor
+   * does it cut into a smooth scroll that is already on its way, or about to start: in a
+   * burst an earlier body lays out again (its send confirmed) while the next bubble is
+   * still rendering, or waits a frame for its scroll. Growing, the lowest of them pushes what is above it up where the
+   * list is shorter than the screen: that is shown going there too (`followGrowth`).
+   */
+  private followSolidMessageBodies() {
+    const container = this.scrollable?.container;
+    if(!container) return;
+
+    let grown: HTMLElement;
+    for(const entry of this.pendingSolidMessageBodyLayouts) {
+      if(
+        this.laidOutSolidMessageBodies.has(entry) &&
+        this.isSolidMessageBodyRegistered(entry.bubble, entry) &&
+        (!grown || grown.compareDocumentPosition(entry.bubble) & Node.DOCUMENT_POSITION_FOLLOWING)
+      ) {
+        grown = entry.bubble;
+      }
+    }
+
+    if(!grown || getAnimationInstance(container) || this.renderNewPromises.size || this.scrollingToBubble) return;
+    followGrowth(
+      container,
+      grown,
+      this.scrolledDown &&
+        Date.now() >= this.streamFollowInvalidatedUntil &&
+        container.scrollTop + container.clientHeight > container.scrollHeight - 120
+    );
+  }
+
+  private async renderLog({log, reverse = false, bubble, middleware}: RenderLogArgs) {
+    const promises: Promise<any>[] = [];
+
+    const entry = await this.resolveAdminLog({
+      log,
+      middleware,
+      promises
+    });
+
+    if(!entry) return;
+
+    this.logsByBubble.set(bubble, log);
+
+    if(entry.type === 'service') {
+      bubble.className = 'bubble service';
+
+      const s = document.createElement('div');
+      s.classList.add('service-msg');
+
+      const contentWrapper = document.createElement('div');
+      contentWrapper.classList.add('bubble-content-wrapper');
+
+      const bubbleContainer = document.createElement('div');
+      bubbleContainer.classList.add('bubble-content');
+      bubbleContainer.append(s);
+
+      contentWrapper.append(bubbleContainer);
+      bubble.append(contentWrapper);
+
+      renderComponent({element: s, Component: () => entry.Content(), middleware, HotReloadGuard: SolidJSHotReloadGuardProvider});
+    } else if(entry.type === 'default') {
+      const serviceContent = document.createElement('div');
+
+      renderComponent({element: serviceContent, Component: entry.ServiceContent, middleware, HotReloadGuard: SolidJSHotReloadGuardProvider});
+
+      const {message, originalMessage} = await namedPromises({
+        message: this.managers.appMessagesManager.saveLogsMessage(this.peerId, entry.message),
+        originalMessage: this.managers.appMessagesManager.saveLogsMessage(this.peerId, entry.originalMessage)
+      });
+
+      const existing = this.logsBubbleByMid.get(message.mid);
+
+      if(existing && existing.priorityDate < log.date || !existing) {
+        this.logsBubbleByMid.set(message.mid, {element: bubble, priorityDate: Date.now()});
+        middleware.onDestroy(() => {
+          if(this.logsBubbleByMid.get(message.mid).element === bubble) {
+            this.logsBubbleByMid.delete(message.mid);
+          }
+        });
+      }
+
+      return this.renderMessage({
+        message,
+        originalMessage,
+        colorOriginalMessagePeerId: entry.colorPeerId,
+        fakeServiceContent: serviceContent,
+        reverse,
+        bubble,
+        additionalPromises: promises,
+        logId: log.id,
+        middleware
+      });
+    } else if(entry.type === 'regular') {
+      const isOut = log.user_id.toPeerId() === rootScope.myId;
+      bubble.classList.add('bubble', isOut ? 'is-out' : 'is-in', ...entry.bubbleClass.split(' '));
+
+      renderComponent({element: bubble, Component: entry.Content, middleware, HotReloadGuard: SolidJSHotReloadGuardProvider});
+    }
+
+    if(import.meta.hot) {
+      const callback = () => {
+        this.safeRenderMessage({
+          bubble,
+          message: log,
+          reverse
+        });
+      };
+      rerenderLogBubblesCallbacks.push(callback);
+      middleware.onDestroy(() => {
+        indexOfAndSplice(rerenderLogBubblesCallbacks, callback);
+      });
+    }
+
+    return {
+      bubble,
+      message: log as MyMessage | AdminLog,
+      reverse,
+      promises
+    };
+  }
+
+  private async renderMessage({
+    message,
+    originalMessage,
+    colorOriginalMessagePeerId,
+    fakeServiceContent,
+    additionalPromises = [],
+    reverse = false,
+    logId,
+    bubble,
+    middleware,
+    previewOnly = false,
+    sight
+  }: RenderMessageArgs) {
+    // if(DEBUG) {
+    //   this.log('message to render:', message);
+    // }
+
+    // if(!bubble && this.bubbles[message.mid]) {
+    //   return;
+    // }
+
+    // await pause(1000);
+
+    const loadPromises: Promise<any>[] = [...additionalPromises];
+
+    const isMessage = message._ === 'message';
+    // * a widget's bubble takes no change of its widget in place until the widget runs (createWidgetEditHandler, below):
+    // * till then, or if it does not load, such a change, and the id a sent one gets, have the bubble made anew
+    if(message._ === 'message' && message.media?._ === 'messageMediaWidget') {
+      this.updateLocalOnEdit.set(bubble, createPendingWidgetEditHandler(message));
+      middleware.onClean(() => {
+        this.updateLocalOnEdit.delete(bubble);
+      });
+    }
+    const isEphemeral = isEphemeralMessage(message);
+    // layer 229: an ordinary message an ephemeral one is currently standing in for. What it shows
+    // is not really its content, so it must not be forwarded, quoted, linked to or selected.
+    const isAnchoredEphemeral = isAnchoredEphemeralMessage(message);
+    const messageLinkPolicyState = this.messageLinkPolicyState || this.createCurrentMessageLinkPolicyState();
+    const hideLinks = this.createMessageLinkPolicyAccessor(message, messageLinkPolicyState);
+    const hasReactions = !isEphemeral && (
+      message._ === 'message' ||
+      (message._ === 'messageService' && message.pFlags.reactions_are_possible)
+    );
+    const groupedId = isMessage && message.grouped_id;
+    let groupedMids: number[], reactionsMessage: Message.message | Message.messageService;
+    const groupedMessages = groupedId ? apiManagerProxy.getMessagesByGroupedId(groupedId) : undefined;
+
+    const groupedMustBeRenderedFull = this.chat.type !== ChatType.Pinned;
+
+    if(groupedId && groupedMustBeRenderedFull) { // will render only first album's message
+      groupedMids = groupedMessages.map((message) => message.mid);
+      const mainMessage = getMainGroupedMessage(groupedMessages);
+      if(message.mid !== mainMessage.mid) {
+        return;
+      }
+    }
+
+    const maxBubbleMid = groupedMids ? Math.max(...groupedMids) : message.mid;
+    (bubble as any).maxBubbleMid = maxBubbleMid;
+    (bubble as BubbleElementAddons).groupedLength = groupedMids?.length;
+
+    if(hasReactions) {
+      reactionsMessage = groupedId ? getMainGroupedMessage(groupedMessages) : message;
+    }
+
+    // * can't use 'message.pFlags.out' here because this check will be used to define side of message (left-right)
+    const our = this.chat.isOurMessage(message);
+
+    const messageDiv = document.createElement('div');
+    messageDiv.classList.add('message', 'spoilers-container');
+
+    const contentWrapper = document.createElement('div');
+    contentWrapper.classList.add('bubble-content-wrapper');
+
+    const bubbleContainer = document.createElement('div');
+    bubbleContainer.classList.add('bubble-content');
+
+    bubble.classList.add('bubble');
+    if(isEphemeral) {
+      bubble.classList.add('is-ephemeral');
+    }
+    if(isAnchoredEphemeral) {
+      bubble.classList.add('is-ephemeral-anchored', 'avoid-selection');
+    }
+    contentWrapper.append(bubbleContainer);
+    bubble.append(contentWrapper);
+
+    const context: BubbleContext = {
+      bubble,
+      bubbleContainer,
+      bubbles: this,
+      middleware,
+      loadPromises
+    } as any;
+
+    this.contexts.set(bubble, context);
+    middleware.onDestroy(() => {
+      if(this.contexts.get(bubble) === context) {
+        this.contexts.delete(bubble);
+      }
+    });
+
+    let tmpPromise: Promise<any>;
+
+    tmpPromise = addPaidServiceMessage({
+      isAnyGroup: this.chat.isAnyGroup,
+      bubble,
+      message,
+      our,
+      peerId: this.peerId,
+      groupedMessages
+    });
+    if(tmpPromise) await tmpPromise;
+
+    tmpPromise = addSuggestedPostServiceMessage({
+      bubble,
+      message,
+      peerId: this.peerId,
+      canManageDirectMessages: this.chat.canManageDirectMessages,
+      loadPromises
+    });
+    if(tmpPromise) await tmpPromise;
+
+    context.isInUnread = !isEphemeral && !previewOnly && !our &&
+      !message.pFlags.out &&
+      !!message.pFlags.unread;
+
+    // A group/channel message loaded without its dialog carries no `unread` flag, so fall
+    // back to the peer's inbox read cursor — only a message ABOVE it is still unread. Our
+    // own messages never are: the inbox cursor tracks incoming ones and stays below them.
+    if(
+      !isEphemeral &&
+      !previewOnly &&
+      !message.pFlags.out &&
+      !context.isInUnread &&
+      this.chat.peerId.isAnyChat()
+    ) {
+      const {peerId, threadId} = this.chat;
+      const opening = this.openingReadMaxId;
+      const readMaxId = await (opening?.key === getReadMaxIdKey(peerId, threadId) ? opening.promise : this.getRenderReadMaxId(peerId, threadId));
+      if(isUnreadByReadCursor(readMaxId, maxBubbleMid)) {
+        context.isInUnread = true;
+      }
+    }
+
+    const ret = {
+      bubble,
+      promises: loadPromises,
+      message: message as MyMessage | AdminLog,
+      reverse
+    };
+
+    const wrapOptions: WrapSomethingOptions = {
+      lazyLoadQueue: this.lazyLoadQueue,
+      middleware,
+      customEmojiSize: this.chat.appImManager.customEmojiSize,
+      animationGroup: this.chat.animationGroup
+    };
+
+    const isStoryMention = isMessage && isStoryMentionMessage(message);
+    const isSelfDestructingMedia = isMessage && isSelfDestructingMediaMessage(message);
+    let returnService: boolean;
+
+    if(
+      this.chat.isBotforum &&
+      (message as Message.messageService).action?._ === 'messageActionTopicCreate' &&
+      this.chat.threadId
+    ) {
+      return;
+    }
+
+    if(isNeverDrawn(message)) {
+      return;
+    }
+
+    if(isDrawnAsService(message)) {
+      const action = (message as Message.messageService).action;
+
+      // * resetting the class name drops what the skeleton put on the bubble — `is-ephemeral`
+      // * has to come back, the selection reads it to keep both groups apart
+      bubble.className = 'bubble service';
+      if(isEphemeral) {
+        bubble.classList.add('is-ephemeral');
+      }
+      if(isAnchoredEphemeral) {
+        bubble.classList.add('is-ephemeral-anchored', 'avoid-selection');
+      }
+
+      bubbleContainer.replaceChildren();
+
+      const s = document.createElement('div');
+      s.classList.add('service-msg');
+      // * set by an action that shows its text inside its own card
+      let hideServiceText = false;
+      if(action) {
+        const isGiftCode = action._ === 'messageActionGiftCode';
+        let promise: Promise<any>;
+        if(action._ === 'messageActionGiftStars' || action._ === 'messageActionPrizeStars') {
+          const content = bubbleContainer.cloneNode(false) as HTMLElement;
+          content.classList.add('has-service-before');
+
+          s.append(await wrapMessageActionTextNew({message, middleware}));
+
+          const isSent = message.fromId === rootScope.myId;
+          const isPrize = action._ === 'messageActionPrizeStars';
+
+          let subtitle: HTMLElement;
+          if(isPrize) {
+            subtitle = i18n(
+              'Action.StarGiveawayPrize',
+              [+action.stars, await wrapPeerTitle({peerId: getPeerId(action.boost_peer)})]
+            );
+          } else {
+            subtitle = i18n(isSent ? 'ActionGiftStarsSubtitle' : 'ActionGiftStarsSubtitleYou', [await wrapPeerTitle({peerId: message.peerId})]);
+          }
+
+          this.wrapSomeSolid(() => PremiumGiftBubble({
+            lottieOptions: {
+              middleware
+            },
+            assetName: 'Gift3',
+            title: i18n(isPrize ? 'BoostingCongratulations' : 'ActionGiftStarsTitle', [action.stars]),
+            subtitle,
+            buttonText: i18n('ActionGiftPremiumView'),
+            buttonCallback: async() => {
+              createPaymentPopup({
+                message: message as Message.message,
+                noPaymentForm: true,
+                transaction: {
+                  _: 'starsTransaction',
+                  date: message.date,
+                  id: action.transaction_id || '',
+                  peer: {
+                    _: 'starsTransactionPeer',
+                    peer: isPrize ? action.boost_peer : {
+                      _: 'peerUser',
+                      user_id: isSent ? message.peerId : message.fromId
+                    }
+                  },
+                  pFlags: {
+                    gift: isPrize ? undefined : true
+                  },
+                  amount: formatStarsAmount(isSent && !isPrize ? '-' + action.stars : action.stars),
+                  giveaway_post_id: isPrize ? action.giveaway_msg_id : undefined
+                }
+              });
+            }
+          }), content, middleware);
+
+          bubbleContainer.after(content);
+        } else if(isGiftCode && !shouldDisplayGiftCodeAsGift(action)) {
+          const isUnclaimed = action.pFlags.unclaimed;
+          const isGiveaway = action.pFlags.via_giveaway;
+          const title = i18n(isUnclaimed ? 'BoostingUnclaimedPrize' : 'BoostingCongratulations');
+          const subtitle = document.createElement('span');
+          subtitle.append(
+            i18n(
+              isUnclaimed ? 'BoostingYouHaveUnclaimedPrize' : (isGiveaway ? 'BoostingReceivedPrizeFrom' : (action.boost_peer ? 'BoostingReceivedGiftFrom' : 'BoostingReceivedGiftNoName')),
+              action.boost_peer ? [await wrapPeerTitle({peerId: getPeerId(action.boost_peer)})] : undefined
+            ),
+            document.createElement('br'),
+            document.createElement('br'),
+            i18n(
+              isUnclaimed ? 'BoostingUnclaimedPrizeDuration' : (isGiveaway ? 'BoostingReceivedPrizeDuration' : 'BoostingReceivedGiftDuration'),
+              [formatDaysDuration(action.days, true)]
+            )
+          );
+
+          const assetName = getGiftAssetName(action.days);
+
+          this.wrapSomeSolid(() => PremiumGiftBubble({
+            lottieOptions: {middleware},
+            assetName,
+            title,
+            subtitle,
+            buttonText: i18n('BoostingReceivedGiftOpenBtn'),
+            buttonCallback: () => {
+              showGiftLinkPopup(action.slug);
+            }
+          }), bubbleContainer, middleware);
+        } else if(action._ === 'messageActionChannelMigrateFrom') {
+          const peerTitle = new PeerTitle();
+          promise = peerTitle.update({peerId: action.chat_id.toPeerId(true), wrapOptions});
+          s.append(i18n('ChatMigration.From', [peerTitle.element]));
+        } else if(action._ === 'messageActionChatMigrateTo') {
+          const peerTitle = new PeerTitle();
+          promise = peerTitle.update({peerId: action.channel_id.toPeerId(true), wrapOptions});
+          s.append(i18n('ChatMigration.To', [peerTitle.element]));
+        } else if(action._ === 'messageActionPaidMessagesPrice') {
+          const result = getPriceChangedActionMessageLangParams(action, this.chat.isBroadcast, () => {
+            const peerTitle = new PeerTitle();
+            promise = peerTitle.update({peerId: message.peerId.toPeerId(true), wrapOptions});
+            return peerTitle.element;
+          });
+          s.append(i18n(
+            result.langPackKey,
+            result.args
+          ));
+        } else if(action._ === 'messageActionPaidMessagesRefunded') {
+          const peerTitle = new PeerTitle();
+          const savedPeerId = this.chat.canManageDirectMessages && getPeerId(message.saved_peer_id);
+          promise = peerTitle.update({peerId: savedPeerId || this.peerId, onlyFirstName: true, wrapOptions});
+
+          s.append(i18n(
+            our ? 'PaidMessages.StarsRefundedByYou' : 'PaidMessages.StarsRefundedToYou',
+            [+action.stars, peerTitle.element]
+          ));
+        } else if(action._ === 'messageActionSuggestedPostApproval' || action._ === 'messageActionSuggestedPostRefund' || action._ === 'messageActionSuggestedPostSuccess') {
+          const {default: SuggestedPostActionContent} = await import('./bubbleParts/suggestedPostActionContent');
+          const content = new SuggestedPostActionContent;
+
+          let peerTitle;
+          if(action._ === 'messageActionSuggestedPostApproval' && checkIfNotMePosted({peerId: this.peerId, canManageDirectMessages: this.chat.canManageDirectMessages, message})) {
+            peerTitle = new PeerTitle();
+            promise = peerTitle.update({peerId: this.peerId, onlyFirstName: this.chat.canManageDirectMessages, limitSymbols: 20, wrapOptions});
+          }
+
+          content.feedProps({
+            action,
+            message,
+            canManageDirectMessages: this.chat.canManageDirectMessages,
+            fromPeerTitle: peerTitle?.element
+          });
+
+          s.append(content);
+        } else if(action._ === 'messageActionSuggestBirthday') {
+          const title = await wrapMessageActionTextNew({message, middleware});
+          const container = wrapSolidComponent(() => SuggestBirthdayBubble({
+            birthday: action.birthday,
+            outgoing: message.pFlags.out,
+            title
+          }), middleware);
+          s.append(container);
+        } else if(action._ === 'messageActionStarGiftPurchaseOffer') {
+          const [title, gift] = await Promise.all([
+            wrapMessageActionTextNew({message, middleware}),
+            this.managers.appGiftsManager.wrapGift(action.gift)
+          ]);
+
+          const container = wrapSolidComponent(() => StarGiftOfferBubble({
+            gift: gift,
+            title,
+            outgoing: message.pFlags.out,
+            action,
+            modifyBubble: this.modifyBubble
+          }), middleware);
+          s.append(container);
+
+          if(!message.pFlags.out && showStarGiftOfferButtons(action)) {
+            bubble.classList.add('with-reply-markup');
+            const buttons = wrapSolidComponent(() => StarGiftOfferReplyMarkup({
+              gift,
+              message: message as Message.messageService,
+              chat: this.chat
+            }), middleware);
+            contentWrapper.append(buttons);
+          }
+        } else if(action._ === 'messageActionNoForwardsRequest' && !action.pFlags.expired) {
+          const peerTitle = message.pFlags.out ? undefined : await wrapPeerTitle({peerId: message.fromId});
+          this.wrapSomeSolid(() => NoForwardsRequestContent({
+            peerTitle
+          }), s, middleware);
+          s.style.maxWidth = '20rem';
+          bubble.classList.add('has-service-description');
+
+          const isExpired = tsNow(true) >= message.date + this.chat.appConfig.no_forwards_request_expire_period;
+          if(!message.pFlags.out && !isExpired) {
+            bubble.classList.add('with-reply-markup');
+            const buttons = wrapSolidComponent(() => NoForwardsRequestReplyMarkup({
+              message: message as Message.messageService,
+              chat: this.chat
+            }), middleware);
+            contentWrapper.append(buttons);
+          }
+        } else if(
+          action._ === 'messageActionChangeCommunity' &&
+          action.community_id !== undefined &&
+          action.community_id !== 0 &&
+          action.community_id !== '0'
+        ) {
+          const communityId = action.community_id.toChatId();
+          const community = await this.managers.appChatsManager.getChat(communityId);
+          const text = await wrapMessageActionTextNew({
+            message,
+            ...wrapOptions,
+            noLinks: !!community?.title
+          });
+          this.wrapSomeSolid(() => CommunityChangedServiceBubble({
+            communityId,
+            initialCommunity: community?._ === 'community' ||
+              community?._ === 'communityForbidden' ? community : undefined,
+            initialText: text,
+            message: message as Message.messageService,
+            onViewClick: () => {
+              hotReloadGuard.appDialogsManager.toggleForumTabByPeerId(
+                communityId.toPeerId(true),
+                true,
+                false
+              );
+            },
+            serviceContainer: s,
+            wrapOptions
+          }), s, middleware);
+        } else if(action._ === 'messageActionSetChatTheme' && action.theme._ === 'chatThemeUniqueGift') {
+          // * the gift stands in for the text, with the text under it, as in tdesktop
+          const slug = (action.theme.gift as StarGift.starGiftUnique).slug;
+          const [gift, text] = await Promise.all([
+            this.managers.appGiftsManager.wrapGift(action.theme.gift),
+            wrapMessageActionTextNew({message, ...wrapOptions})
+          ]);
+          hideServiceText = true;
+          this.wrapSomeSolid(() => ChatThemeGiftBubble({
+            gift,
+            text,
+            stickerOptions: {
+              middleware,
+              play: true,
+              loop: false,
+              group: this.chat.animationGroup,
+              liteModeKey: 'stickers_chat'
+            },
+            onView: () => {
+              hotReloadGuard.internalLinkProcessor.processUniqueStarGiftLink({_: INTERNAL_LINK_TYPE.UNIQUE_STAR_GIFT, slug});
+            }
+          }), bubbleContainer, middleware);
+        } else if(action._ === 'messageActionSetChatWallPaper' && !action.pFlags.same) {
+          // * the wallpaper stands in for the text, with the text under it, as in tdesktop
+          const text = await wrapMessageActionTextNew({message, ...wrapOptions});
+          const wallPaper = action.wallpaper;
+          const peerId = this.peerId;
+          hideServiceText = true;
+          this.wrapSomeSolid(() => ChatWallPaperBubble({
+            peerId,
+            wallPaper,
+            forBoth: !!action.pFlags.for_both,
+            isOut: isOwnMessage(message, rootScope.myId),
+            text,
+            // * a channel's is only shown
+            actions: peerId.isUser() && {
+              onOwnClick: () => this.chat.canChooseTheme() && this.chat.toggleThemeChooser(),
+              onView: () => {
+                import('@components/popups/chatWallPaperPreview').then(({default: showChatWallPaperPreviewPopup}) => {
+                  if(middleware()) showChatWallPaperPreviewPopup({peerId, wallPaper, fromMessageId: message.mid, managers: this.managers});
+                });
+              },
+              onRemove: () => {
+                import('@components/popups/chatWallPaper').then(({resetChatWallPaper}) => {
+                  if(middleware()) resetChatWallPaper(peerId, this.managers, {revert: true});
+                });
+              }
+            }
+          }), bubbleContainer, middleware);
+        } else if(
+          PHOTO_BUBBLE_ACTIONS[action._] &&
+          (action as MessageAction.messageActionChatEditPhoto).photo?._ === 'photo'
+        ) {
+          // Suggested profile photo, or a group/channel avatar change — show the
+          // photo inline (animated avatars play their looping video). Clicking
+          // opens the media viewer; for an incoming suggestion it opens the editor
+          // to set it as our own profile photo + toast.
+          const cfg = PHOTO_BUBBLE_ACTIONS[action._];
+          const photo = (action as MessageAction.messageActionChatEditPhoto).photo as Photo.photo;
+          const isOutgoing = !!message.pFlags.out;
+
+          const openViewer = () => {
+            const mediaEl = s.querySelector<HTMLElement>(
+              '.bubble-service-media-avatar-container img, .bubble-service-media-avatar-container canvas, .bubble-service-media-avatar-container video'
+            );
+            new hotReloadGuard.AppMediaViewer()
+            .setSearchContext({peerId: message.peerId, inputFilter: {_: cfg.filter}, useSearch: cfg.useSearch})
+            .openMedia({message: message as Message.messageService, target: mediaEl || undefined});
+          };
+
+          // Receiving side of a suggestion: open it in the editor, set the result
+          // as our own profile photo + toast. Otherwise just view it.
+          const acceptSuggestion = () => {
+            import('@components/avatarEdit').then(({editAndSetOwnAvatar}) => editAndSetOwnAvatar({
+              managers: this.managers,
+              photo,
+              onUploaded: () => toastNew({langPackKey: 'UserInfo.SuggestedPhotoApplied'})
+            }));
+          };
+
+          const onMediaClick = (cfg.suggest && !isOutgoing) ? acceptSuggestion : openViewer;
+          const button: Parameters<typeof wrapServiceMediaBubble>[0]['button'] = cfg.suggest ? {
+            text: isOutgoing ? 'UserInfo.SuggestedPhotoView' : 'UserInfo.SetPhotoTitle',
+            onClick: onMediaClick
+          } : undefined;
+
+          const caption = await wrapMessageActionTextNew({message, ...wrapOptions});
+
+          const {loadPromise} = wrapServiceMediaBubble({
+            container: s,
+            middleware,
+            lazyLoadQueue: this.lazyLoadQueue,
+            listenerSetter: this.listenerSetter,
+            photo,
+            caption,
+            onMediaClick,
+            button
+          });
+          loadPromises.push(loadPromise);
+        } else {
+          promise = wrapMessageActionTextNew({
+            message,
+            ...wrapOptions
+          }).then((el) => s.append(el));
+
+          // * a click on the text picks another theme, as in tdesktop; the menu has it for the keyboard
+          if(action._ === 'messageActionSetChatTheme' && this.chat.canChooseTheme()) {
+            s.classList.add('is-clickable');
+            // * held by the bubble, not the chat: it goes with the bubble
+            const detach = attachClickEvent(s, (e) => {
+              if(findUpTag(e.target, 'A') || findUpClassName(e.target, 'peer-title')) {
+                return;
+              }
+
+              this.chat.toggleThemeChooser();
+            });
+            middleware.onClean(detach);
+          }
+        }
+
+        if(action._ === 'messageActionGiftPremium' || (isGiftCode && shouldDisplayGiftCodeAsGift(action))) {
+          const content = bubbleContainer.cloneNode(false) as HTMLElement;
+          content.classList.add('has-service-before');
+
+          const assetName = getGiftAssetName(action.days);
+
+          const title = i18n('ActionGiftPremiumTitle2', [formatDaysDuration(action.days, false)]);
+          const subtitle =
+            action.message ?
+              wrapRichText(action.message.text, {entities: action.message.entities}) :
+              i18n('ActionGiftPremiumSubtitle2');
+
+          this.wrapSomeSolid(() => PremiumGiftBubble({
+            lottieOptions: {middleware},
+            assetName,
+            title,
+            subtitle,
+            buttonText: i18n(isGiftCode && message.fromId === message.peerId ? 'GiftPremiumUseGiftBtn' : 'ActionGiftPremiumView'),
+            buttonCallback: () => {
+              if(isGiftCode) {
+                const link: InternalLink.InternalLinkGiftCode = {
+                  _: INTERNAL_LINK_TYPE.GIFT_CODE,
+                  slug: action.slug,
+                  stack: this.chat.appImManager.getStackFromElement(bubble)
+                };
+
+                hotReloadGuard.internalLinkProcessor.processGiftCodeLink(link);
+                return;
+              }
+
+              hotReloadGuard.showPremiumPopup({
+                gift: action,
+                peerId: this.peerId,
+                isOut: !!message.pFlags.out
+              });
+            }
+          }), content, middleware);
+
+          bubbleContainer.after(content);
+        } else if(action._ === 'messageActionGiftTon') {
+          const content = bubbleContainer.cloneNode(false) as HTMLElement;
+          content.classList.add('has-service-before');
+
+          const stickers = await this.managers.appStickersManager.getLocalStickerSet('inputStickerSetTonGifts');
+          let idx: number;
+          const amountNum = nanotonToJsNumber(action.crypto_amount);
+          if(amountNum > 50) idx = 2;
+          else if(amountNum > 10) idx = 1;
+          else idx = 0;
+
+          this.wrapSomeSolid(() => PremiumGiftBubble({
+            lottieOptions: {middleware},
+            sticker: stickers.documents[idx] as MyDocument,
+            title: formatNanoton(action.crypto_amount, 9) + ' ' + GRAM_CURRENCY_SYMBOL,
+            subtitle: i18n('TonGiftSubtitle'),
+            buttonText: i18n('ActionGiftPremiumView'),
+            buttonCallback: () => {
+              const isSent = message.fromId === rootScope.myId;
+              createPaymentPopup({
+                message: message as Message.message,
+                noPaymentForm: true,
+                transaction: {
+                  _: 'starsTransaction',
+                  pFlags: {gift: true},
+                  id: action.transaction_id || '',
+                  date: message.date,
+                  peer: {_: 'starsTransactionPeer', peer: {_: 'peerUser', user_id: isSent ? message.peerId : message.fromId}},
+                  amount: {_: 'starsTonAmount', amount: (isSent ? '-' : '') + action.crypto_amount}
+                }
+              });
+            }
+          }), content, middleware);
+
+          bubbleContainer.after(content);
+        } else if(action._ === 'messageActionGramTransfer') {
+          // * a wallet transfer in the chat: the card opens its details in the wallet
+          const content = bubbleContainer.cloneNode(false) as HTMLElement;
+          content.classList.add('has-service-before');
+
+          this.wrapSomeSolid(() => WalletChatCard({
+            message: message as Message.messageService,
+            animationGroup: this.chat.animationGroup,
+            middleware
+          }), content, middleware);
+
+          bubbleContainer.after(content);
+        } else if(action._ === 'messageActionWalletTonConnectRequest') {
+          // * a connected app's request: a click reviews it in the wallet while it is pending (Android, tdesktop)
+          if(isWalletReleased() && message.peerId === SERVICE_PEER_ID && !message.pFlags.out && !action.pFlags.accepted && !action.pFlags.declined) {
+            bubbleContainer.classList.add('is-clickable');
+            // * a button to assistive technology, and with the a11y layer a tab stop Enter and Space open
+            ensureButtonSemantics(s);
+            attachClickEvent(s, () => {
+              import('@components/wallet/tonConnect').then(({openTonConnectRequestMessage}) => {
+                openTonConnectRequestMessage(String(action.session_id), (message as Message.messageService).id, action.expires);
+              });
+            }, {listenerSetter: this.listenerSetter});
+          }
+        } else if(action._ === 'messageActionChannelJoined') {
+          bubble.classList.add('is-similar-channels');
+
+          const c = document.createElement('div');
+          c.classList.add('bubble-similar-channels');
+
+          let visible = false;
+          const toggle = (force = !visible, noAnimation?: boolean) => {
+            if(force === visible) {
+              return;
+            }
+
+            visible = force;
+
+            if(force && !c.parentElement) {
+              bubbleContainer.after(c);
+            }
+
+            if(!liteMode.isAvailable('animations')) {
+              noAnimation = true;
+            }
+
+            let scrollSaver: ScrollSaver;
+            if(bubble.isConnected) {
+              scrollSaver = this.createScrollSaver(true);
+              scrollSaver.save();
+            }
+
+            const {duration, easing} = getTransition('standard');
+            const options: KeyframeAnimationOptions = {duration: noAnimation ? 0 : duration, fill: 'forwards', easing};
+            const keyframes: Keyframe[] = [{height: '0'/* , transform: 'scale(0)', opacity: '0' */}, {height: '9.125rem'/* , transform: 'scale(1)', opacity: '1' */}];
+            if(!force) keyframes.reverse();
+            const animation = c.animate(keyframes, options);
+            if(scrollSaver) this.animateSomethingWithScroll(animation.finished, scrollSaver);
+            if(!force) animation.finished.then(() => {
+              if(visible === force) {
+                c.remove();
+              }
+            });
+
+            updateHidden(!force);
+          };
+
+          const deferred = deferredPromise<void>();
+
+          const updateHidden = async(hidden: boolean) => {
+            const array = this.chat.appState.hiddenSimilarChannels.slice();
+            if(hidden) array.push(peerId);
+            else indexOfAndSplice(array, peerId);
+            await this.chat.setAppState('hiddenSimilarChannels', array);
+          };
+
+          const peerId = this.chat.peerId;
+          let cached: boolean;
+          this.wrapSomeSolid(
+            () => SimilarChannels({
+              chatId: peerId.toChatId(),
+              onClose: () => {
+                toggle(false);
+              },
+              onAcked: (_cached) => {
+                cached = _cached;
+                if(!cached) {
+                  deferred.resolve();
+                }
+              },
+              onReady: async() => {
+                bubbleContainer.classList.add('is-clickable');
+                await getHeavyAnimationPromise();
+
+                if(!this.chat.appState.hiddenSimilarChannels.includes(peerId)) {
+                  toggle(true, cached);
+                }
+
+                if(cached) {
+                  deferred.resolve();
+                }
+
+                attachClickEvent(bubbleContainer, () => {
+                  toggle();
+                });
+              },
+              onEmpty: () => {
+                if(deferred.isFulfilled) {
+                  toggle(false);
+                }
+
+                deferred.resolve();
+              }
+            }),
+            c,
+            middleware
+          );
+
+          loadPromises.push(deferred);
+        } else if(action._ === 'messageActionStarGift' || action._ === 'messageActionStarGiftUnique') {
+          const container = document.createElement('div');
+          container.classList.add('bubble-star-gift-container');
+          bubbleContainer.after(container);
+
+          const gift = await this.managers.appGiftsManager.wrapGiftFromMessage(message as Message.messageService)
+          this.wrapSomeSolid(() => StarGiftBubble({
+            gift,
+            fromId: getPeerId(gift.saved.from_id),
+            asUpgrade: gift.isIncoming &&
+              !(action._ === 'messageActionStarGift' && action.pFlags.upgraded) &&
+              (gift.isUpgradedBySender || action.pFlags.prepaid_upgrade),
+            asPrepaidUpgrade: action._ === 'messageActionStarGift' && action.pFlags.prepaid_upgrade,
+            ownerId: gift.isIncoming ? undefined : message.peerId,
+            wrapStickerOptions: {
+              middleware,
+              lazyLoadQueue: this.lazyLoadQueue,
+              group: this.chat.animationGroup,
+              scrollable: this.scrollable,
+              liteModeKey: 'stickers_chat',
+              play: true,
+              loop: false
+            },
+            onViewClick: async() => {
+              if(action._ === 'messageActionStarGift' && action.upgrade_msg_id) {
+                const upgradeMsg = await this.managers.appMessagesManager.getMessageById(action.upgrade_msg_id);
+                if(!upgradeMsg) {
+                  toastNew({langPackKey: 'MessageNotFound'});
+                  return;
+                }
+
+                const upgradedGift = await this.managers.appGiftsManager.wrapGiftFromMessage(upgradeMsg as Message.messageService);
+                showStarGiftInfoPopup({gift: upgradedGift});
+              } else {
+                showStarGiftInfoPopup({gift})
+              }
+            }
+          }), container, middleware)
+        } else if(
+          serviceMessageActionsWithReply.includes(action._) ||
+          // * the same wallpaper as the other side's: it leads to theirs
+          (action._ === 'messageActionSetChatWallPaper' && action.pFlags.same && (message as Message.messageService).reply_to)
+        ) {
+          bubble.classList.add('is-reply')
+        }
+
+        loadPromises.push(promise);
+      } else if(isStoryMention) {
+        const messageMedia = message.media as MessageMedia.messageMediaStory;
+        const storyPeerId = getPeerId(messageMedia.peer);
+        const storyId = messageMedia.id;
+        const isMyStory = storyPeerId === rootScope.myId;
+
+        const result = await modifyAckedPromise(this.managers.acknowledged.appStoriesManager.getStoryById(storyPeerId, storyId));
+        if(!result.cached) {
+          s.append(i18n('Loading'));
+          (result.result as Promise<any>).then(() => this.rerenderWhenLoaded(bubble, message), noop);
+        } else if(!result.result) {
+          let elem: HTMLElement;
+          if(isMyStory) elem = i18n('ExpiredStoryMentionYou', [await wrapPeerTitle({peerId: message.peerId})]);
+          else elem = i18n('ExpiredStoryMention');
+          const icon = Icon('bomb_filled', 'expired-story-icon');
+          s.append(icon, elem);
+        } else {
+          s.classList.add('bubble-story-mention-wrapper');
+
+          const avatarContainer = document.createElement('div');
+          avatarContainer.classList.add('bubble-story-mention-avatar-container');
+          // The adjacent StoryMentionView button exposes this same action.
+          avatarContainer.setAttribute('aria-hidden', 'true');
+
+          const avatar = avatarNew({
+            middleware,
+            size: 100,
+            peerId: storyPeerId,
+            lazyLoadQueue: this.lazyLoadQueue,
+            withStories: true,
+            storyId,
+            storyColors: {
+              read: 'rgba(255, 255, 255, .3)'
+            }
+          });
+          avatar.node.dataset.storyId = '' + storyId;
+          loadPromises.push(avatar.readyThumbPromise);
+
+          const deferred = deferredPromise<void>();
+          loadPromises.push(deferred);
+          callbackify(result.result, (storyItem) => {
+            if(!middleware() || !storyItem || storyItem.pFlags.noforwards) {
+              deferred.resolve();
+              return;
+            }
+
+            createRoot((dispose) => {
+              middleware.onClean(() => {
+                deferred.resolve();
+                dispose();
+              });
+
+              const {container, ready} = wrapStoryMedia({
+                peerId: storyPeerId,
+                storyItem: storyItem,
+                forPreview: true,
+                noInfo: true,
+                lazyLoadQueue: this.lazyLoadQueue,
+                withPreloader: true,
+                noAspecter: true
+              });
+
+              createEffect(() => {
+                if(ready()) {
+                  deferred.resolve();
+                  (container as HTMLElement).classList.add('bubble-story-mention-preview');
+                  attachClickEvent(avatarContainer, (e) => {
+                    cancelEvent(e);
+                    hotReloadGuard.createStoriesViewerWithPeer({peerId: storyPeerId, id: storyId, target: () => container as HTMLElement});
+                  }, {listenerSetter: this.listenerSetter});
+                  avatarContainer.append(container as HTMLElement);
+                }
+              });
+            });
+          });
+
+          avatarContainer.append(avatar.node);
+
+          const text = i18n(
+            isMyStory ? 'StoryMentionYou' : 'StoryMention',
+            [await wrapPeerTitle({peerId: isMyStory ? message.peerId : storyPeerId})]
+          );
+          text.classList.add('bubble-story-mention-text');
+
+          const button = Button('bubble-service-button bubble-story-mention-button', {noRipple: true, text: 'StoryMentionView'});
+          attachClickEvent(button, () => {
+            simulateClickEvent(avatar.node);
+            // createStoriesViewerWithPeer({peerId: storyPeerId, id: storyId});
+          }, {listenerSetter: this.listenerSetter});
+
+          s.append(avatarContainer, text, button);
+        }
+      } else if(isSelfDestructingMedia) {
+        const promise = wrapMessageForReply({
+          message,
+          ...wrapOptions
+        }).then((el) => s.append(el));
+
+        loadPromises.push(promise);
+      }
+      if(!hideServiceText) bubbleContainer.append(s);
+
+      if((message as Message.messageService).pFlags.is_single) { // * Ignore 'Discussion started'
+        bubble.classList.add('is-group-last');
+      }
+
+      returnService = true;
+    }
+
+    if(fakeServiceContent) {
+      bubble.classList.add('has-fake-service', 'is-forced-rounded');
+
+      const fakeServiceMessage = document.createElement('div');
+      fakeServiceMessage.classList.add('service-msg');
+
+      fakeServiceMessage.append(fakeServiceContent);
+
+      bubble.prepend(fakeServiceMessage);
+    }
+
+
+    const setUnreadObserver = !previewOnly && context.isInUnread && this.observer ? this.setUnreadObserver.bind(this, 'history', bubble, maxBubbleMid) : undefined;
+
+    const isBroadcast = this.chat.isBroadcast;
+    if(returnService) {
+      setUnreadObserver?.();
+      if(!previewOnly && hasReactions && this.chat.type !== ChatType.Logs) {
+        this.appendReactionsElementToBubble(bubble, message, reactionsMessage, undefined, loadPromises);
+      }
+      if(!previewOnly) {
+        this.observeUnreadContent(bubble, message);
+      }
+      return ret;
+    }
+
+    if(!isBroadcast) {
+      setUnreadObserver?.();
+    }
+
+    if(!previewOnly) {
+      this.observeUnreadContent(bubble, message);
+    }
+
+    const isSponsored = (message as Message.message).pFlags.sponsored;
+    const sponsoredMessage = (message as Message.message).sponsoredMessage;
+    const factCheck = /* !!isSponsored === !sponsoredMessage &&  */isMessage && message.factcheck;
+    const richMessage = isMessage ? message.rich_message : undefined;
+    const richMessagePage = richMessage && richMessageToPage(richMessage);
+    if(richMessagePage && hideLinks()) bubble.dataset.hiddenLinks = '1';
+
+    context.messageMedia = isMessage && message.media;
+    let needToSetHTML = true;
+    let totalEntities: MessageEntity[], messageWithMessage: Message.message, groupedTextMessage: Message.message;
+    if(isMessage) {
+      if(groupedId && groupedMustBeRenderedFull) {
+        const t = groupedTextMessage = getGroupedText(groupedMessages);
+        context.messageMessage = t?.message || '';
+        // totalEntities = t.entities;
+        totalEntities = t?.totalEntities || [];
+        messageWithMessage = groupedTextMessage;
+      } else {
+        context.messageMessage = message.message;
+        // totalEntities = message.entities;
+        totalEntities = message.totalEntities;
+        messageWithMessage = message;
+      }
+
+      const document = (context.messageMedia as MessageMedia.messageMediaDocument)?.document as MyDocument;
+      if(document) {
+        if(document?.type === 'sticker') {
+          context.messageMessage = totalEntities = undefined;
+        } else if(!['video', 'gif'].includes(document.type)) {
+          needToSetHTML = false;
+        }
+      }
+
+      if(context.messageMedia?._ === 'messageMediaPoll') {
+        context.messageMessage = totalEntities = undefined;
+      }
+    } else {
+      if(message.action._ === 'messageActionPhoneCall' || message.action._ === 'messageActionConferenceCall') {
+        context.messageMedia = {
+          _: 'messageMediaCall',
+          action: message.action
+        };
+      }
+    }
+
+    let bigEmojis = 0, customEmojiSize: MediaSize;
+    if(totalEntities && !context.messageMedia && !factCheck && !(message as Message.message).pFlags.currentlyTyping) {
+      const emojiCount = countEmojiOnly(context.messageMessage, totalEntities);
+      if(emojiCount) {
+        bigEmojis = Math.min(BIG_EMOJI_SIZES_LENGTH, emojiCount);
+
+        customEmojiSize = mediaSizes.active.customEmoji;
+
+        const size = BIG_EMOJI_SIZES[bigEmojis];
+        if(size) {
+          customEmojiSize = makeMediaSize(size, size);
+          bubble.style.setProperty('--emoji-size', size + 'px');
+        }
+      }
+    }
+
+    customEmojiSize ??= this.chat.appImManager.customEmojiSize;
+
+    let maxMediaTimestamp = getMediaDurationFromMessage(groupedTextMessage || message as Message.message);
+    if(groupedTextMessage && needToSetHTML) {
+      bubble.dataset.textMid = '' + groupedTextMessage.mid;
+    }
+
+    let replyTo = message.reply_to;
+    if(replyTo?._ === 'messageReplyHeader') {
+      const replyToPeerId = replyTo.reply_to_peer_id ? getPeerId(replyTo.reply_to_peer_id) : this.peerId;
+      bubble.dataset.replyToPeerId = '' + replyToPeerId;
+      bubble.dataset.replyToMid = '' + message.reply_to_mid;
+
+      if(maxMediaTimestamp === undefined) {
+        const originalMessage = apiManagerProxy.getMessageByPeer(replyToPeerId, message.reply_to_mid);
+        if(originalMessage) {
+          maxMediaTimestamp = getMediaDurationFromMessage(originalMessage as Message.message);
+        } else {
+          // this.managers.appMessagesManager.fetchMessageReplyTo(message);
+          // this.needUpdate.push({replyToPeerId, replyMid: message.reply_to_mid, mid: message.mid});
+          maxMediaTimestamp = Infinity;
+        }
+      }
+    } else if(replyTo) {
+      bubble.dataset.replyToPeerId = '' + getPeerId(replyTo.peer);
+      bubble.dataset.replyToStoryId = '' + replyTo.story_id;
+    }
+
+    const getRichTextOptions = (entities?: MessageEntity[]): Parameters<typeof wrapRichText>[1] => ({
+      entities,
+      passEntities: this.passEntities,
+      loadPromises,
+      // the big emoji of a message that flies in load at once, as a sticker being sent does: the list's queue is
+      // locked while it scrolls to them
+      lazyLoadQueue: bigEmojis && this.sendFlights.getFlight(message) ? false : this.lazyLoadQueue,
+      customEmojiSize,
+      middleware,
+      animationGroup: this.chat.animationGroup,
+      maxMediaTimestamp,
+      textColor: 'primary-text-color',
+      passMaskedLinks: !!(message as Message.message).sponsoredMessage,
+      get noNavigation() {
+        return hideLinks();
+      },
+      get disabledEntities() {
+        return hideLinks() ? HIDDEN_LINK_ENTITY_TYPES : undefined;
+      },
+      onEntitiesDisabled: () => {
+        bubble.dataset.hiddenLinks = '1';
+      }
+    });
+
+    const canTranslate = !bigEmojis && (!our || (isMessage && message.summary_from_language)) && this.chat.type !== ChatType.Search;
+    const ownsCurrentBubble = () => isBubbleUiCurrent(
+      middleware,
+      bubble,
+      (fullMid) => this.getBubble(fullMid)
+    );
+    const [summarizing, setSummarizing] = createSignal(false);
+    const createSummaryHeader = (summaryMessage: Message.message) => {
+      const title = i18n('Summary.Title');
+      title.classList.add('text-bold');
+      const subtitle = i18n(IS_TOUCH_SUPPORTED ? 'Summary.Subtitle' : 'Summary.Subtitle.Click');
+      const {container} = wrapReply({
+        title,
+        subtitle,
+        message: summaryMessage,
+        textColor: 'secondary-text-color'
+      });
+      container.classList.add('reply-summary');
+
+      onCleanup(attachClickEvent(container, (e) => {
+        cancelEvent(e);
+        if(!ownsCurrentBubble()) return;
+        setSummarizing(false);
+      }));
+
+      container.prepend(Sparkles({
+        count: 30,
+        mode: 'progress'
+      }));
+      return container;
+    };
+    const onTranslationError = (error: ApiError) => {
+      if(!ownsCurrentBubble()) return;
+
+      if(error.type === 'SUMMARY_FLOOD_PREMIUM') {
+        const {hide} = showChatToast({
+          icon: 'premium_speed_filled',
+          title: i18n('Summary.Limited'),
+          textElement: i18n('Summary.Limited.Text', [
+            anchorCallback(() => {
+              hide();
+              hotReloadGuard.showPremiumPopup();
+            })
+          ]),
+          duration: 10000
+        });
+      }
+
+      setSummarizing(false);
+    };
+    const commitTranslation = (set: () => void) => {
+      if(!ownsCurrentBubble()) return;
+
+      // the translation (or the text back) gives way to the other as an edit does
+      this.modifyBubble(() => {
+        if(!ownsCurrentBubble()) return;
+        set();
+        if(summarizing()) queueMicrotask(() => {
+          if(!ownsCurrentBubble()) return;
+          this.scrollToBubble(bubble, 'start');
+        });
+      }, bubble);
+    };
+    const translatableParams: Parameters<typeof TranslatableMessage>[0] = canTranslate ? {
+      peerId: message.peerId,
+      middleware,
+      observeElement: bubble,
+      observer: this.observer,
+      onTranslation: commitTranslation,
+      richTextOptions: getRichTextOptions(),
+      summarizing,
+      onFragment: (fragment) => {
+        if(!ownsCurrentBubble() || !summarizing()) {
+          return fragment;
+        }
+        fragment.prepend(createSummaryHeader(message as Message.message));
+        return fragment;
+      },
+      onError: onTranslationError
+    } : undefined;
+
+    let richText: HTMLElement | DocumentFragment;
+    const getLegacyRichText = () => richText ??= context.messageMessage ? (
+      !canTranslate ?
+        wrapRichText(context.messageMessage, getRichTextOptions(totalEntities)) :
+        TranslatableMessage({
+          message: messageWithMessage,
+          ...translatableParams
+        })
+    ) : undefined;
+
+    let isMessageEmpty = !context.messageMessage && !isSponsored && !factCheck;
+    context.mediaRequiresMessageDiv = false;
+
+    context.canHaveTail = true;
+    let canHavePlainMediaTail = false;
+    context.isStandaloneMedia = false;
+    if(bigEmojis) {
+      if(this.chat.appSettings.emoji.big) {
+        const sticker = bigEmojis === 1 &&
+          !totalEntities.find((entity) => entity._ === 'messageEntityCustomEmoji') &&
+          await this.managers.appStickersManager.getAnimatedEmojiSticker(context.messageMessage);
+        if(bigEmojis === 1 && !context.messageMedia && sticker) {
+          context.messageMedia = {
+            _: 'messageMediaDocument',
+            document: sticker,
+            pFlags: {}
+          };
+        } else {
+          context.attachmentDiv = document.createElement('div');
+          context.attachmentDiv.classList.add('attachment', 'spoilers-container');
+
+          setInnerHTML(context.attachmentDiv, getLegacyRichText());
+
+          bubbleContainer.append(context.attachmentDiv);
+        }
+
+        isMessageEmpty = true;
+        bubble.classList.add('emoji-big');
+        context.isStandaloneMedia = true;
+        context.canHaveTail = false;
+        needToSetHTML = false;
+      }
+
+      bubble.classList.add('can-have-big-emoji');
+    }
+
+    const mountSolidMessageBody = (
+      element: HTMLElement,
+      currentMessage: Message.message,
+      getPolicy: () => Parameters<typeof wrapRichText>[1],
+      ownsTime: boolean
+    ) => {
+      const holder: {entry?: SolidMessageBodyEntry} = {};
+      const controller = createSolidMessageBody(
+        element,
+        makeSolidMessageBodySnapshot(currentMessage, 1),
+        {
+          middleware,
+          chat: this.chat,
+          richTextOptions: getPolicy(),
+          reducedMotion: useReducedMotion(),
+          translation: canTranslate ? {
+            enabled: true,
+            summarizing,
+            createSummaryHeader,
+            onCommit: commitTranslation,
+            onError: onTranslationError
+          } : undefined,
+          scrollToElement: (element) => {
+            if(ownsCurrentBubble()) this.scrollToBubble(element, 'start');
+          },
+          onLayout: () => {
+            if(holder.entry) this.onSolidMessageBodyLayout(holder.entry);
+          }
+        }
+      );
+      const entry = holder.entry = {
+        bubble,
+        controller,
+        message: currentMessage,
+        revision: 1,
+        structure: getSolidMessageBodyStructure(currentMessage),
+        ownsTime,
+        refreshPolicy: () => controller.setPolicy(getPolicy())
+      };
+      this.registerSolidMessageBody(bubble, entry);
+      middleware.onDestroy(() => this.unregisterSolidMessageBody(bubble, entry));
+      return entry;
+    };
+
+    let solidMessageBodyEntry: SolidMessageBodyEntry;
+    let refreshDirectRichMessagePolicy: () => void;
+    const canUseSolidMessageBody = needToSetHTML &&
+      !!messageWithMessage &&
+      context.messageMessage !== undefined &&
+      (!!context.messageMessage || !!richMessagePage || !!messageWithMessage.pFlags.currentlyTyping) &&
+      context.messageMedia?._ !== 'messageMediaPoll' &&
+      context.messageMedia?._ !== 'messageMediaToDo';
+    if(canUseSolidMessageBody) {
+      // * the text runs by its own direction, as the legacy path's `setInnerHTML` makes it
+      setDirection(messageDiv);
+      const element = document.createElement('div');
+      solidMessageBodyEntry = mountSolidMessageBody(
+        element,
+        messageWithMessage,
+        () => getRichTextOptions(solidMessageBodyEntry?.controller.getSnapshot().text.entities || totalEntities),
+        messageWithMessage.mid === message.mid
+      );
+      messageDiv.append(element);
+      if(messageWithMessage.pFlags.currentlyTyping) isMessageEmpty = false;
+    } else if(needToSetHTML) {
+      setInnerHTML(messageDiv, getLegacyRichText());
+    }
+
+    if(needToSetHTML) {
+      const canShowPreviousMessage = ((originalMessage?: Message): originalMessage is Message.message  => {
+        if(originalMessage?._ !== 'message' || !originalMessage.message) return false;
+        if(message?._ !== 'message') return false;
+
+        return (
+          message.message !== originalMessage.message ||
+          !deepEqual(message.entities, originalMessage.entities)
+        );
+      });
+
+      if(canShowPreviousMessage(originalMessage)) {
+        const container = wrapReply({
+          setColorPeerId: colorOriginalMessagePeerId,
+          title: i18n('AdminRecentActions.PreviousMessage'),
+          quote: {
+            text: originalMessage.message,
+            entities: originalMessage.entities
+          },
+          middleware
+        }).container;
+
+        container.classList.add('margin-0');
+        messageDiv.appendChild(container);
+      }
+    }
+
+    if(richMessagePage) {
+      if(!solidMessageBodyEntry) {
+        const container = document.createElement('div');
+        const [richTextOptions, setRichTextOptions] = createSignal(getRichTextOptions(), {equals: false});
+        refreshDirectRichMessagePolicy = () => setRichTextOptions(getRichTextOptions());
+        renderComponent({
+          element: container,
+          Component: RichMessageBubble,
+          props: {
+            message: message as Message.message,
+            chat: this.chat,
+            richMessage,
+            page: richMessagePage,
+            richTextOptions,
+            scrollToElement: (element: HTMLElement) => {
+              if(ownsCurrentBubble()) this.scrollToBubble(element, 'start');
+            }
+          },
+          middleware,
+          HotReloadGuard: SolidJSHotReloadGuardProvider
+        });
+        messageDiv.append(container);
+      }
+      isMessageEmpty = false;
+      context.mediaRequiresMessageDiv = true;
+    }
+
+    const isOut = context.isOut = this.chat.isOutMessage(message);
+
+    // A call bubble prints the message's time itself, at the head of its status
+    // line, and has no delivery state worth showing — tdesktop says the same
+    // with `customInfoLayout() = true` (history_view_call.h:39). So it gets no
+    // message-info block at all, rather than one parked in a corner.
+    // A welcome template is sent whenever someone joins, so its own date means nothing (Android
+    // draws no time there either).
+    // A message this client cannot show is a plate and nothing else, as Android draws it: no time,
+    // no name, no forward header, no quote.
+    const isUnsupported = isMessage && isUnsupportedMessage(message);
+    const noMessageInfo = isSponsored ||
+      context.messageMedia?._ === 'messageMediaCall' ||
+      this.chat.type === ChatType.Welcome ||
+      isUnsupported;
+
+    let timeSpan: HTMLElement, _clearfix: HTMLElement;
+    if(!noMessageInfo) {
+      timeSpan = bubble.timeSpan = MessageRender.setTime({
+        chat: this.chat,
+        chatType: this.chat.type,
+        groupedMessagesCount: groupedMessages?.length,
+        message,
+        reactionsMessage,
+        isOut,
+        middleware,
+        loadPromises
+      });
+
+      let _clearfix: HTMLElement;
+      appendBubbleTime(bubble, messageDiv, () => {
+        messageDiv.append(timeSpan, _clearfix ??= clearfix());
+      });
+
+      placeBubbleTime(timeSpan, context.messageMessage || '');
+
+      if(isBroadcast) {
+        setUnreadObserver?.(timeSpan);
+      }
+    } else if(isSponsored) {
+      bubble.classList.add('is-sponsored');
+    } else if(isBroadcast) {
+      // * a post with no time to be read by is read by itself
+      setUnreadObserver?.();
+    }
+
+    bubbleContainer.prepend(messageDiv);
+
+    let hasBesideButton = false;
+    if(isMessage && message.views) {
+      bubble.classList.add('channel-post');
+
+      if(!message.fwd_from?.saved_from_msg_id && this.chat.type !== ChatType.Pinned) {
+        const forward = document.createElement('div');
+        forward.classList.add('bubble-beside-button', 'with-hover', 'forward');
+        forward.setAttribute('role', 'button');
+        forward.setAttribute('aria-label', I18n.format('Forward', true));
+        if(Modes.a11y) forward.tabIndex = 0;
+        forward.append(Icon('forward_filled'));
+        bubbleContainer.append(forward);
+        bubble.classList.add('with-beside-button');
+        hasBesideButton = true;
+      }
+
+      if(!previewOnly && !message.pFlags.is_outgoing && this.observer) {
+        this.observer.observe(bubble, this.viewsObserverCallback);
+
+        // Engagement metrics only for the main channel feed (not preview/pinned/search/scheduled views).
+        if(this.chat.type === ChatType.Chat && !this.chat.isPreview) {
+          this.observer.observe(bubble, this.readMetricsObserverCallback);
+        }
+      }
+    }
+
+    let summaryContainer: HTMLElement;
+    let disposeSummaryButton: () => void;
+    const reconcileSummaryButton = (summaryMessage: Message.message) => {
+      if(!summaryMessage.summary_from_language) {
+        if(!summaryContainer) return;
+        disposeSummaryButton?.();
+        disposeSummaryButton = undefined;
+        summaryContainer.remove();
+        summaryContainer = undefined;
+        setSummarizing(false);
+        if(!hasBesideButton) bubble.classList.remove('with-beside-button');
+        return;
+      }
+
+      if(summaryContainer) return;
+
+      const container = summaryContainer = document.createElement('div');
+      container.classList.add('summarize-container');
+      const btn = document.createElement('div');
+      btn.classList.add('bubble-beside-button', 'summarize');
+      btn.setAttribute('role', 'button');
+      btn.setAttribute('aria-label', I18n.format('Summary.Title', true));
+      if(Modes.a11y) btn.tabIndex = 0;
+      if(hasBesideButton) btn.classList.add('bubble-beside-button--not-last');
+      else container.classList.add('is-last-button');
+      const size = 38;
+      const sparkles = Sparkles({
+        mode: 'button',
+        containerSize: {width: size, height: size},
+        sparkles: [
+          {x: 22 / size * 100, y: 6 / size * 100, scale: 1.5, delay: 0, translateX: 0, translateY: 0, minOpacity: 0.2},
+          {x: 9.5 / size * 100, y: 19 / size * 100, scale: 1.25, delay: 1500, translateX: 0, translateY: 0, minOpacity: 0.2}
+        ],
+        isDiv: true,
+        fixedScale: true,
+        duration: 3000
+      });
+      let node: ChildNode = document.createTextNode('');
+      btn.append(sparkles, node);
+      disposeSummaryButton = createRoot((dispose) => {
+        createEffect(() => {
+          const newNode = Icon(summarizing() ? 'expand' : 'collapse');
+          node.replaceWith(newNode);
+          node = newNode;
+        });
+        const detach = attachClickEvent(btn, () => {
+          if(!ownsCurrentBubble()) return;
+          setSummarizing((v) => !v);
+        });
+        onCleanup(detach);
+        return dispose;
+      });
+      container.append(btn);
+      bubbleContainer.append(container);
+      bubble.classList.add('with-beside-button');
+    };
+    middleware.onDestroy(() => disposeSummaryButton?.());
+    if(isMessage) reconcileSummaryButton(message);
+
+    const replyMarkup = isMessage && message.reply_markup;
+    // * a sender whose links are not drawn gets no buttons either (iOS)
+    if(replyMarkup?._ === 'replyInlineMarkup' && hideLinks()) {
+      bubble.dataset.hiddenLinks = '1';
+    } else if(replyMarkup?._ === 'replyInlineMarkup') {
+      const containerDiv = createInlineReplyMarkup({
+        rows: replyMarkup.rows,
+        chat: this.chat,
+        message: message as Message.message,
+        wrapOptions
+      });
+
+      if(containerDiv.childElementCount) {
+        bubble.classList.add('with-reply-markup');
+        contentWrapper.append(containerDiv);
+      }
+    }
+
+    if(!isOut && isMessage) {
+      tmpPromise = addSuggestedPostReplyMarkup({message, bubble, contentWrapper, chat: this.chat});
+      if(tmpPromise) await tmpPromise;
+    }
+
+    if(isMessage) {
+      addContinueLastTopicReplyMarkup({message, bubble, contentWrapper, chat: this.chat});
+    }
+
+    context.isOutgoing = !previewOnly && message.pFlags.is_outgoing/*  && this.peerId !== rootScope.myId */;
+    const sensitive = this.chat.isSensitive || isMessageSensitive(message);
+
+    if(context.isOutgoing && !message.error) {
+      bubble.classList.add('is-outgoing');
+      if((message as Message.message).reactions) {
+        bubble.dataset.ignoreReactions = '1';
+      }
+    }
+
+    const canHaveCommentReplies = isMessage && (
+      message.peerId === REPLIES_PEER_ID ||
+      !!message.replies ||
+      !!message.grouped_id
+    );
+    const messageWithReplies = canHaveCommentReplies && await this.managers.appMessagesManager.getMessageWithCommentReplies(message);
+    const withReplies = !!messageWithReplies && message.mid > 0;
+
+    if(withReplies) {
+      bubble.classList.add('with-replies');
+    }
+
+    const fwdFrom = isMessage && message.fwd_from;
+    const fwdFromId = isMessage && message.fwdFromId;
+    const _isForwardOfForward = this.chat.isForwardOfForward(message);
+
+    let nameContainer: HTMLElement = bubbleContainer;
+
+    const hasPostAuthor = isMessage && message.post_author && !this.chat.isLikeGroup;
+    const canHideNameIfMedia = !isEphemeral &&
+      !message.viaBotId &&
+      (message.fromId === rootScope.myId || !message.pFlags.out) &&
+      (!hasPostAuthor || !fwdFrom) &&
+      !_isForwardOfForward/*  &&
+      !fwdFromId */;
+      // (!getFwdFromName(fwdFrom) || !fwdFromId);
+
+    const invertMedia = isMessage && message.pFlags.invert_media;
+    if(invertMedia) {
+      bubble.classList.add('invert-media');
+    }
+
+    let factCheckBox: HTMLElement;
+    if(factCheck) {
+      createRoot((dispose) => {
+        middleware.onDestroy(dispose);
+
+        const getCountry = () => I18n.countriesList.find((country) => country.iso2 === factCheck.country);
+        const getCountryName = () => {
+          const country = getCountry();
+          return country.name || country.default_name;
+        };
+
+        const [textWithEntities, setTextWithEntities] = createSignal<TextWithEntities>();
+
+        const onFactCheck = (factCheck: FactCheck) => {
+          setTextWithEntities(factCheck.text);
+        };
+
+        if(!factCheck.text) {
+          this.managers.appMessagesManager.getFactCheck(message.peerId, message.mid)
+          .then((factCheck) => {
+            this.modifyBubble(() => {
+              onFactCheck(factCheck);
+            });
+          });
+        } else {
+          onFactCheck(factCheck);
+        }
+
+        WebPageBox({
+          footer: {
+            content: i18n('FactCheckFooter', [getCountryName()]),
+            text: true
+          },
+          name: {
+            content: i18n('FactCheck'),
+            tip: {
+              content: i18n('FactCheckWhat'),
+              onClick: (e) => {
+                showTooltip({
+                  element: e.target as HTMLElement,
+                  container: this.container,
+                  vertical: 'top',
+                  textElement: i18n('FactCheckToast', [getCountryName()])
+                });
+              }
+            }
+          },
+          get text() {
+            if(!textWithEntities()) {
+              return i18n('Loading');
+            }
+
+            const {text, entities} = wrapTextWithEntities(textWithEntities());
+            return wrapRichText(text, {entities});
+          },
+          ref: (box) => {
+            factCheckBox = box;
+            if(timeSpan) {
+              timeSpan.before(box);
+            } else {
+              messageDiv.append(box);
+            }
+          },
+          minContent: true
+        });
+      });
+      const box = document.createElement('div');
+      box.classList.add('bubble-fact-check', 'quote-like', 'quote-like-hoverable');
+    }
+
+    const canPossiblyHavePlainMediaTail = isMessageEmpty || invertMedia;
+
+    let storyFromPeerId: PeerId, noAttachmentDivNeeded = false, processedWebPage = false,
+      isRound = false, searchContext: MediaSearchContext;
+    const globalMediaDeferred = deferredPromise<HTMLMediaElement>();
+    // media
+    if(context.messageMedia) {
+      context.attachmentDiv = document.createElement('div');
+      context.attachmentDiv.classList.add('attachment');
+
+
+      switch(context.messageMedia._) {
+        case 'messageMediaPhotoExternal':
+        case 'messageMediaPhoto': {
+          const photo = context.messageMedia.photo;
+
+          canHavePlainMediaTail = canPossiblyHavePlainMediaTail;
+
+          if(canHideNameIfMedia) {
+            bubble.classList.add('hide-name');
+          }
+
+          bubble.classList.add('photo');
+
+          if(groupedMustBeRenderedFull && groupedId && groupedMids.length !== 1) {
+            bubble.classList.add('is-album', 'is-grouped');
+            wrapAlbum({
+              messages: groupedMessages,
+              attachmentDiv: context.attachmentDiv,
+              middleware: this.getMiddleware(),
+              isOut: our,
+              lazyLoadQueue: this.lazyLoadQueue,
+              chat: this.chat,
+              loadPromises,
+              autoDownload: this.chat.autoDownload,
+              sensitive
+            });
+
+            break;
+          }
+
+          const withTail = !IS_ANDROID && context.canHaveTail && !withReplies && USE_MEDIA_TAILS;
+          if(withTail) bubble.classList.add('with-media-tail');
+          const p = wrapPhoto({
+            photo: photo as Photo.photo,
+            message,
+            container: context.attachmentDiv,
+            withTail,
+            isOut,
+            lazyLoadQueue: this.lazyLoadQueue,
+            middleware: this.getMiddleware(),
+            loadPromises,
+            autoDownloadSize: this.chat.autoDownload.photo
+          });
+
+          if((context.messageMedia as MessageMedia.messageMediaPhoto).pFlags?.spoiler || sensitive) {
+            loadPromises.push(this.wrapMediaSpoiler({
+              media: photo as Photo.photo,
+              promise: p,
+              middleware,
+              attachmentDiv: context.attachmentDiv,
+              sensitive
+            }));
+          }
+
+          break;
+        }
+
+        case 'messageMediaWebPage': {
+          noAttachmentDivNeeded = true;
+          context.attachmentDiv = undefined;
+
+          if(hideLinks()) {
+            bubble.dataset.hiddenLinks = '1';
+            break;
+          }
+
+          const webPage: WebPage = context.messageMedia.webpage;
+          if(webPage._ !== 'webPage') {
+            break;
+          }
+
+          processedWebPage = true;
+          const storyAttribute = webPage.attributes?.find((attribute) => attribute._ === 'webPageAttributeStory') as WebPageAttribute.webPageAttributeStory;
+          const storyPeerId = storyAttribute && getPeerId(storyAttribute.peer);
+          const storyId = storyAttribute?.id;
+
+          if(storyAttribute) {
+            const replyContainer = await this.getStoryReplyIfExpired(storyPeerId, storyId, true);
+            if(replyContainer === null) {
+              // bubble.classList.add('is-expired-story');
+              // timeSpan.before(replyContainer);
+              // messageDiv.classList.add('expired-story-message');
+              break;
+            }
+          }
+
+          let wrapped = wrapUrl(webPage.url);
+          // * find entity with anchor
+          const urlEntities = totalEntities ? totalEntities.map((entity) => {
+            try {
+              let entityUrl = (entity as MessageEntity.messageEntityTextUrl).url;
+              if(!entityUrl && entity._ === 'messageEntityUrl') {
+                entityUrl = context.messageMessage.slice(entity.offset, entity.offset + entity.length);
+              }
+
+              if(!entityUrl) {
+                return;
+              }
+
+              const w = wrapUrl(entityUrl);
+              const u = new URL(w.url);
+              u.hash = '';
+              return u.toString() === wrapped.url ? w : undefined;
+            } catch(err) {}
+          }).filter(Boolean) : [];
+          if(urlEntities.length === 1) {
+            wrapped = urlEntities[0];
+          }
+
+          const starGiftAttribute = webPage.attributes?.find((attr) => attr._ === 'webPageAttributeUniqueStarGift')
+          const starGiftCollectionAttribute = webPage.attributes?.find((attr) => attr._ === 'webPageAttributeStarGiftCollection')
+          const stickerSetAttribute = webPage.attributes?.find((attr) => attr._ === 'webPageAttributeStickerSet') as WebPageAttribute.webPageAttributeStickerSet
+
+          const props: Parameters<typeof WebPageBox>[0] = {};
+          const boxRefs: ((box: HTMLAnchorElement) => void)[] = [];
+
+          const hasSafeUrl = (wrapped.onclick && !UNSAFE_ANCHOR_LINK_TYPES.has(wrapped.onclick)) || isSponsored;
+          if(webPage.cached_page) {
+            const span = document.createElement('span');
+            span.append(
+              Icon('boost_filled', 'inline-icon', 'inline-icon-left'),
+              i18n('WebPage.InstantView')
+            );
+            props.footer = {
+              content: span
+            };
+
+            boxRefs.push((box) => {
+              this.webPageClickCallbacks.set(box, (e) => {
+                if(e.metaKey || e.ctrlKey) {
+                  return;
+                }
+
+                cancelClickOrNextIfNotClick(e);
+                hotReloadGuard.openInstantViewInAppBrowser({
+                  webPageId: webPage.id,
+                  cachedPage: webPage.cached_page,
+                  anchor: new URL(wrapped.url).hash,
+                  HotReloadGuardProvider: SolidJSHotReloadGuardProvider
+                });
+              });
+            });
+          } else if(hasSafeUrl) {
+            boxRefs.push((box) => {
+              box.setAttribute('safe', '1');
+            });
+
+            if(isSponsored) {
+              messageDiv.classList.add('margin-bigger');
+              const wrapped = wrapUrl(sponsoredMessage.url);
+
+              props.footer = {
+                content: wrapEmojiText(sponsoredMessage.button_text),
+                link: !wrapped.onclick,
+                ref: (viewButton) => this.observer.observe(viewButton, this.viewsObserverCallback)
+              };
+
+              boxRefs.push((box) => {
+                // if(!wrapped.onclick) {
+                //   box.href = wrapped.url;
+                //   setBlankToAnchor(box);
+                // }
+
+                this.webPageClickCallbacks.set(box, () => {
+                  this.chat.appImManager.onSponsoredBoxClick(message as Message.message);
+                });
+              });
+            } else {
+              // a custom-emoji set (webPageAttributeStickerSet.pFlags.emojis) says "VIEW EMOJI", a sticker set "VIEW STICKERS"
+              const langPackKey = stickerSetAttribute?.pFlags.emojis ? 'OpenEmojiSet' : (webPageTypes[webPage.type] || 'OpenMessage');
+
+              props.footer = {
+                content: i18n(langPackKey)
+              };
+
+              boxRefs.push((box) => {
+                box.dataset.callback = wrapped.onclick;
+              });
+            }
+          } else {
+            const isUnsafe = !context.messageMedia.pFlags.safe && !isMaskedUrlTrusted(wrapped.url);
+            boxRefs.push((box) => {
+              setBlankToAnchor(box);
+
+              if(isUnsafe) {
+                box.dataset.callback = 'showMaskedAlert';
+              }
+            });
+          }
+
+          if(wrapped?.url && !isSponsored) {
+            boxRefs.push((box) => {
+              box.href = wrapped.url;
+            });
+          }
+
+          bubble.classList.add('has-webpage', 'single-media');
+
+          const sponsoredMedia = sponsoredMessage?.media;
+
+          let preview: HTMLDivElement;
+          const doc = webPage.document as MyDocument;
+          const hasLargeMedia = !!webPage.pFlags.has_large_media;
+          const hasSmallMedia = !!(hasLargeMedia && context.messageMedia.pFlags.force_small_media);
+          const sponsoredPhoto = sponsoredMessage && getSponsoredPhoto(sponsoredMessage);
+          const photo = (sponsoredPhoto || webPage.photo) as Photo.photo;
+          // const willHaveSponsoredAvatar = sponsoredMessage && (getPeerId(sponsoredMessage.from_id) !== NULL_PEER_ID || sponsoredPhoto);
+          // const willHaveSponsoredPhoto = sponsoredMessage && sponsoredMessage.pFlags.show_peer_photo && willHaveSponsoredAvatar;
+          const willHaveSponsoredPhoto = !!sponsoredPhoto;
+          const willHaveMedia = !!(photo || doc || storyAttribute || willHaveSponsoredPhoto || starGiftAttribute || starGiftCollectionAttribute || (stickerSetAttribute && stickerSetAttribute.stickers.length));
+          if(willHaveMedia) {
+            preview = document.createElement('div');
+            props.media = {
+              content: preview,
+              position: 'top'
+            };
+          }
+
+          const lazyLoadQueue = sponsoredMedia ? undefined : this.lazyLoadQueue;
+          // * its photo or video is under a sensitive spoiler
+          let coversMedia = false;
+
+          if(doc) {
+            if(doc.type === 'gif' || doc.type === 'video' || doc.type === 'round') {
+              const mediaSize = doc.type === 'round' ? mediaSizes.active.round : mediaSizes.active.webpage;
+              if(doc.type === 'round') {
+                bubble.classList.add('round');
+                preview.classList.add('is-round');
+              } else {
+                bubble.classList.add('video');
+              }
+
+              const p = wrapVideo({
+                doc,
+                container: preview,
+                message: message as Message.message,
+                boxWidth: mediaSize.width,
+                boxHeight: mediaSize.height,
+                lazyLoadQueue,
+                middleware,
+                isOut,
+                group: this.chat.animationGroup,
+                loadPromises,
+                autoDownload: this.chat.autoDownload,
+                noInfo: message.mid < 0 && !sponsoredMedia,
+                noAutoplayAttribute: sensitive,
+                observer: this.observer,
+                onLoad: this.onVideoLoad,
+                setShowControlsOn: bubble
+              });
+
+              if(sensitive) {
+                loadPromises.push(this.wrapMediaSpoiler({
+                  media: doc,
+                  promise: p,
+                  middleware,
+                  attachmentDiv: preview,
+                  sensitive,
+                  inLink: true
+                }));
+                coversMedia = true;
+              }
+            } else {
+              const docDiv = await wrapDocument({
+                message: message as Message.message,
+                middleware: bubble.middlewareHelper.get(),
+                autoDownloadSize: this.chat.autoDownload.file,
+                lazyLoadQueue,
+                loadPromises,
+                sizeType: 'documentName',
+                searchContext: {
+                  useSearch: false,
+                  peerId: this.peerId,
+                  inputFilter: {
+                    _: 'inputMessagesFilterEmpty'
+                  }
+                },
+                fontSize: this.chat.appSettings.messagesTextSize,
+                canTranscribeVoice: true
+              });
+              preview.append(docDiv);
+              props.media.hasDocument = true;
+            }
+          }
+
+          if(webPage.site_name || sponsoredMessage) {
+            let smth: HTMLElement | DocumentFragment;
+            if(sponsoredMessage) {
+              smth = i18n(sponsoredMessage.pFlags.recommended ? 'SponsoredMessageRecommended' : 'SponsoredMessage');
+              smth.classList.add('text-capitalize');
+            } else if(webPageTypesSiteNames[webPage.type]) {
+              smth = i18n(webPageTypesSiteNames[webPage.type]);
+            } else {
+              smth = wrapEmojiText(webPage.site_name);
+            }
+
+            if(!sponsoredMessage) {
+              const html = wrapRichText(webPage.url);
+              const a = htmlToDocumentFragment(html).firstElementChild as any;
+              a.replaceChildren(smth);
+              smth = a;
+            }
+
+            props.name = {
+              content: smth,
+              tip: sponsoredMessage && sponsoredMessage.pFlags.can_report && {
+                content: i18n('SponsoredMessageAdWhatIsThis'),
+                onClick: (e) => {
+                  cancelEvent(e);
+                  showAboutAdPopup();
+                }
+              }
+            };
+          }
+
+          const title = wrapWebPageTitle(webPage);
+          if(title.textContent || sponsoredMessage) {
+            props.title = sponsoredMessage ? wrapEmojiText(sponsoredMessage.title) : title;
+          }
+
+          const description = wrapWebPageDescription(webPage, getRichTextOptions(webPage.entities), isSponsored);
+          if(description.textContent) {
+            props.text = description;
+          }
+
+          let isSquare = false;
+          if(willHaveSponsoredPhoto || (photo && !doc && !starGiftAttribute)) {
+            bubble.classList.add('photo');
+
+            const squareBoxSize = 48;
+            const size: PhotoSize.photoSize = (!sponsoredMessage || sponsoredMedia) && photo.sizes[photo.sizes.length - 1] as any;
+            if((!size || (size.w === size.h && !hasLargeMedia) || hasSmallMedia) && (props.name || props.title || props.text)) {
+              bubble.classList.add('is-square-photo');
+              props.media.photoSize = 'square';
+              isSquare = true;
+              preview.style.width = preview.style.height = `${squareBoxSize}px`;
+              // setAttachmentSize({
+              //   photo,
+              //   element: preview,
+              //   boxWidth: squareBoxSize,
+              //   boxHeight: squareBoxSize,
+              //   noZoom: false
+              // });
+            } else if(size.h > size.w && !hasLargeMedia) {
+              bubble.classList.add('is-vertical-photo');
+              props.media.photoSize = 'vertical';
+            }
+
+            /* const p = sponsoredPhoto?._ === 'photo' ? sponsoredPhoto : photo;
+
+            if(!p) {
+              const photoIsPeer = sponsoredPhoto && sponsoredPhoto._ !== 'photo';
+              const {node, readyThumbPromise} = avatarNew({
+                middleware,
+                size: squareBoxSize,
+                lazyLoadQueue: this.lazyLoadQueue,
+                peerId: photoIsPeer ? sponsoredPhoto.id.toPeerId(true) : (!sponsoredPhoto ? getPeerId(sponsoredMessage.from_id) : undefined),
+                peer: photoIsPeer ? sponsoredPhoto : undefined
+              });
+              node.classList.add('avatar-full');
+              preview.append(node);
+              readyThumbPromise && loadPromises.push(readyThumbPromise);
+            } else  */const p = wrapPhoto({
+              photo/* : p */,
+              message,
+              container: preview,
+              boxWidth: isSquare ? 0 : mediaSizes.active.webpage.width,
+              boxHeight: isSquare ? 0 : mediaSizes.active.webpage.height,
+              isOut,
+              lazyLoadQueue,
+              middleware,
+              loadPromises,
+              withoutPreloader: isSquare,
+              autoDownloadSize: this.chat.autoDownload.photo
+            });
+
+            if(sensitive) {
+              loadPromises.push(this.wrapMediaSpoiler({
+                media: photo,
+                promise: p,
+                middleware,
+                attachmentDiv: preview,
+                sensitive,
+                inLink: true
+              }));
+              coversMedia = true;
+            }
+          }
+
+          if(storyAttribute) {
+            bubble.classList.add('photo', 'story');
+            const size = mediaSizes.active.webpage;
+
+            // set container dimensions before the story is loaded
+            setAttachmentSize({
+              photo: {
+                _: 'photo',
+                id: 0,
+                sizes: [{
+                  _: 'photoSize',
+                  w: 180,
+                  h: 320,
+                  type: 'q',
+                  size: 0
+                }],
+                pFlags: {},
+                access_hash: 0,
+                file_reference: [],
+                date: 0,
+                dc_id: 0
+              },
+              element: preview,
+              boxWidth: size.width,
+              boxHeight: size.height,
+              message: message as Message.message
+            });
+
+            this.wrapStory({
+              message: message as Message.message,
+              bubble,
+              storyPeerId,
+              storyId,
+              container: preview,
+              middleware,
+              loadPromises,
+              boxWidth: size.width,
+              boxHeight: size.height
+            });
+          }
+
+          if(starGiftAttribute) {
+            bubble.classList.add('gift');
+            const gift = await this.managers.appGiftsManager.wrapGiftFromWebPage(starGiftAttribute);
+            preview.style.width = '240px';
+            preview.style.height = '240px';
+            this.wrapSomeSolid(() => UniqueStarGiftWebPageBox({
+              gift,
+              wrapStickerOptions: {
+                play: true,
+                loop: false,
+                managers: this.managers,
+                middleware,
+                lazyLoadQueue,
+                group: this.chat.animationGroup
+              }
+            }), preview, middleware)
+            props.text = undefined
+          } else if(starGiftCollectionAttribute) {
+            await wrapSticker({
+              doc: starGiftCollectionAttribute.icons[0] as MyDocument,
+              div: preview,
+              middleware,
+              lazyLoadQueue,
+              play: true,
+              loop: false,
+              group: this.chat.animationGroup
+            });
+            preview.style.width = '48px';
+            preview.style.height = '48px';
+            props.media.photoSize = 'square';
+            isSquare = true;
+          } else if(stickerSetAttribute?.stickers.length) {
+            const stickers = stickerSetAttribute.stickers as MyDocument[];
+            const {side, cellSize, boxSize} = computeStickerSetPreviewGrid(stickers.length, STICKER_SET_PREVIEW_BOX_SIZE);
+            preview.style.width = preview.style.height = `${boxSize}px`;
+            preview.classList.add('webpage-stickerset-grid');
+            preview.style.setProperty('--sticker-grid-side', '' + side);
+            props.media.photoSize = 'square';
+            isSquare = true;
+
+            const isEmoji = !!stickerSetAttribute.pFlags.emojis;
+            // custom-emoji sets flagged `text_color` are tinted with the message text color
+            const textColor = isEmoji && stickerSetAttribute.pFlags.text_color ? EMOJI_TEXT_COLOR : undefined;
+            for(let i = 0; i < side * side && i < stickers.length; ++i) {
+              const cell = document.createElement('div');
+              cell.classList.add('webpage-stickerset-cell');
+              preview.append(cell);
+              wrapSticker({
+                doc: stickers[i],
+                div: cell,
+                middleware,
+                lazyLoadQueue,
+                group: this.chat.animationGroup,
+                width: cellSize,
+                height: cellSize,
+                play: true,
+                loop: true,
+                loadPromises,
+                isCustomEmoji: isEmoji,
+                textColor
+              });
+            }
+          }
+
+          if(preview) {
+            props.media.position = invertMedia || isSquare ? 'top' : 'bottom';
+          }
+
+          createRoot((dispose) => {
+            middleware.onDestroy(dispose);
+            WebPageBox({
+              ...props,
+              ref: (box) => {
+                boxRefs.forEach((ref) => ref(box));
+                if(factCheckBox && !invertMedia) {
+                  factCheckBox.before(box);
+                } else if(timeSpan) {
+                  if(invertMedia) {
+                    timeSpan.parentElement.prepend(box);
+                    box.parentElement.classList.add('mt-bigger');
+                  } else timeSpan.before(box);
+                } else {
+                  messageDiv.append(box);
+                }
+
+                if(coversMedia) {
+                  attachLinkSpoilerRevealButton(box, middleware);
+                }
+
+                // * peer-color background-emoji pattern behind the box (like replies/quotes).
+                // out-messages render with the out palette (no index pattern); sponsored carry their
+                // own color override that isn't on the cached peer, so skip them.
+                if(!isOut && !isSponsored) {
+                  wrapPeerColorPattern({
+                    peerId: (message as Message.message).fwdFromId || message.fromId,
+                    container: box,
+                    middleware
+                  });
+                }
+              },
+              clickable: true
+            });
+          });
+
+          break;
+        }
+
+        case 'messageMediaGame': {
+          noAttachmentDivNeeded = true;
+          context.attachmentDiv = undefined;
+
+          const game = (context.messageMedia as MessageMedia.messageMediaGame).game as Game.game;
+          if(!game || game._ !== 'game') {
+            break;
+          }
+
+          processedWebPage = true;
+          context.mediaRequiresMessageDiv = true;
+          bubble.classList.add('has-webpage', 'game');
+
+          const photo = game.photo?._ === 'photo' ? game.photo as Photo.photo : undefined;
+          const doc = game.document as MyDocument;
+          const props: Parameters<typeof WebPageBox>[0] = {};
+
+          let preview: HTMLDivElement;
+          if(photo || doc) {
+            preview = document.createElement('div');
+            props.media = {
+              content: preview,
+              position: 'top'
+            };
+          }
+
+          if(doc) {
+            if(doc.type === 'gif' || doc.type === 'video') {
+              bubble.classList.add('video');
+              wrapVideo({
+                doc,
+                container: preview,
+                message: message as Message.message,
+                boxWidth: mediaSizes.active.webpage.width,
+                boxHeight: mediaSizes.active.webpage.height,
+                lazyLoadQueue: this.lazyLoadQueue,
+                middleware,
+                isOut,
+                group: this.chat.animationGroup,
+                loadPromises,
+                autoDownload: this.chat.autoDownload,
+                noInfo: true,
+                observer: this.observer,
+                onLoad: this.onVideoLoad,
+                setShowControlsOn: bubble
+              });
+            } else {
+              const docDiv = await wrapDocument({
+                message: message as Message.message,
+                middleware: bubble.middlewareHelper.get(),
+                autoDownloadSize: this.chat.autoDownload.file,
+                lazyLoadQueue: this.lazyLoadQueue,
+                loadPromises,
+                sizeType: 'documentName',
+                searchContext: {
+                  useSearch: false,
+                  peerId: this.peerId,
+                  inputFilter: {_: 'inputMessagesFilterEmpty'}
+                },
+                fontSize: this.chat.appSettings.messagesTextSize
+              });
+              preview.append(docDiv);
+              props.media.hasDocument = true;
+            }
+          } else if(photo) {
+            bubble.classList.add('photo');
+            wrapPhoto({
+              photo,
+              message,
+              container: preview,
+              boxWidth: mediaSizes.active.webpage.width,
+              boxHeight: mediaSizes.active.webpage.height,
+              isOut,
+              lazyLoadQueue: this.lazyLoadQueue,
+              middleware,
+              loadPromises,
+              autoDownloadSize: this.chat.autoDownload.photo
+            });
+          }
+
+          props.name = {
+            content: i18n('AttachGame')
+          };
+
+          if(game.title) {
+            props.title = wrapRichText(game.title, {noLinks: true, noLinebreaks: true});
+          }
+
+          if(game.description) {
+            props.text = wrapRichText(game.description, {noLinks: true});
+          }
+
+          props.footer = {
+            content: i18n('Bot.Game.Play')
+          };
+
+          createRoot((dispose) => {
+            middleware.onDestroy(dispose);
+            WebPageBox({
+              ...props,
+              ref: (box) => {
+                this.webPageClickCallbacks.set(box, (e) => {
+                  cancelEvent(e);
+                  // After an inline send confirms, the bubble's data-mid is
+                  // patched in place but the closure's `message` still has the
+                  // temp mid — re-read from the DOM so we hit the server mid.
+                  const currentMid = +bubble.dataset.mid;
+                  const captured = message as Message.message;
+                  const target = (currentMid && currentMid !== captured.mid ?
+                    this.chat.getMessageByPeer(captured.peerId, currentMid) as Message.message :
+                    undefined) || captured;
+                  this.chat.appImManager.playGame(target);
+                });
+
+                if(timeSpan) {
+                  timeSpan.before(box);
+                } else {
+                  messageDiv.append(box);
+                }
+              },
+              clickable: true
+            });
+          });
+
+          break;
+        }
+
+        case 'messageMediaDocument': {
+          const doc = context.messageMedia.document as MyDocument;
+
+          if(doc.sticker/*  && doc.size <= 1e6 */) {
+            const flight = this.sendFlights.getFlight(message);
+            this.wrapSticker(context, {
+              doc,
+              container: context.attachmentDiv,
+              // a sticker sent from the panel starts where the one it flies from was
+              initFrame: flight?.startFrame,
+              eager: !!flight,
+              sensitive
+            });
+          } else if(doc.type === 'video' || doc.type === 'gif' || doc.type === 'round'/*  && doc.size <= 20e6 */) {
+            // this.log('never get free 2', doc);
+
+            isRound = doc.type === 'round';
+            if(isRound) {
+              context.isStandaloneMedia = true;
+            }
+
+            if(isRound/*  || isMessageEmpty */) {
+              // canHaveTail = false;
+            } else {
+              canHavePlainMediaTail = canPossiblyHavePlainMediaTail;
+            }
+
+            if(canHideNameIfMedia) {
+              bubble.classList.add('hide-name');
+            }
+
+            bubble.classList.add(isRound ? 'round' : 'video');
+            if(groupedMustBeRenderedFull && groupedId && groupedMids.length !== 1) {
+              bubble.classList.add('is-album', 'is-grouped');
+
+              wrapAlbum({
+                messages: groupedMessages,
+                attachmentDiv: context.attachmentDiv,
+                middleware,
+                isOut: our,
+                lazyLoadQueue: this.lazyLoadQueue,
+                chat: this.chat,
+                loadPromises,
+                autoDownload: this.chat.autoDownload,
+                sensitive
+              });
+            } else {
+              const withTail = !IS_ANDROID && !IS_APPLE && !isRound && context.canHaveTail && !withReplies && USE_MEDIA_TAILS;
+              if(withTail) bubble.classList.add('with-media-tail');
+
+              const p = wrapVideo({
+                doc,
+                container: context.attachmentDiv,
+                message: message as Message.message,
+                boxWidth: mediaSizes.active.regular.width,
+                boxHeight: mediaSizes.active.regular.height,
+                withTail,
+                isOut,
+                // as a sticker being sent: it flies into its message while the queue is locked
+                lazyLoadQueue: this.sendFlights.getFlight(message) ? undefined : this.lazyLoadQueue,
+                middleware,
+                group: this.chat.animationGroup,
+                loadPromises,
+                autoDownload: this.chat.autoDownload,
+                searchContext: isRound ? searchContext = {
+                  peerId: this.peerId,
+                  inputFilter: {_: 'inputMessagesFilterRoundVoice'},
+                  threadId: this.chat.threadId,
+                  useSearch: !(message as Message.message).pFlags.is_scheduled,
+                  isScheduled: (message as Message.message).pFlags.is_scheduled
+                } : undefined,
+                noInfo: message.mid <= 0,
+                noAutoplayAttribute: !!context.messageMedia.pFlags.spoiler || sensitive,
+                observer: this.observer,
+                onLoad: this.onVideoLoad,
+                setShowControlsOn: bubble,
+                onGlobalMedia: (media) => {
+                  globalMediaDeferred.resolve(media);
+                }
+              });
+
+              if(context.messageMedia.pFlags.spoiler || sensitive) {
+                loadPromises.push(this.wrapMediaSpoiler({
+                  media: doc,
+                  promise: p,
+                  middleware,
+                  attachmentDiv: context.attachmentDiv,
+                  sensitive
+                }));
+              }
+            }
+          } else {
+            const newNameContainer = await wrapGroupedDocuments({
+              albumMustBeRenderedFull: groupedMustBeRenderedFull,
+              middleware,
+              message,
+              bubble,
+              messageDiv,
+              chat: this.chat,
+              loadPromises,
+              autoDownloadSize: this.chat.autoDownload.file,
+              lazyLoadQueue: this.lazyLoadQueue,
+              searchContext: doc.type === 'voice' || doc.type === 'audio' ? {
+                peerId: this.peerId,
+                inputFilter: {_: doc.type === 'voice' ? 'inputMessagesFilterRoundVoice' : 'inputMessagesFilterMusic'},
+                threadId: this.chat.threadId,
+                useSearch: !(message as Message.message).pFlags.is_scheduled,
+                isScheduled: (message as Message.message).pFlags.is_scheduled
+              } : undefined,
+              sizeType: 'documentName',
+              fontSize: this.chat.appSettings.messagesTextSize,
+              richTextFragment: richText,
+              richTextOptions: getRichTextOptions(),
+              canTranscribeVoice: true,
+              translatableParams,
+              createMessageText: (element, documentMessage) => {
+                const holder: {entry?: SolidMessageBodyEntry} = {};
+                holder.entry = mountSolidMessageBody(
+                  element,
+                  documentMessage,
+                  () => ({
+                    ...getRichTextOptions(holder.entry?.controller.getSnapshot().text.entities || documentMessage.totalEntities),
+                    maxMediaTimestamp: getMediaDurationFromMessage(documentMessage)
+                  }),
+                  documentMessage.mid === message.mid
+                );
+              },
+              factCheckBox,
+              isOut
+            });
+
+            const bubbleBackground = document.createElement('div');
+            bubbleBackground.classList.add('bubble-content-background');
+            bubbleContainer.prepend(bubbleBackground);
+
+            if(newNameContainer) {
+              nameContainer = newNameContainer;
+            }
+
+            const lastContainer = messageDiv.lastElementChild.querySelector('.document-message') || messageDiv.lastElementChild.querySelector('.document, .audio');
+            if(lastContainer && timeSpan) {
+              appendBubbleTime(
+                bubble,
+                lastContainer as HTMLElement,
+                () => lastContainer.append(timeSpan, _clearfix ??= clearfix())
+              );
+            }
+
+            context.mediaRequiresMessageDiv = true;
+            const addClassName = (!(['photo', 'pdf'] as MyDocument['type'][]).includes(doc.type) ? doc.type || 'document' : 'document') + '-message';
+            bubble.classList.add(addClassName);
+
+            if(addClassName !== 'document-message') {
+              bubble.classList.add('min-content');
+            }
+
+            if(!bubble.classList.contains('is-multiple-documents')) {
+              bubble.classList.add('is-single-document');
+            }
+
+            noAttachmentDivNeeded = true;
+          }
+
+          break;
+        }
+
+        case 'messageMediaCall': {
+          const {element} = wrapCallBubble({
+            action: context.messageMedia.action,
+            isOut,
+            mid: message.mid,
+            date: message.date,
+            fromId: message.fromId,
+            middleware,
+            loadPromises
+          });
+
+          noAttachmentDivNeeded = true;
+
+          context.mediaRequiresMessageDiv = true;
+          bubble.classList.add('call-message');
+          messageDiv.append(element);
+
+          break;
+        }
+
+        case 'messageMediaContact': {
+          noAttachmentDivNeeded = true;
+          context.mediaRequiresMessageDiv = true;
+          bubble.classList.add('has-webpage', 'contact-message');
+          this.renderSharedContact({
+            contact: context.messageMedia,
+            isOut,
+            messageDiv,
+            timeSpan,
+            middleware
+          });
+
+          break;
+        }
+
+        case 'messageMediaPoll': {
+          if(message._ === 'message') {
+            context.mediaRequiresMessageDiv = true;
+            context.messageMessage = totalEntities = undefined;
+
+            const {PollMessageContent} = await loadPollMessageContent();
+
+            const container = document.createElement('div');
+            container.classList.add('poll-message-content');
+
+            const propsMutable = createMutable<PollMessageContentProps>({
+              element: container,
+              isOutgoing: isOut,
+              isRegularSurface: ![ChatType.Logs, ChatType.Static, ChatType.Scheduled].includes(this.chat.type),
+              message,
+              peerId: this.peerId,
+              poll: context.messageMedia.poll,
+              results: context.messageMedia.results,
+              media: context.messageMedia,
+              autoDownload: this.chat.autoDownload,
+              lazyLoadQueue: this.lazyLoadQueue,
+              animationGroup: this.chat.animationGroup,
+              canSend: (rights) => this.chat.canSend(rights),
+              loadPromises,
+              controls: context.pollMessageContentControls = {},
+              // * only a poll being sent from here has files on their way
+              uploadingFileNames: message.pFlags.is_outgoing ? await this.managers.appPollsManager.getUploadingFileNamesForPoll(context.messageMedia.poll.id) : undefined
+            });
+
+            renderComponent({
+              element: container,
+              Component: PollMessageContent,
+              props: propsMutable,
+              middleware,
+              HotReloadGuard: SolidJSHotReloadGuardProvider
+            });
+
+            this.updateLocalOnEdit.set(bubble, msg => {
+              batch(() => {
+                if(msg.media?._ !== 'messageMediaPoll') return;
+
+                Object.assign(propsMutable, {
+                  message: msg,
+                  poll: msg.media.poll,
+                  results: msg.media.results,
+                  media: msg.media
+                });
+              });
+            });
+
+            middleware.onDestroy(() => {
+              this.updateLocalOnEdit.delete(bubble);
+            });
+
+            messageDiv.prepend(container);
+            bubble.classList.add('poll-message');
+
+            break;
+          }
+          // const messageSignal = createSignal(message);
+        }
+        case 'messageMediaToDo': {
+          context.mediaRequiresMessageDiv = true;
+
+          const content = document.createElement('div');
+          content.classList.add('checklist-content');
+
+          const messageSignal = createSignal(message);
+          this.updateLocalOnEdit.set(bubble, (msg) => {
+            messageSignal[1](msg);
+          });
+          middleware.onClean(() => {
+            this.updateLocalOnEdit.delete(bubble);
+          });
+
+          this.wrapSomeSolid(() => ChecklistBubble({
+            get message() { return messageSignal[0]() as any },
+            chat: this.chat,
+            out: our,
+            richTextOptions: getRichTextOptions()
+          }), content, middleware);
+          messageDiv.prepend(content);
+
+          break;
+        }
+
+        case 'messageMediaPaidMedia':
+        case 'messageMediaInvoice': {
+          type I = MessageMedia.messageMediaInvoice;
+          type P = MessageMedia.messageMediaPaidMedia;
+          type M = Photo.photo | Document.document | WebDocument;
+          const pFlags = (context.messageMedia as I).pFlags || {};
+          const isTest = pFlags.test;
+          const isInvoice = context.messageMedia._ === 'messageMediaInvoice';
+          const extendedMedia = (Array.isArray(context.messageMedia.extended_media) ? context.messageMedia.extended_media : [context.messageMedia.extended_media]).filter(Boolean);
+          const isAlreadyPaid = extendedMedia[0]?._ === 'messageExtendedMedia';
+          const isNotPaid = extendedMedia[0]?._ === 'messageExtendedMediaPreview';
+
+          if(!isInvoice) {
+            bubble.classList.add('single-media');
+            if(canHideNameIfMedia) {
+              bubble.classList.add('hide-name');
+            }
+
+            canHavePlainMediaTail = canPossiblyHavePlainMediaTail;
+          }
+
+          let innerMedia: M | M[], videoTimes: HTMLElement[];
+          if(isInvoice) {
+            innerMedia = (context.messageMedia as I).photo;
+          } else if(isAlreadyPaid) {
+            innerMedia = extendedMedia.map((media) => {
+              return getMediaFromMessage(media as any as Message.message) as M;
+            });
+          }
+
+          const wrappedPrice = isInvoice ?
+            paymentsWrapCurrencyAmount((context.messageMedia as I).total_amount, (context.messageMedia as I).currency) :
+            paymentsWrapCurrencyAmount((context.messageMedia as P).stars_amount, STARS_CURRENCY);
+          let priceEl: HTMLElement;
+          if(!extendedMedia.length || (!isInvoice && isAlreadyPaid)) {
+            priceEl = document.createElement(innerMedia ? 'span' : 'div');
+            const f = document.createDocumentFragment();
+            const l = i18n((context.messageMedia as I).receipt_msg_id ? 'PaymentReceipt' : (isTest ? 'PaymentTestInvoice' : 'PaymentInvoice'));
+            l.classList.add('text-uppercase');
+            const joiner = ' ' + NBSP;
+            const p = document.createElement('span');
+            p.classList.add('text-bold');
+            p.append(wrappedPrice);
+            f.append(p);
+            if(isInvoice) {
+              p.append(joiner);
+              f.append(l);
+            } else {
+              priceEl.classList.add('other-side');
+            }
+            if(isTest && (context.messageMedia as I).receipt_msg_id) {
+              const a = document.createElement('span');
+              a.classList.add('text-uppercase', 'pre-wrap');
+              a.append(joiner + '(Test)');
+              f.append(a);
+            }
+            setInnerHTML(priceEl, f);
+          } else if(isNotPaid) {
+            context.attachmentDiv.classList.add('is-buy');
+            priceEl = document.createElement('span');
+            priceEl.classList.add('extended-media-buy');
+            if(isInvoice) {
+              priceEl.append(
+                Icon('premium_lock', 'extended-media-buy-icon'),
+                i18n('Checkout.PayPrice', [wrappedPrice])
+              );
+            } else {
+              priceEl.append(i18n('PaidMedia.Unlock', [wrappedPrice]));
+            }
+
+            videoTimes = extendedMedia.map((extendedMedia) => {
+              const videoDuration = (extendedMedia as MessageExtendedMedia.messageExtendedMediaPreview).video_duration;
+              if(videoDuration === undefined) {
+                return;
+              }
+
+              const videoTime = document.createElement('span');
+              videoTime.classList.add('video-time');
+              videoTime.textContent = toHHMMSS(videoDuration, false);
+              return videoTime;
+            });
+
+            if(videoTimes.length === 1 && videoTimes[0]) {
+              context.attachmentDiv.append(videoTimes[0]);
+            }
+          }
+
+          if(isNotPaid) {
+            type P = MessageExtendedMedia.messageExtendedMediaPreview;
+            innerMedia = extendedMedia.map((extendedMedia) => {
+              return generatePhotoForExtendedMediaPreview(extendedMedia as P);
+            });
+          }
+
+          if(Array.isArray(innerMedia) && innerMedia.length === 1) {
+            innerMedia = innerMedia[0];
+          }
+
+          if(innerMedia) {
+            const mediaSize = extendedMedia.length ? mediaSizes.active.extendedInvoice : mediaSizes.active.invoice;
+            // * what is not paid for is only a blurred preview, under its price
+            const paidSensitive = !isInvoice && isAlreadyPaid && sensitive;
+            let innerMediaPromise: Promise<any>;
+            if(Array.isArray(innerMedia)) {
+              bubble.classList.add('is-album', 'photo');
+              wrapAlbum({
+                media: innerMedia as (Photo.photo | Document.document)[],
+                attachmentDiv: context.attachmentDiv,
+                middleware: this.getMiddleware(),
+                isOut: our,
+                lazyLoadQueue: this.lazyLoadQueue,
+                chat: this.chat,
+                loadPromises,
+                autoDownload: this.chat.autoDownload,
+                spoilered: !isAlreadyPaid,
+                sensitive: paidSensitive,
+                videoTimes,
+                uploadingFileName: (message as Message.message).uploadingFileName
+              });
+            } else if(innerMedia._ === 'document') {
+              innerMediaPromise = wrapVideo({
+                doc: innerMedia,
+                container: context.attachmentDiv,
+                withTail: false,
+                isOut,
+                lazyLoadQueue: this.lazyLoadQueue,
+                middleware,
+                loadPromises,
+                boxWidth: mediaSize.width,
+                boxHeight: mediaSize.height,
+                group: this.chat.animationGroup,
+                message: message as Message.message,
+                observer: this.observer,
+                onLoad: this.onVideoLoad,
+                setShowControlsOn: bubble,
+                noAutoplayAttribute: paidSensitive,
+                uploadingFileName: (message as Message.message).uploadingFileName?.[0]
+              });
+              bubble.classList.add('video');
+            } else {
+              innerMediaPromise = wrapPhoto({
+                photo: innerMedia,
+                container: context.attachmentDiv,
+                withTail: false,
+                isOut,
+                lazyLoadQueue: this.lazyLoadQueue,
+                middleware,
+                loadPromises,
+                boxWidth: mediaSize.width,
+                boxHeight: mediaSize.height,
+                message: isAlreadyPaid ? message : undefined
+              });
+              bubble.classList.add('photo');
+            }
+
+            if(innerMediaPromise && paidSensitive) {
+              loadPromises.push(this.wrapMediaSpoiler({
+                media: innerMedia as Photo.photo | MyDocument,
+                promise: innerMediaPromise,
+                middleware,
+                attachmentDiv: context.attachmentDiv,
+                sensitive
+              }));
+            }
+
+            if(priceEl) {
+              if(!extendedMedia.length || (!isInvoice && isAlreadyPaid)) {
+                priceEl.classList.add('video-time');
+              }
+
+              context.attachmentDiv.append(priceEl);
+            }
+          } else {
+            // * an invoice with no picture: its title, price and description are all the bubble has
+            noAttachmentDivNeeded = true;
+            context.mediaRequiresMessageDiv = true;
+          }
+
+          if(isNotPaid) {
+            const {mid} = message;
+            this.extendedMediaMessages.add(mid);
+            middleware.onClean(() => {
+              this.extendedMediaMessages.delete(mid);
+            });
+            this.setExtendedMediaMessagesPollInterval();
+
+            if(extendedMedia.length === 1) {
+              const {width, height} = context.attachmentDiv.style;
+              const {canvas, readyResult} = DotRenderer.create({
+                width: parseInt(width),
+                height: parseInt(height),
+                middleware,
+                animationGroup: this.chat.animationGroup
+              });
+              loadPromises?.push(readyResult as Promise<any>);
+              context.attachmentDiv.append(canvas);
+            }
+          }
+
+          let titleDiv: HTMLElement;
+          if(isInvoice) {
+            titleDiv = document.createElement('div');
+            titleDiv.classList.add('bubble-primary-color');
+            setInnerHTML(titleDiv, wrapEmojiText((context.messageMedia as I).title));
+          }
+
+          let richText: HTMLElement | DocumentFragment;
+          if(isInvoice) {
+            richText = isAlreadyPaid ? undefined : wrapEmojiText((context.messageMedia as I).description);
+          }
+
+          // * an invoice with no picture has no attachment (it is taken away above): its price is a line of the message,
+          // * under its title. Paid media puts its price over what it has drawn on the media
+          messageDiv.prepend(...[titleDiv, !innerMedia && priceEl, richText].filter(Boolean));
+          if(innerMedia && !isInvoice && priceEl) context.attachmentDiv.append(priceEl);
+
+          if(!isInvoice) {}
+          else if(!richText) context.canHaveTail = false;
+          else context.mediaRequiresMessageDiv = true;
+          bubble.classList.add('is-invoice');
+
+          break;
+        }
+
+        case 'messageMediaGeoLive':
+        case 'messageMediaVenue':
+        case 'messageMediaGeo': {
+          bubble.classList.add('photo');
+
+          const geoMessage = message as Message.message;
+
+          const result = wrapGeo({
+            attachmentDiv: context.attachmentDiv,
+            loadPromises,
+            messageMedia: context.messageMedia,
+            middleware,
+            wrapOptions,
+            peerId: geoMessage.fromId,
+            date: geoMessage.date,
+            editDate: geoMessage.edit_date,
+            onLiveExpire: (footer) => {
+              bubble.classList.add('is-message-empty');
+              timeSpan?.classList.remove('hide');
+              timeSpan ? footer.replaceWith(timeSpan) : footer.remove();
+              this.updateLocalOnEdit.delete(bubble);
+            }
+          });
+
+          if(result.footer) {
+            bubble.classList.remove('is-message-empty');
+            messageDiv.append(result.footer);
+          }
+
+          if(result.isLive && !result.isLiveExpired) {
+            timeSpan?.classList.add('hide');
+          }
+
+          if(result.address && timeSpan) {
+            result.address.append(timeSpan);
+          }
+
+          if(result.update) {
+            const updateGeo = result.update;
+            this.updateLocalOnEdit.set(bubble, (newMessage) => {
+              updateGeo({
+                messageMedia: newMessage.media as MessageMedia.messageMediaGeoLive,
+                date: newMessage.date,
+                editDate: newMessage.edit_date
+              });
+            });
+            middleware.onClean(() => {
+              this.updateLocalOnEdit.delete(bubble);
+            });
+          }
+
+          context.canHaveTail = result.canHaveTail ?? context.canHaveTail;
+          context.mediaRequiresMessageDiv = result.mediaRequiresMessageDiv ?? context.mediaRequiresMessageDiv;
+          break;
+        }
+
+        case 'messageMediaStory': {
+          const storyId = context.messageMedia.id;
+          const storyPeerId = getPeerId(context.messageMedia.peer);
+
+          const replyContainer = await this.getStoryReplyIfExpired(storyPeerId, storyId, false, true);
+          if(replyContainer) {
+            bubble.classList.add('is-expired-story');
+            // attachmentDiv = replyContainer;
+            context.mediaRequiresMessageDiv = true;
+            messageDiv.append(replyContainer);
+            messageDiv.classList.add('expired-story-message', 'is-empty');
+            break;
+          }
+
+          bubble.classList.add('photo', 'story');
+          if(withReplies) {
+            setAttachmentSize({
+              size: makeMediaSize(EXPAND_TEXT_WIDTH, mediaSizes.active.regular.height),
+              boxWidth: mediaSizes.active.regular.width,
+              boxHeight: mediaSizes.active.regular.height,
+              message,
+              element: context.attachmentDiv
+            });
+          } else {
+            this.setStoryContainerDimensions(context.attachmentDiv);
+          }
+
+          if(isMessageEmpty) {
+            context.canHaveTail = false;
+          }
+
+          storyFromPeerId = storyPeerId;
+          this.wrapStory({
+            message: message as Message.message,
+            bubble,
+            storyPeerId,
+            storyId,
+            container: context.attachmentDiv,
+            middleware,
+            loadPromises
+          });
+
+          break;
+        }
+
+        case 'messageMediaGiveawayResults':
+        case 'messageMediaGiveaway': {
+          const giveaway = context.messageMedia;
+
+          if(giveaway._ === 'messageMediaGiveawayResults') {
+            replyTo = undefined;
+          }
+
+          context.mediaRequiresMessageDiv = true;
+          bubble.classList.add('is-giveaway');
+          noAttachmentDivNeeded = true;
+          const button = this.makeViewButton({text: 'BoostingHowItWork'});
+          const container = document.createElement('div');
+          messageDiv.before(container, button);
+          attachClickEvent(button, () => {
+            onGiveawayClick(message as Message.message);
+          });
+          this.wrapSomeSolid(
+            () => Giveaway({
+              giveaway,
+              loadPromises
+            }),
+            container,
+            middleware
+          );
+          break;
+        }
+
+        case 'messageMediaDice': {
+          wrapDice(context);
+          const outcome = context.messageMedia.game_outcome;
+          if(outcome) {
+            bubble.classList.add('has-fake-service', 'is-forced-rounded');
+
+            const fakeServiceMessage = document.createElement('div');
+            fakeServiceMessage.classList.add('service-msg');
+
+            const won = +outcome.ton_amount > 0;
+            const s = document.createElement('span');
+            s.append(
+              Icon('gram_filled', 'inline-icon', 'text-text-bottom'),
+              formatNanoton(won ? outcome.ton_amount : outcome.stake_ton_amount)
+            );
+
+            let content: HTMLElement;
+            let fromPeerId: PeerId, fromName: string;
+            const fwdFrom = (message as Message.message).fwd_from;
+            if(fwdFrom) {
+              if(fwdFrom.post_author) fromName = fwdFrom.post_author;
+              else if(fwdFrom.from_id) fromPeerId = getPeerId(fwdFrom.from_id);
+              else if(fwdFrom.from_name) fromName = fwdFrom.from_name;
+            } else if((message as Message.message).post_author) {
+              fromName = (message as Message.message).post_author;
+              fromPeerId = message.fromId;
+            } else {
+              fromPeerId = message.fromId;
+            }
+
+            if(fromPeerId === rootScope.myId) {
+              content = i18n(won ? 'Dice.WonYou' : 'Dice.LostYou', [s]);
+            } else {
+              content = i18n(
+                won ? 'Dice.Won' : 'Dice.Lost',
+                [
+                  await wrapPeerTitle({
+                    peerId: fromPeerId,
+                    fromName
+                  }),
+                  s
+                ]
+              );
+            }
+
+            fakeServiceMessage.append(content);
+
+            bubble.append(fakeServiceMessage);
+          }
+          break;
+        }
+
+        case 'messageMediaWidget': {
+          const media = context.messageMedia;
+          const loaded = await whenWidgetRenderingEnabled() && await Promise.all([
+            getWidgetSource(media),
+            import('@components/widgetSandbox/widgetBlock'),
+            import('@lib/widgetSandbox/storage'),
+            import('@lib/widgetSandbox/messageWidget')
+          ]).catch((err) => {
+            this.log.error('widget source', err, message);
+          });
+
+          // the bubble gone meanwhile (the chat left, the bubble rendered anew): nothing more is set up for it — what its
+          // render set up went with it (the pending edit handler with its middleware)
+          if(!middleware()) {
+            break;
+          }
+
+          if(loaded) {
+            const [html, {default: WidgetBlock}, {createMessageWidgetStorage}, messageWidget] = loaded;
+            // an edit of its widget while that loaded had the bubble made anew (createPendingWidgetEditHandler): the
+            // message is as it was rendered from
+            const widgetMessage = message as Message.message;
+            // with no caption below it the time is drawn over the widget's corner, as over a photo, and the widget is told
+            // what it covers (`timeOver`: the content safe area, widget-sandbox docs/sdk-v1.md §2.17)
+            bubble.classList.add('widget-message');
+            context.attachmentDiv.classList.add('no-background');
+            // * no preview that opens media (makeMediaPreviewsAccessible): the widget's controls are its own, in its frame
+            context.attachmentDiv.setAttribute('role', 'none');
+            // a width of its own sizes the bubble (as a photo's does); none takes all a bubble may have
+            if(media.width) context.attachmentDiv.style.width = Math.max(media.width, WIDGET_MIN_WIDTH) + 'px';
+            else bubble.classList.add('is-full-width');
+
+            const [source, setSource] = createSignal(html);
+            const [data, setData] = createSignal(messageWidget.getWidgetData(media), {equals: deepEqual});
+            this.updateLocalOnEdit.set(bubble, createWidgetEditHandler(widgetMessage, {
+              data: (edited) => setData(messageWidget.getWidgetData(edited)),
+              source: (edited) => getWidgetSource(edited).then(setSource, noop),
+              // the time says it was edited ("edited", its date): a caption's body makes it anew with the edit it takes,
+              // a widget with no caption has it made here
+              dated: (edited) => {
+                if(this.getSolidMessageBody(bubble, edited.mid)?.ownsTime) return;
+                this.modifyBubble(() => this.updateSolidMessageBodyTime(bubble, edited), bubble, 'meta');
+              }
+            }));
+
+            // a message of the chat's history, as the server keeps it (tdesktop's isRegular): a scheduled message is
+            // another one once it is sent, an admin log's entry or a preview names a message it is not, and an ephemeral
+            // one the server keeps no history of — none is asked through, polled or kept for, beyond the bubble
+            const historyEntry = isHistoryMessage(this.chat.type, widgetMessage);
+            this.wrapSomeSolid(() => WidgetBlock({
+              get html() {
+                return source();
+              },
+              width: media.width,
+              height: media.height,
+              chat: this.chat,
+              widgetKey: this.getMessageWidgetKey(widgetMessage),
+              storage: historyEntry ? createMessageWidgetStorage(this.chat.managers, message.peerId, message.mid) : undefined,
+              get data() {
+                return data();
+              },
+              context: messageWidget.getWidgetContext(widgetMessage, media, historyEntry),
+              onRequest: historyEntry ? messageWidget.createWidgetRequestHandler(this.chat.managers, message.peerId, message.mid) : undefined,
+              onCopyText: messageWidget.copyWidgetText,
+              publicData: media.widget_id && historyEntry ? {
+                widgetId: '' + media.widget_id,
+                peerId: message.peerId,
+                mid: message.mid,
+                managers: this.chat.managers
+              } : undefined,
+              // the engine copy and the storage come before the bubble enters the chat: the widget draws as it enters; out
+              // of sight it starts as it comes near the screen, at the height the first screen was counted by
+              loadPromises: context.loadPromises,
+              lazy: sight?.isOutOfSight(message.mid),
+              whenOutOfSight: sight?.watch && ((onOutOfSight) => sight.watch(message.mid, onOutOfSight)),
+              layout: () => this.getLayoutKey(this.getScrollableSize().width),
+              // read when the widget starts, by when the bubble has placed its time
+              timeOver: () => bubble.classList.contains('has-floating-time') ? bubble.timeSpan : undefined
+            }), context.attachmentDiv, middleware);
+            break;
+          }
+
+          // turned off, or a source that does not inflate: unsupported media, over the caption
+          context.attachmentDiv = undefined;
+          context.mediaRequiresMessageDiv = true;
+          noAttachmentDivNeeded = true;
+          const unsupported = document.createElement('div');
+          unsupported.append(i18n(UNSUPPORTED_LANG_PACK_KEY));
+          messageDiv.prepend(unsupported);
+          break;
+        }
+
+        default:
+          if(richMessagePage) {
+            context.attachmentDiv = undefined;
+            context.mediaRequiresMessageDiv = true;
+            noAttachmentDivNeeded = true;
+            this.log.warn('unrecognized media type with rich_message:', context.messageMedia._, message);
+            break;
+          }
+
+          context.attachmentDiv = undefined;
+          noAttachmentDivNeeded = true;
+
+          // * a plate on the message's side with no bubble around it, as a sticker stands, and with all a message has
+          // * the way a sticker has it: the buttons beside a post, its side, a selection, a swipe to reply
+          if(isUnsupported) {
+            bubble.classList.add('is-unsupported');
+            context.isStandaloneMedia = true;
+            context.canHaveTail = false;
+            messageDiv.before(wrapUnsupportedMessagePlate());
+            break;
+          }
+
+          context.mediaRequiresMessageDiv = true;
+          messageDiv.replaceChildren(i18n(UNSUPPORTED_LANG_PACK_KEY));
+          bubble.timeAppenders[0].callback();
+          this.log.warn('unrecognized media type:', context.messageMedia._, message);
+          break;
+      }
+
+      if(noAttachmentDivNeeded) {
+        context.attachmentDiv = undefined;
+      } else {
+        if(invertMedia) messageDiv.after(context.attachmentDiv);
+        else messageDiv.before(context.attachmentDiv);
+
+        const width = context.attachmentDiv.style.width;
+        if(width) {
+          bubbleContainer.style.maxWidth = `min(100%, ${width})`;
+        }
+      }
+
+      if(canHavePlainMediaTail && !withReplies) {
+        bubble.classList.add('has-plain-media-tail');
+      }
+    }
+
+    const isFloatingTime = timeSpan && ((isMessageEmpty && !context.mediaRequiresMessageDiv) || (invertMedia && !processedWebPage));
+    if(isMessageEmpty && !context.mediaRequiresMessageDiv) {
+      messageDiv.remove();
+      bubble.classList.add('is-message-empty');
+    } else {
+      if(context.attachmentDiv) {
+        context.attachmentDiv.classList.add(invertMedia ? 'no-brt' : 'no-brb');
+        messageDiv.classList.add(invertMedia ? 'mb-shorter' : 'mt-shorter');
+      }
+    }
+
+    if(isFloatingTime) {
+      timeSpan.classList.add('is-floating');
+      bubble.classList.add('has-floating-time');
+      // bubble.timeAppenders = [];
+      appendBubbleTime(bubble, bubbleContainer, () => bubbleContainer.append(timeSpan));
+    }
+
+    if(context.isStandaloneMedia) {
+      bubble.classList.add('just-media');
+    }
+
+    if(sponsoredMessage) {
+      const canReport = sponsoredMessage.pFlags.can_report;
+      const buttons = document.createElement('div');
+      buttons.classList.add('bubble-beside-button', 'bubble-beside-button-top');
+      let hideButton: HTMLElement;
+      if(canReport) {
+        buttons.classList.add('bubble-sponsored-buttons');
+        hideButton = ButtonIcon('close bubble-sponsored-buttons-button', {noRipple: true, ariaLabel: 'HideAd'});
+        const hr = document.createElement('div');
+        hr.classList.add('bubble-sponsored-buttons-delimiter');
+        const menu = ButtonIcon('more bubble-sponsored-buttons-button', {noRipple: true, ariaLabel: 'MultiAccount.More'});
+        buttons.append(hideButton, hr, menu);
+
+        attachClickEvent(menu, (e) => {
+          this.chat.contextMenu.onContextMenu(e as MouseEvent);
+        });
+      } else {
+        hideButton = buttons;
+        hideButton.setAttribute('role', 'button');
+        hideButton.setAttribute('aria-label', I18n.format('HideAd', true));
+        if(Modes.a11y) hideButton.tabIndex = 0;
+        hideButton.append(Icon('close'));
+        buttons.classList.add('bubble-sponsored-hide');
+      }
+      bubbleContainer.prepend(buttons);
+      bubble.classList.add('with-beside-button');
+      attachClickEvent(hideButton, () => {
+        hotReloadGuard.showPremiumPopup({feature: 'no_ads'});
+      });
+    }
+
+    let savedFrom = '';
+
+    if(context.isStandaloneMedia || !isOut || (message as Message.message).fwdFromId) {
+      setPeerColorToElement({
+        peerId: (message as Message.message).fwdFromId || message.fromId,
+        element: bubble,
+        messageHighlighting: context.isStandaloneMedia,
+        colorAsOut: isOut,
+        color: sponsoredMessage?.color
+      });
+    }
+
+    const showNameForVerificationCodes = isMessageForVerificationBot(message) && !message.pFlags.local;
+    // const needName = ((peerId.isAnyChat() && (peerId !== message.fromId || our)) && message.fromId !== rootScope.myId) || message.viaBotId;
+
+    const iPostedAsSomeoneElse = message.fromId !== rootScope.myId && !this.chat.isMonoforum;
+
+    // * a guest-chat message shows "<bot> for <visitor>" and the bot's avatar, even in a 1-on-1
+    const guestChatViaFromId = getGuestChatViaFromId(message);
+
+    const needName = ((iPostedAsSomeoneElse || !isOut) && this.chat.isLikeGroup) ||
+      message.viaBotId ||
+      storyFromPeerId ||
+      guestChatViaFromId ||
+      (showNameForVerificationCodes && !replyTo);
+
+    let nameDiv: HTMLElement;
+    if(isUnsupported) {
+      bubble.classList.add('hide-name');
+      // * the plate is all it shows, but a saved copy still leads to where it was saved from
+      savedFrom = (message as Message.message).savedFrom || savedFrom;
+    } else if(needName || fwdFrom || replyTo) { // chat
+      let title: HTMLElement;
+      let titleVia: typeof title;
+      let noColor: boolean;
+      const peerIdForColor = message.fromId;
+
+
+      const isForwardFromChannel = message.from_id?._ === 'peerChannel' && message.fromId === fwdFromId;
+      const fwdFromName = getFwdFromName(fwdFrom);
+      const hasTwoTitles = _isForwardOfForward && !isOut && fwdFrom.from_name && fwdFrom.saved_from_name;
+
+      let mustHaveName = shouldKeepSenderNameAcrossGroup(isEphemeral, isOut) ||
+        !!message.viaBotId ||
+        storyFromPeerId;
+      const isHidden = !!(fwdFrom && (!fwdFrom.from_id || fwdFromName));
+      if(message.viaBotId) {
+        titleVia = document.createElement('span');
+        titleVia.innerText = '@' + (await this.managers.appPeersManager.getPeerUsername(message.viaBotId));
+        titleVia.classList.add('peer-title');
+        // * starts a draft to the bot on click (onBubblesClick): no link, but pressed as one
+        titleVia.setAttribute(TEXT_LINK_ATTRIBUTE, '');
+      }
+
+      let isForward = !!(storyFromPeerId || fwdFromId || fwdFrom) && !showNameForVerificationCodes;
+      if(isForward && this.chat.type === ChatType.Saved && fwdFromId === rootScope.myId) {
+        isForward = false;
+      }
+
+      if(isHidden && !fwdFromId) {
+        title = document.createElement('span');
+        title.classList.add('peer-title');
+        // * a hidden account: no link, a click tells it is hidden (onBubblesClick)
+        title.setAttribute(TEXT_LINK_ATTRIBUTE, '');
+        setInnerHTML(title, wrapEmojiText(fwdFrom.from_name || fwdFromName));
+        bubble.classList.add('hidden-profile');
+      } else {
+        const titlePeerId = storyFromPeerId || fwdFromId || message.fromId;
+        title = this.createTitle(titlePeerId, wrapOptions, isForward, loadPromises).element;
+      }
+
+      let replyContainer: HTMLElement;
+      if(
+        isMessage &&
+        (
+          replyTo?._ === 'messageReplyStoryHeader' || (
+            message.reply_to_mid &&
+            message.reply_to_mid !== this.chat.threadId &&
+            message.reply_to_mid !== replyTo?.reply_to_top_id
+          ) || replyTo?.reply_from
+        ) &&
+        (!this.chat.isAllMessagesForum && !this.chat.isBotforum || this.chat.type === ChatType.Logs || (replyTo as MessageReplyHeader.messageReplyHeader).reply_to_top_id)
+      ) {
+        replyContainer = await MessageRender.setReply({
+          chat: this.chat,
+          bubble,
+          bubbleContainer,
+          logId,
+          message,
+          appendCallback: (container) => {
+            nameContainer.prepend(container);
+            if(!isMessageEmpty && (!context.attachmentDiv || invertMedia)) {
+              container.classList.add('mb-shorter');
+            }
+
+            if(context.attachmentDiv) {
+              context.attachmentDiv.classList.add('no-brt');
+            }
+          },
+          middleware,
+          lazyLoadQueue: this.lazyLoadQueue,
+          needUpdate: this.needUpdate,
+          isStandaloneMedia: context.isStandaloneMedia,
+          isOut,
+          loadPromises
+        });
+      }
+
+      // this.log(title);
+
+      if(isForward) {
+        const isRegularSaved = this.peerId === rootScope.myId && (!this.chat.threadId || !isForwardOfForward(message) /* !isOut || this.chat.threadId === fwdFromId */);
+        if(!isRegularSaved && !isForwardFromChannel) {
+          bubble.classList.add('forwarded');
+        }
+
+        if((message as Message.message).savedFrom) {
+          savedFrom = (message as Message.message).savedFrom;
+          title.dataset.savedFrom = savedFrom;
+        }
+
+        nameDiv = document.createElement('div');
+        const titlePeerId = storyFromPeerId || fwdFromId;
+        // * a hidden account has none: NULL_PEER_ID, whose click tells it is hidden
+        title.dataset.peerId = '' + (titlePeerId || NULL_PEER_ID);
+
+        if(
+          (isRegularSaved || this.peerId === REPLIES_PEER_ID || isForwardFromChannel) &&
+          !context.isStandaloneMedia &&
+          !hasTwoTitles &&
+          !_isForwardOfForward &&
+          !storyFromPeerId
+        ) {
+          nameDiv.classList.add('colored-name');
+          nameDiv.append(title);
+        } else {
+          mustHaveName ||= true;
+          bubble.classList.remove('hide-name');
+          const firstArgs: FormatterArguments = [title];
+
+          if(titlePeerId) {
+            const avatar = avatarNew({
+              middleware,
+              size: 20,
+              lazyLoadQueue: this.lazyLoadQueue,
+              peerId: titlePeerId,
+              isDialog: false
+            });
+
+            avatar.node.classList.add('bubble-name-forwarded-avatar');
+            // loadPromises.push(avatar.readyThumbPromise);
+            firstArgs.unshift(avatar.node);
+          } else {
+            title.classList.add('text-normal');
+          }
+
+          if(context.isStandaloneMedia || true) {
+            const br = document.createElement('br');
+            br.classList.add('hide-ol');
+            firstArgs.unshift(br);
+          }
+
+          let nameKey: LangPackKey;
+          const nameArgs: FormatterArguments = [firstArgs];
+          if(fwdFrom?.post_author) {
+            nameKey = storyFromPeerId ? 'ForwardedStoryFromAuthor1' : 'ForwardedFromAuthor';
+            const s = document.createElement('span');
+            s.append(wrapEmojiText(fwdFrom.post_author));
+            nameArgs.push(s);
+          } else {
+            nameKey = storyFromPeerId ? 'ForwardedStoryFrom1' : 'ForwardedFrom';
+          }
+
+          const span = i18n(nameKey, nameArgs);
+          span.classList.add('bubble-name-forwarded');
+          nameDiv.append(span);
+
+          if(hasTwoTitles) {
+            let title: HTMLElement;
+            if(fwdFromName) {
+              title = document.createElement('span');
+              title.classList.add('peer-title');
+              title.style.color = 'var(--message-primary-color)';
+              title.dataset.peerId = '' + NULL_PEER_ID;
+              // * a hidden account: no link, a click tells it is hidden (onBubblesClick)
+              title.setAttribute(TEXT_LINK_ATTRIBUTE, '');
+              title.append(wrapEmojiText(fwdFromName));
+            } else {
+              const peerId = getPeerId(fwdFrom.saved_from_id);
+              const {element, textColorProperty} = this.createTitle(peerId, wrapOptions, false, loadPromises);
+              element.style.color = `rgb(var(--${textColorProperty}))`;
+              title = element;
+            }
+
+            const line = document.createElement('div');
+            line.classList.add('name-first-line');
+            line.append(title);
+            nameDiv.prepend(line);
+          }
+        }
+      } else if(!message.viaBotId) {
+        if(shouldRenderSenderNameWithEphemeralBadge(
+          !!needName,
+          context.isStandaloneMedia,
+          isEphemeral
+        )) {
+          nameDiv = document.createElement('div');
+          nameDiv.append(title);
+
+          if(!noColor) {
+            const peer = apiManagerProxy.getPeer(peerIdForColor);
+            const pFlags = (peer as User.user)?.pFlags;
+            if(pFlags && (pFlags.scam || pFlags.fake)) {
+              nameDiv.append(generateFakeIcon(pFlags.scam));
+            }
+
+            if(!our) {
+              nameDiv.classList.add('colored-name');
+            }
+
+            nameDiv.dataset.peerId = '' + peerIdForColor;
+          }
+        } else /* if(!message.reply_to_mid) */ {
+          bubble.classList.add('hide-name');
+        }
+      }
+
+      if(message.viaBotId) {
+        if(!nameDiv) {
+          nameDiv = document.createElement('div');
+        } else {
+          nameDiv.append(' ');
+        }
+
+        const span = document.createElement('span');
+        span.append(i18n('ViaBot'), ' ', titleVia);
+        span.classList.add('is-via');
+
+        nameDiv.append(span);
+      }
+
+      // * append "for <visitor>" after the guest bot's name; the visitor title opens its profile on click.
+      // * plain first name, no premium/status icons — those add `.peer-title.with-icons` (display: flex,
+      // * i.e. block), which would drop the visitor onto its own line
+      if(guestChatViaFromId) {
+        if(!nameDiv) {
+          nameDiv = document.createElement('div');
+        } else {
+          nameDiv.append(' ');
+        }
+
+        const visitorTitle = createPeerTitleElement({peerId: guestChatViaFromId, onlyFirstName: true, link: true, wrapOptions}, loadPromises);
+        const span = document.createElement('span');
+        span.classList.add('is-guest-chat-for');
+        span.append(i18n('GuestChatFor'), ' ', visitorTitle);
+
+        nameDiv.append(span);
+        bubble.classList.remove('hide-name');
+      }
+
+      if(nameDiv && !bubble.classList.contains('hide-name')) {
+        nameDiv.classList.add('name');
+        setDirection(nameDiv);
+
+        const updateMessageDiv = (insertedElement: HTMLElement) => {
+          if(messageDiv && insertedElement.nextElementSibling === messageDiv) {
+            insertedElement.classList.add('next-is-message');
+          }
+        };
+
+        if(context.isStandaloneMedia) {
+          const newNameContainer = document.createElement('div');
+          newNameContainer.classList.add('name-with-reply', 'floating-part');
+          nameContainer.prepend(newNameContainer);
+          updateMessageDiv(newNameContainer);
+          nameContainer = newNameContainer;
+        } else {
+          nameDiv.classList.add('floating-part');
+        }
+
+        nameContainer.prepend(nameDiv);
+        if(!context.isStandaloneMedia) {
+          updateMessageDiv(nameDiv);
+        }
+
+        if(context.isStandaloneMedia && replyContainer) {
+          nameDiv.after(replyContainer);
+        }
+      } else if(context.isStandaloneMedia && replyContainer) {
+        replyContainer.classList.add('floating-part');
+      }
+
+      const firstElement = nameDiv?.firstElementChild as HTMLElement || title;
+      if(
+        this.canShowRanks &&
+        title &&
+        !isHidden &&
+        !fwdFromId
+        // (!fwdFromId || (message.post_author && !this.chat.getPostAuthor(message)))
+      ) {
+        const postAuthor = hasPostAuthor && (message as Message.message).post_author/*  || fwdFrom?.post_author */;
+        if(postAuthor) {
+          this.wrapTitleAndRank(firstElement, message, {rank: postAuthor});
+        } else {
+          const processRank = () => {
+            this.wrapTitleAndRank(firstElement, message as Message.message, this.getMessageRank(message as Message.message));
+          };
+
+          // * redrawn when the author's tag changes
+          const {fromId} = message, rankRenderers = this.rankRenderers;
+          let renderers = rankRenderers.get(fromId);
+          if(!renderers) rankRenderers.set(fromId, renderers = new Set());
+          renderers.add(processRank);
+          middleware.onDestroy(() => {
+            renderers.delete(processRank);
+            if(!renderers.size && rankRenderers.get(fromId) === renderers) {
+              rankRenderers.delete(fromId);
+            }
+          });
+
+          if(this.ranks) {
+            processRank();
+          } else {
+            const processRanks = this.processRanks;
+            processRanks.add(processRank);
+
+            middleware.onDestroy(() => {
+              processRanks.delete(processRank);
+            });
+          }
+        }
+      } else if(this.chat.isMegagroup && !message.fromId.isUser() && (message as Message.message).views) {
+        this.wrapTitleAndRank(firstElement, message as Message.message, {rank: 0});
+      }/*  else if((message as Message.message).from_boosts_applied) {
+        this.wrapTitleAndRank(firstElement, message as Message.message);
+      } */
+
+      if(mustHaveName) {
+        bubble.classList.add('must-have-name');
+      }
+    } else {
+      bubble.classList.add('hide-name');
+    }
+
+    if(this.chat.type === ChatType.Pinned) {
+      savedFrom = makeFullMid(this.chat.peerId, message.mid);
+    }
+
+    const isThreadStarter = messageWithReplies && messageWithReplies.mid === this.chat.threadId;
+    if(isThreadStarter) {
+      bubble.classList.add('is-thread-starter', 'is-group-last');
+    }
+
+    if(savedFrom && (this.chat.type === ChatType.Pinned || fwdFrom.saved_from_msg_id) && this.peerId !== REPLIES_PEER_ID) {
+      const goto = document.createElement('div');
+      goto.classList.add('bubble-beside-button', 'with-hover', 'goto-original');
+      goto.setAttribute('role', 'button');
+      goto.setAttribute('aria-label', I18n.format('Message.Context.Goto', true));
+      if(Modes.a11y) goto.tabIndex = 0;
+      goto.append(Icon('arrow_next'));
+      bubbleContainer.append(goto);
+      bubble.dataset.savedFrom = savedFrom;
+      bubble.classList.add('with-beside-button');
+    }
+
+    const isWelcomeFirst = this.chat.type === ChatType.Welcome && message.mid === this.welcomeFirstMid;
+    if(isEphemeral || isWelcomeFirst) {
+      // the chip over a sticker is styled by what the bubble is, and a template is no ephemeral yet
+      bubble.classList.toggle('is-welcome-first', isWelcomeFirst);
+      const badge = this.createEphemeralBadge(message as Message.message, wrapOptions, loadPromises);
+      placeEphemeralBadge(
+        bubbleContainer,
+        nameDiv,
+        badge,
+        context.isStandaloneMedia
+      );
+    }
+
+    bubble.classList.add(isOut ? 'is-out' : 'is-in');
+
+    // * reserve room for the forced guest-bot avatar in 1-on-1 chats (group chats already indent)
+    if(guestChatViaFromId) {
+      bubble.classList.add('is-guest-chat');
+
+      // * explain what a guest bot is when its first message scrolls into view — up to twice, like iOS.
+      // * iOS shows this in any chat type (not just 1-on-1), so there's no peer-type gate here
+      if(this.observer && !this.guestChatHintShown && (this.chat.appSettings.seenTooltips.guestBotPrivacy || 0) < 2) {
+        this.observer.observe(bubble, this.guestChatHintObserverCallback);
+      }
+    }
+
+    if(withReplies) {
+      const isFooter = MessageRender.renderReplies({
+        bubble,
+        bubbleContainer,
+        message: messageWithReplies,
+        messageDiv,
+        loadPromises,
+        lazyLoadQueue: this.lazyLoadQueue,
+        middleware
+      });
+
+      if(isFooter) {
+        context.canHaveTail = true;
+      } else {
+        bubble.classList.add('with-beside-replies');
+      }
+    } else if(isMessage && message.replies && this.chat.isAnyGroup) {
+      const replies = message.replies;
+      this.setBubbleRepliesCount(bubble, replies.replies);
+    }
+
+    if(!previewOnly && hasReactions && this.chat.type !== ChatType.Logs) {
+      this.appendReactionsElementToBubble(bubble, message, reactionsMessage, undefined, loadPromises);
+    }
+
+    if(context.canHaveTail && !isRound) {
+      bubble.classList.add('can-have-tail');
+    }
+    // * after what it covers that is drawn at its level, a background or a document's selection, and before the tail,
+    // * which takes the gradient where it follows it (`.bubble-gradient`)
+    if(isOut) {
+      bubbleContainer.classList.add('has-gradient');
+      bubbleContainer.append(generateGradient());
+    }
+    if(context.canHaveTail || isRound) {
+      bubbleContainer.append(generateTail());
+    }
+
+    if(!previewOnly && our && (this.peerId !== rootScope.myId || isOut)) {
+      if(!isEphemeral && (message.pFlags.unread || context.isOutgoing)) this.unreadOut.add(message.mid);
+      let status: Parameters<ChatBubbles['setBubbleSendingStatus']>[1];
+      if(message.error) status = 'error';
+      else if(context.isOutgoing) status = 'sending';
+      else if(isEphemeral) status = 'sent';
+      else status = message.pFlags.unread || (message as Message.message).pFlags.is_scheduled ? 'sent' : 'read';
+
+      if(isOut || (status !== 'sent' && status !== 'read')) {
+        this.setBubbleSendingStatus(bubble, status, true);
+      }
+    }
+
+    if(isMessage) {
+      createRoot((dispose) => {
+        middleware.onDestroy(dispose);
+
+        createEffect(() => {
+          bubble.classList.toggle('no-forwards', !this.canForward(message));
+        });
+      });
+    }
+
+    if(!isEphemeral && !previewOnly && isMessage && message.effect && (context.isInUnread || context.isOutgoing)) {
+      this.observer.observe(bubble, this.messageEffectObserverCallback);
+    }
+
+
+    if(isRound) {
+      wrapRoundVideoBubble({
+        bubble,
+        message: message as Message.message,
+        globalMediaDeferred,
+        searchContext
+      });
+    }
+
+    if(!previewOnly && this.sponsoredAfterMids.size > 0) {
+      const sponsoredMessageAfterMid = groupedMids ? groupedMids.find(it => this.sponsoredAfterMids.has(it)) : message.mid
+      const sponsoredMessage = this.sponsoredAfterMids.get(sponsoredMessageAfterMid);
+      if(sponsoredMessage) {
+        const sponsoredBubblePromise = this.safeRenderMessage({
+          message: sponsoredMessage,
+          reverse: false,
+          updatePosition: false,
+          processResult: async(res) => {
+            const bubble = (await res).bubble;
+            (bubble as any).message = sponsoredMessage;
+            ret.bubble.appendChild(bubble);
+            return res
+          },
+          canAnimateLadder: true
+        });
+        ret.promises.push(sponsoredBubblePromise);
+      }
+    }
+
+    const summaryOwner = isMessage && (
+      this.getSolidMessageBody(bubble, message.mid) ||
+      (solidMessageBodyEntry?.ownsTime ? solidMessageBodyEntry : undefined)
+    );
+    if(summaryOwner) {
+      summaryOwner.reconcileShell = reconcileSummaryButton;
+      reconcileSummaryButton(summaryOwner.message);
+    }
+
+    this.addMessageSpoilerOverlay({
+      mid: message.mid,
+      messageDiv,
+      middleware,
+      loadPromises,
+      canTranslate
+    });
+
+    this.registerRetainedMessageLinkPolicy(
+      messageLinkPolicyState,
+      bubble,
+      middleware,
+      hideLinks,
+      solidMessageBodyEntry?.refreshPolicy || refreshDirectRichMessagePolicy
+    );
+
+    return ret;
+  }
+
+  private addMessageSpoilerOverlay(args: AddMessageSpoilerOverlayArgs) {
+    const {messageDiv} = args;
+    const bubble = messageDiv.closest<HTMLElement>('.bubble');
+    const solidMessageBodyEntries = Array.from(this.solidMessageBodies.get(bubble)?.values() || [])
+    .filter((entry) => messageDiv.contains(entry.controller.element));
+    solidMessageBodyEntries.forEach((entry) => {
+      entry.ensureSpoilers = () => {
+        void this.addMessageSpoilerOverlay(args).then(() => entry.updateSpoilers?.());
+      };
+    });
+
+    if(messageDiv.querySelector('.message-spoiler-overlay')) return Promise.resolve();
+
+    const existing = this.spoilerOverlayPromises.get(messageDiv);
+    if(existing) return existing;
+
+    const promise = this.mountMessageSpoilerOverlay(args);
+    this.spoilerOverlayPromises.set(messageDiv, promise);
+    return forgetSettledRequest(this.spoilerOverlayPromises, messageDiv, promise);
+  }
+
+  private async mountMessageSpoilerOverlay({mid, messageDiv, middleware, loadPromises, canTranslate}: AddMessageSpoilerOverlayArgs) {
+    if(IS_FIREFOX) return; // Firefox has very poor performance when drawing on canvas
+    if(canTranslate && loadPromises) await Promise.allSettled(loadPromises); // TranslatableMessage delays the moment when content appears in the DOM
+
+    if(!middleware() || !messageDiv.querySelector('.spoiler-text')) return;
+
+    const spoilerOverlay = createMessageSpoilerOverlay({
+      mid: mid,
+      messageElement: messageDiv,
+      animationGroup: this.chat.animationGroup
+    }, SolidJSHotReloadGuardProvider);
+
+    messageDiv.append(spoilerOverlay.element);
+    const bubble = messageDiv.closest<HTMLElement>('.bubble');
+    const solidMessageBodyEntries = Array.from(this.solidMessageBodies.get(bubble)?.values() || [])
+    .filter((entry) => messageDiv.contains(entry.controller.element));
+    solidMessageBodyEntries.forEach((entry) => entry.updateSpoilers = spoilerOverlay.controls.update);
+    middleware.onDestroy(() => {
+      spoilerOverlay.dispose();
+      solidMessageBodyEntries.forEach((entry) => {
+        if(entry.updateSpoilers === spoilerOverlay.controls.update) entry.updateSpoilers = undefined;
+      });
+    });
+
+    await Promise.allSettled(loadPromises);
+    if(!middleware()) return;
+    spoilerOverlay.controls.update(); // For chats that have custom theme differing from the one from settings
+  }
+
+  public canForward(message: Message.message | Message.messageService) {
+    // layer 229 made ephemeral messages forwardable (`messages.forwardMessages.from_ephemeral`).
+    // An anchored one still is not: what it shows belongs to a message it only stands in front of.
+    if(
+      message?._ !== 'message' ||
+      message.pFlags.noforwards ||
+      isAnchoredEphemeralMessage(message)
+    ) {
+      return false;
+    }
+
+    if(message.peerId.isUser()) {
+      const userFull = this.chat.fullPeer() as UserFull;
+      if(userFull?.pFlags?.noforwards_my_enabled || userFull?.pFlags?.noforwards_peer_enabled) {
+        return false;
+      }
+      return true;
+    }
+
+    if((usePeer(message.peerId) as MTChat.channel).pFlags.noforwards) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private appendReactionsElementToBubble(
+    bubble: HTMLElement,
+    message: Message.message | Message.messageService,
+    reactionsMessage: Message.message | Message.messageService,
+    changedResults?: ReactionCount[],
+    loadPromises?: Promise<any>[],
+    // when the effects of the reactions that changed start
+    waitPromise?: Promise<void>
+  ) {
+    if(this.peerId.isUser() && USER_REACTIONS_INLINE/*  || true */) {
+      return;
+    }
+
+    if(!reactionsMessage?.reactions || !reactionsMessage.reactions.results.length) {
+      return;
+    }
+
+    // message = this.appMessagesManager.getMessageWithReactions(message);
+
+    const reactionsElement = ReactionsElement.create();
+    reactionsElement.init({
+      context: reactionsMessage,
+      type: ReactionLayoutType.Block,
+      middleware: bubble.middlewareHelper.get(),
+      animationGroup: this.chat.animationGroup,
+      lazyLoadQueue: this.lazyLoadQueue
+    });
+    reactionsElement.render(changedResults, waitPromise);
+
+    // * a bubble with no text to hold them (its time floats over its media, or it is the plate of a message this client
+    // * cannot show, which has no time at all) and a service line take them under their content
+    if(
+      bubble.classList.contains('has-floating-time') ||
+      bubble.classList.contains('service') ||
+      bubble.classList.contains('is-unsupported')
+    ) {
+      // * on the wallpaper, out of the bubble's background
+      reactionsElement.classList.add('is-outside');
+      bubble.querySelector('.bubble-content-wrapper').append(reactionsElement);
+    } else {
+      const timeSpan = bubble.timeSpan;
+      const messageDiv = bubble.querySelector('.message');
+
+      // A bubble that shows no message info (a call) has no time to carry over.
+      if(timeSpan) {
+        appendBubbleTime(bubble, reactionsElement, () => reactionsElement.append(timeSpan));
+      }
+
+      if(bubble.classList.contains('is-multiple-documents')) {
+        const documentContainer = messageDiv.lastElementChild as HTMLElement;
+        let documentMessageDiv = documentContainer.querySelector('.document-message');
+
+        if(!documentMessageDiv) {
+          documentMessageDiv = document.createElement('div');
+          documentMessageDiv.classList.add('document-message');
+          documentContainer.querySelector('.document-wrapper').append(documentMessageDiv);
+        }
+
+        documentMessageDiv.append(reactionsElement);
+      } else {
+        messageDiv.append(reactionsElement);
+      }
+    }
+  }
+
+  private setStoryContainerDimensions(container: HTMLElement) {
+    const ratio = 9 / 16;
+    const height = 256;
+    const width = height * ratio;
+    container.style.width = `${width}px`;
+    container.style.height = `${height}px`;
+  }
+
+  private async getStoryReplyIfExpired(storyPeerId: PeerId, storyId: number, isWebPage: boolean, noBorder?: boolean) {
+    const result = await this.managers.acknowledged.appStoriesManager.getStoryById(storyPeerId, storyId);
+    if(result.cached && !(await result.result)) {
+      if(isWebPage) {
+        return null;
+      }
+
+      const peerTitle = await wrapPeerTitle({peerId: storyPeerId});
+      const {container, fillPromise} = wrapReply({
+        title: isWebPage ? peerTitle : undefined,
+        subtitle: isWebPage ? undefined : i18n('ExpiredStorySubtitle', [peerTitle]),
+        isStoryExpired: true,
+        isChatSensitive: this.chat.isSensitive,
+        noBorder
+      });
+
+      return container;
+    }
+  }
+
+  /**
+   * A shared contact, drawn as tdesktop draws it (history/view/media/history_view_contact.cpp):
+   * a web-page box in the contact's colour holding the avatar, the name and the phone, with what
+   * can be done about the contact as the box's footer buttons — MESSAGE and, for someone not yet
+   * in the contacts, ADD; VIEW CONTACT for someone who is not on Telegram but brought a vCard.
+   */
+  private renderSharedContact({
+    contact,
+    isOut,
+    messageDiv,
+    timeSpan,
+    middleware
+  }: {
+    contact: MessageMedia.messageMediaContact,
+    isOut: boolean,
+    messageDiv: HTMLElement,
+    timeSpan: HTMLElement,
+    middleware: Middleware
+  }) {
+    const {user_id: userId, phone_number: phone} = contact;
+    const peer = userId ? apiManagerProxy.getUser(userId) : undefined;
+    const user = peer?._ === 'user' ? peer : undefined;
+    const fullName = [contact.first_name, contact.last_name].filter(Boolean).join(' ').trim();
+    // * someone not on Telegram has no colour of their own, so it comes from their name
+    const colorPeerId = (userId || getFakeUserIdForJustName(fullName)).toPeerId();
+    const vcardItems = parseVcard(contact.vcard);
+    const formatContactPhone = makeContactPhoneFormatter([user?.phone, userId && phone], this.myCountryCode);
+    const ownPhone = user?.phone || phone;
+    const phoneText = ownPhone ? formatContactPhone(ownPhone) : undefined;
+
+    // * Under the name, as iOS lists them (ChatMessageContactBubbleContentNode): every phone of the
+    // * vCard, else the message's own, then the emails and the organization — five lines at most.
+    // * A card with no name goes by its organization
+    const organization = vcardItems.find((item) => item.type === 'organization')?.value;
+    const displayName = fullName || organization;
+    const vcardPhones = vcardItems.filter((item) => isVcardPhoneType(item.type)).map((item) => formatContactPhone(item.value));
+    const infoLines = [
+      ...(vcardPhones.length ? vcardPhones : phoneText ? [phoneText] : []),
+      ...vcardItems.filter((item) => item.type === 'email').map((item) => item.value),
+      ...(organization && organization !== displayName ? [organization] : [])
+    ].slice(0, 5);
+
+    const openChat = (e: MouseEvent) => {
+      this.chat.appImManager.setInnerPeer({
+        stack: this.chat.appImManager.getStackFromElement(e.target as HTMLElement),
+        peerId: userId.toPeerId()
+      });
+    };
+    const showDetails = () => showContactDetailsPopup(vcardItems, formatContactPhone);
+    const addContact = () => showCreateContactPopup({
+      firstName: contact.first_name,
+      lastName: contact.last_name,
+      phone
+    });
+    const copyPhone = () => copyPhoneNumber(phoneText);
+
+    // * The box itself shows the vCard when there is one, as tdesktop's does; otherwise it opens
+    // * the chat, or copies the phone of someone who is not on Telegram
+    const mainCallback = vcardItems.length ? showDetails : user ? openChat : phone ? copyPhone : undefined;
+    const mainLabel = I18n.format(
+      vcardItems.length ? 'AccDescr.ContactDetails' : user ? 'AccDescr.OpenContact' : 'AccDescr.CopyContactPhone',
+      true,
+      [displayName || phoneText || '']
+    );
+
+    const footerButton = (
+      langKey: LangPackKey,
+      callback: (e: MouseEvent) => void,
+      visible?: () => boolean
+    ): WebPageFooterButton => ({
+      content: i18n(langKey),
+      ref: (element) => this.webPageClickCallbacks.set(element, callback),
+      visible
+    });
+
+    let footer: Parameters<typeof WebPageBox>[0]['footer'];
+    if(user) {
+      const buttons = [footerButton('SharedContactMessage', openChat)];
+      if(!user.pFlags.self) {
+        // * ADD goes away once they are in the contacts, and comes back if they leave them
+        const [isContact, setIsContact] = createSignal(!!user.pFlags.contact);
+        const onContactsUpdate = (updatedUserId: UserId) => {
+          if(updatedUserId !== userId) return;
+          this.managers.appUsersManager.isContact(userId).then(setIsContact);
+        };
+        rootScope.addEventListener('contacts_update', onContactsUpdate);
+        middleware.onDestroy(() => rootScope.removeEventListener('contacts_update', onContactsUpdate));
+
+        buttons.push(footerButton('SharedContactAdd', addContact, () => !isContact()));
+      }
+
+      footer = {buttons};
+    } else if(vcardItems.length) {
+      // * VIEW CONTACT does what the box does, so it is the box's caption, as INSTANT VIEW is
+      footer = {content: i18n('ViewContact')};
+    }
+
+    const avatar = avatarNew({
+      middleware,
+      size: 42,
+      lazyLoadQueue: this.lazyLoadQueue,
+      peerId: user ? colorPeerId : undefined,
+      peerTitle: user ? undefined : displayName || I18n.format('AttachContact', true),
+      peerTitleColorId: colorPeerId
+    });
+
+    createRoot((dispose) => {
+      middleware.onDestroy(dispose);
+      WebPageBox({
+        name: {content: displayName ? wrapEmojiText(displayName) : i18n('AttachContact')},
+        text: infoLines.join('\n'),
+        thumb: avatar.node,
+        footer,
+        clickable: !!mainCallback,
+        class: 'is-contact',
+        ref: (box) => {
+          if(timeSpan) timeSpan.before(box);
+          else messageDiv.append(box);
+          // * with no text, the box always heads the message: the margin a link preview gets above its text
+          messageDiv.classList.add('mt-bigger');
+
+          if(mainCallback) {
+            this.webPageClickCallbacks.set(box, mainCallback);
+            // * the row of avatar and text is the control for the box's own action: the footer
+            // * buttons sit beside it, not inside it
+            const main = box.querySelector<HTMLElement>('.webpage-with-thumb');
+            main.setAttribute('role', 'button');
+            main.setAttribute('aria-label', mainLabel);
+            if(Modes.a11y) main.tabIndex = 0;
+          }
+
+          // * in the contact's colour, an outgoing one in the bubble's own with the contact's stripes
+          setPeerColorToElement({
+            peerId: colorPeerId,
+            element: box,
+            colorAsOut: isOut,
+            color: user ? undefined : {_: 'peerColor', color: getPeerColorIndexById(colorPeerId)}
+          });
+
+          if(user) {
+            wrapPeerColorPattern({
+              peerId: colorPeerId,
+              container: box,
+              middleware
+            });
+          }
+        }
+      });
+    });
+  }
+
+  private wrapSomeSolid(func: () => JSX.Element, container: HTMLElement, middleware: Middleware) {
+    const dispose = render(func, container);
+    middleware.onClean(dispose);
+  }
+
+  private wrapStory({
+    message,
+    bubble,
+    storyPeerId: peerId,
+    storyId,
+    container,
+    middleware,
+    loadPromises,
+    boxWidth,
+    boxHeight
+  }: {
+    message: Message.message,
+    bubble: HTMLElement,
+    storyPeerId: PeerId,
+    storyId: number,
+    container: HTMLElement,
+    middleware: Middleware,
+    loadPromises: Promise<any>[],
+    boxWidth?: number,
+    boxHeight?: number
+  }) {
+    container.dataset.storyPeerId = '' + peerId;
+    container.dataset.storyId = '' + storyId;
+    this.wrapSomeSolid(() => {
+      return StoryPreview({
+        message,
+        peerId,
+        storyId,
+        boxWidth,
+        boxHeight,
+        lazyLoadQueue: this.lazyLoadQueue,
+        // group: this.chat.animationGroup,
+        autoDownload: this.chat.autoDownload,
+        loadPromises,
+        canAutoplay: false,
+        onExpiredStory: async() => {
+          await getHeavyAnimationPromise(); // wait for scroll to end
+          this.rerenderWhenLoaded(bubble, message);
+        },
+        withPreloader: true
+      });
+    }, container, middleware);
+  }
+
+  // * a tag change in the open chat: applied at once, or over the tags once they come
+  private onRankChange(chatId: ChatId, callback: () => void) {
+    if(chatId !== this.ranksChatId) {
+      return;
+    }
+
+    if(this.ranks) {
+      callback();
+    } else {
+      this.pendingRankChanges?.push(callback);
+    }
+  }
+
+  private setAuthorRank(peerId: PeerId, rank: BubbleNameRank) {
+    if(rank) {
+      this.ranks.set(peerId, rank);
+    } else {
+      this.ranks.delete(peerId);
+    }
+
+    this.rankRenderers.get(peerId)?.forEach((callback) => callback());
+  }
+
+  // * the tag an author's messages show here, read off the bubbles beside their avatar
+  public getAvatarAuthorRank(avatar: HTMLElement) {
+    if(!this.canShowRanks) {
+      return;
+    }
+
+    const bubble = findUpClassName(avatar, 'bubbles-group')?.querySelector<HTMLElement>('.bubble[data-mid]');
+    const fullMid = getBubbleFullMid(bubble);
+    const message = fullMid && this.chat.getMessage(fullMid) as Message.message;
+    return message?.fromId === avatar.dataset.peerId?.toPeerId() ? this.getMessageRank(message) : undefined;
+  }
+
+  /**
+   * The author's tag in this chat (desktop's order): a supergroup admin's own, or "admin" / "owner";
+   * then one we learnt of after the message came; then, in a supergroup only, the message's
+   * `from_rank` - a basic group's list of members is all there is
+   */
+  private getMessageRank(message: Message.message): BubbleNameRank {
+    const known = this.ranks?.get(message.fromId);
+    if(known) {
+      return known.rank === '' ? undefined : known;
+    }
+
+    if(this.ranksFromMessages && message.from_rank) {
+      return {rank: message.from_rank, role: 'member'};
+    }
+  }
+
+  /**
+   * Puts the tag and the boosts at the end of the name line, or changes the tag a line has.
+   * The line keeps its container once made, so a later change only swaps the tag
+   */
+  private wrapTitleAndRank(
+    title: HTMLElement,
+    message: Message.message,
+    rank?: BubbleNameRank
+  ) {
+    const wrappedRank = rank && createBubbleNameRank(rank);
+    if(title.classList.contains('bubble-name-first')) {
+      const container = title.parentElement;
+      const previous = container.querySelector(':scope > .bubble-name-rank');
+      if(previous) {
+        if(wrappedRank) previous.replaceWith(wrappedRank);
+        else previous.remove();
+      } else if(wrappedRank) {
+        title.after(wrappedRank);
+      }
+
+      return;
+    }
+
+    const boosts = message.from_boosts_applied;
+    if(!wrappedRank && !boosts) {
+      return;
+    }
+
+    // title.after(wrappedRank);
+    const container = document.createElement('div');
+    container.classList.add('title-flex');
+    title.replaceWith(container);
+    let boostsElement: HTMLElement;
+    if(boosts) {
+      boostsElement = document.createElement('span');
+      boostsElement.classList.add('bubble-name-boosts');
+      boostsElement.append(Icon('boosts_filled', 'inline-icon', 'bubble-name-boosts-icon'), '' + boosts);
+    }
+    title.classList.add('bubble-name-first');
+    container.append(...[title, wrappedRank, boostsElement].filter(Boolean));
+  }
+
+
+  /**
+   * A name drawn into a bubble: its text and icons come after an await, so the render waits for them
+   * (`loadPromises`) and the bubble is attached with the name already at its height
+   */
+  private createTitle(peerId: PeerId, wrapOptions: WrapSomethingOptions, isForward: boolean, loadPromises: Promise<any>[]) {
+    const colorIndex = getPeerColorIndexByPeer(apiManagerProxy.getPeer(peerId));
+    let textColorProperty: string;
+    if(colorIndex !== -1) {
+      textColorProperty = `peer-${colorIndex}-color-rgb`;
+    }
+
+    // * a name in a message opens its peer on click (onBubblesClick)
+    const element = createPeerTitleElement({
+      peerId,
+      withPremiumIcon: !isForward,
+      link: true,
+      wrapOptions: {
+        ...wrapOptions,
+        textColor: textColorProperty
+      }
+    }, loadPromises);
+
+    return {
+      element,
+      textColorProperty
+    };
+  }
+
+  private createEphemeralBadge(
+    message: MyEphemeralMessage | Message.message,
+    wrapOptions: WrapSomethingOptions,
+    loadPromises: Promise<any>[]
+  ) {
+    const container = document.createElement('div');
+    container.classList.add('ephemeral-badge-container', 'bubble-name-chip-container');
+
+    const badge = document.createElement('div');
+    badge.classList.add('ephemeral-badge');
+    badge.setAttribute('role', 'note');
+    badge.title = I18n.format('Ephemeral.About', true);
+    badge.append(Icon('eyecross', 'ephemeral-badge-icon'));
+
+    // a welcome message is shown to whoever receives it, so it reads the way they will see it
+    if(message.pFlags.out && !message.pFlags.welcome_template) {
+      const receiverPeerId = message.ephemeral_receiver_id.toPeerId(false);
+      const receiver = apiManagerProxy.getPeer(receiverPeerId);
+      const receiverTitle = createPeerTitleElement({
+        peerId: receiverPeerId,
+        username: !!getPeerActiveUsernames(receiver)[0],
+        dialog: false,
+        wrapOptions
+      }, loadPromises);
+      receiverTitle.classList.add('ephemeral-badge-peer');
+      badge.append(i18n('Ephemeral.VisibleTo', [receiverTitle]));
+    } else {
+      badge.append(i18n('Ephemeral.VisibleYou'));
+    }
+
+    container.append(badge);
+    return container;
+  }
+
+  private prepareToSaveScroll(reverse?: boolean, sliceTop?: boolean, sliceBottom?: boolean) {
+    const isMounted = !!this.chatInner.parentElement;
+    if(!isMounted) {
+      return {};
+    }
+
+    const log = this.log.bindPrefix('prepareToSaveScroll');
+    log('save');
+    const scrollSaver = this.createScrollSaver(reverse);
+    scrollSaver.save(); // * let's save scroll position by point before the slicing, not after
+
+    if((sliceTop || sliceBottom) && this.getRenderedLength() && !this.chat.setPeerPromise) {
+      const viewportSlice = this.getViewportSlice(true);
+      if(!sliceTop) viewportSlice.invisibleTop.length = 0;
+      if(!sliceBottom) viewportSlice.invisibleBottom.length = 0;
+      this.deleteViewportSlice(viewportSlice, true);
+    }
+
+    // scrollSaver.save(); // ! slicing will corrupt scroll position
+    // const saved = scrollSaver.getSaved();
+    // const hadScroll = saved.scrollHeight !== saved.clientHeight;
+
+    return {
+      restoreScroll: () => {
+        log('restore');
+        // scrollSaver.restore(_history.length === 1 && !reverse ? false : true);
+        scrollSaver.restore(reverse);
+        this.onRenderScrollSet(scrollSaver.getSaved());
+      },
+      scrollSaver
+    };
+  }
+
+  public async performHistoryResult(
+    historyResult: LocalHistoryResult | {history: (Message.message | Message.messageService | number)[]},
+    reverse: boolean,
+    includeEphemeralHistory = false,
+    sight?: RenderSight
+  ) {
+    const log = false || true ? this.log.bindPrefix('perform-' + (Math.random() * 1000 | 0)) : undefined;
+    log?.('start', this.chatInner.parentElement, historyResult);
+
+    let history: (Message.message | Message.messageService | AdminLog | number)[] = (historyResult as LocalHistoryResult).messages || historyResult.history;
+    // * only ads there were when this history came are put between its posts: ones that arrive while it awaits below
+    // * belong to the bottom of the chat (`loadSponsoredMessages`), however long the awaits took
+    const hadSponsoredMessages = !!this.sponsoredMessagesAvailable?.length;
+    history = history.slice(); // need
+
+    if(this.needReflowScroll) {
+      reflowScrollableElement(this.scrollable.container);
+      this.needReflowScroll = false;
+    }
+
+    const cb = (message: Message.message | Message.messageService | AdminLog) => {
+      // rendered as it is by now: the events of one batch are handled before any render starts, so an edit that
+      // came with the message found no bubble to go to, and a send the server has taken found none to give its
+      // id to (`message_sent`)
+      if(message && isMessage(message)) {
+        const {mid} = message as MyMessage;
+        message = this.getMessageAsItIsNow(message as MyMessage, this.changedMids.get(mid) ?? mid);
+      }
+
+      if(!message) {
+        return;
+      } else if(isMessage(message) && message.pFlags.local) {
+        return this.processLocalMessageRender(message);
+      } else {
+        return this.safeRenderMessage({
+          message,
+          reverse,
+          canAnimateLadder: true,
+          sight
+        });
+      }
+    };
+
+    let isEnd: HistoryResult['isEnd'];
+    if(!this.scrollable.loadedAll['bottom'] || !this.scrollable.loadedAll['top']) {
+      isEnd = (historyResult as HistoryResult).isEnd;
+      if(!isEnd) {
+        const historyStorage = this.chat.getHistoryStorage();
+        const firstSlice = historyStorage.history.first;
+        const lastSlice = historyStorage.history.last;
+        isEnd = {top: false, bottom: false, both: false};
+        if(firstSlice.isEnd(SliceEnd.Bottom) && (!firstSlice.length || history.includes(firstSlice[0]))) {
+          isEnd.bottom = true;
+        }
+
+        if(lastSlice.isEnd(SliceEnd.Top) && (!lastSlice.length || history.includes(lastSlice[lastSlice.length - 1]))) {
+          isEnd.top = true;
+        }
+      }
+
+      if(!isEnd.bottom && this.setPeerOptions) {
+        const {lastMsgFullMid, topMessageFullMid, savedPosition} = this.setPeerOptions;
+        this.setPeerOptions = undefined;
+        // ! warning
+        if((lastMsgFullMid === EMPTY_FULL_MID && !savedPosition?.mids) || (topMessageFullMid !== EMPTY_FULL_MID && this.getBubble(topMessageFullMid)) || lastMsgFullMid === topMessageFullMid) {
+          isEnd.bottom = true;
+        }
+      }
+    }
+
+    const ephemeralMessages = await mergeEphemeralHistoryForRender(
+      history,
+      includeEphemeralHistory &&
+        !this.ephemeralHistoryLoaded &&
+        (this.chat.type === ChatType.Chat || this.chat.type === ChatType.Discussion) &&
+        (this.scrollable.loadedAll.bottom || !!isEnd?.bottom),
+      () => this.getEphemeralHistoryMessages()
+    );
+    if(ephemeralMessages.length) {
+      ++this.pendingEphemeralHistory;
+    }
+
+    const messages = /* await Promise.all */(history.map((mid) => {
+      return typeof(mid) === 'number' ? this.chat.getMessage(mid) : mid;
+    }));
+
+    const setLoadedPromises: Promise<any>[] = [];
+    if(isEnd?.top) {
+      setLoadedPromises.push(this.setLoaded('top', true));
+    }
+    if(isEnd?.bottom) {
+      setLoadedPromises.push(this.setLoaded('bottom', true));
+    }
+
+    if(setLoadedPromises.length) {
+      await Promise.all(setLoadedPromises);
+    }
+
+    if(this.sponsoredMessageEvery && hadSponsoredMessages && this.sponsoredMessagesAvailable.length) {
+      const [readMaxId, chatMaxId] = await Promise.all([
+        this.managers.appMessagesManager.getReadMaxIdIfUnread(this.chat.peerId, this.chat.threadId),
+        this.chat.getHistoryMaxId()
+      ])
+      let prevGroupedId: Long | undefined
+
+      for(const mid_ of history) {
+        if(typeof mid_ === 'object' && mid_?._ === 'channelAdminLogEvent') continue;
+        const mid = typeof(mid_) === 'number' ? mid_ : mid_.mid;
+        if(mid <= readMaxId) continue
+
+        const msg = typeof mid_ === 'number' ? this.chat.getMessage(mid) : mid_;
+        const groupedId = msg._ === 'message' ? msg.grouped_id : undefined;
+        if(groupedId && prevGroupedId === groupedId) continue
+
+        prevGroupedId = groupedId
+        let add = 1
+        if(!groupedId && (
+          msg._ === 'messageService' ||
+          (msg._ === 'message' && !msg.media && msg.message.length < 100)
+        )) {
+          add = 0.2
+        }
+
+        this.messagesSinceLastSponsored += add;
+
+        const addOffset = (reverse ? 1 : 0) // because we display *after* and reverse is before
+        if(this.messagesSinceLastSponsored >= (this.sponsoredMessageEvery + addOffset)) {
+          this.messagesSinceLastSponsored = 0;
+          this.log('will render sponsored message after mid', mid);
+          this.sponsoredAfterMids.set(mid, this.sponsoredMessagesAvailable.shift())
+          if(!this.sponsoredMessagesAvailable.length) break
+        }
+      }
+    }
+
+    let promises: Promise<any>[] = [];
+    if(this.chat.type === ChatType.Search && false) {
+      const length = history.length;
+      if(reverse) for(let i = 0; i < length; ++i) promises.push(cb(messages[i]));
+      else for(let i = length - 1; i >= 0; --i) promises.push(cb(messages[i]));
+    } else {
+      promises = messages.map(cb);
+    }
+
+    try {
+      // cannot combine them into one promise
+      promises.length && await Promise.all(promises);
+      await this.messagesQueuePromise;
+    } finally {
+      if(ephemeralMessages.length) {
+        this.pendingEphemeralHistory = Math.max(0, this.pendingEphemeralHistory - 1);
+      }
+    }
+
+    if(ephemeralMessages.length) {
+      this.updateHasMessages();
+    }
+
+    // * have to check again, because it can be skipped above
+    const placeholderPromise = this.checkIfEmptyPlaceholderNeeded();
+    placeholderPromise && await placeholderPromise;
+    this.messagesQueuePromise && await this.messagesQueuePromise;
+
+    if(this.scrollable.loadedAll.top && this.messagesQueueOnRenderAdditional) {
+      this.messagesQueueOnRenderAdditional();
+      this.messagesQueueOnRenderAdditional?.(); // * can set it second time
+    }
+
+    log?.('performHistoryResult end');
+  }
+
+  private onRenderScrollSet(state?: {scrollHeight: number, clientHeight: number}) {
+    const className = 'has-sticky-dates';
+    if(!this.container.classList.contains(className)) {
+      const isLoading = !this.preloader.detached;
+
+      if(isLoading ||
+        (
+          state ??= {
+            scrollHeight: this.scrollable.scrollSize,
+            clientHeight: this.scrollable.clientSize
+          },
+          state.scrollHeight !== state.clientHeight
+        )
+      ) {
+        /* for(const timestamp in this.dateMessages) {
+          const dateMessage = this.dateMessages[timestamp];
+          dateMessage.div.classList.add('is-sticky');
+        } */
+
+        const middleware = this.getMiddleware();
+        const callback = () => {
+          if(!middleware()) return;
+          this.container.classList.add(className);
+        };
+
+        if(this.willScrollOnLoad) {
+          callback();
+        } else {
+          setTimeout(callback, 600);
+        }
+
+        return;
+      }
+    }
+
+    this.willScrollOnLoad = undefined;
+  }
+
+  public onDatePick = (timestamp: number) => {
+    const peerId = this.peerId;
+    this.managers.appMessagesManager.requestHistory({
+      ...this.chat.requestHistoryOptionsPart,
+      offsetId: 0,
+      limit: 2,
+      addOffset: -1,
+      offsetDate: timestamp
+    }).then((history) => {
+      if(!history?.messages?.length) {
+        this.log.error('no history!');
+        return;
+      } else if(this.peerId !== peerId) {
+        return;
+      }
+
+      this.chat.setMessageId({lastMsgId: (history.messages[0] as MyMessage).mid});
+      // console.log('got history date:', history);
+    });
+  };
+
+  public requestHistory(offsetId: number | FullMid, limit: number, backLimit: number): Promise<AckedResult<LocalHistoryResult>>  {
+    let offsetPeerId: PeerId;
+    if(typeof(offsetId) === 'string') {
+      const {peerId, mid} = splitFullMid(offsetId);
+      offsetPeerId = peerId;
+      offsetId = mid;
+    }
+
+    if(this.chat.type === ChatType.Logs) {
+      return Promise.resolve({
+        cached: false,
+        result: (async() => {
+          const {peerId} = this.chat;
+
+          const {items: logs, isStart, isEnd} = await this.managers.appChatsManager.getAdminLogs({
+            channelId: peerId.toChatId(),
+            search: this.inChatQuery,
+            admins: this.committedLogsFilters?.admins,
+            flags: this.committedLogsFilters?.flags,
+            offsetId,
+            limit,
+            backLimit
+          });
+
+          return {
+            history: logs.map(log => +log.id),
+            count: logs.length,
+            messages: logs,
+            isEnd: {
+              both: isStart && isEnd,
+              bottom: isStart,
+              top: isEnd
+            }
+          };
+        })()
+      });
+    } else if(this.chat.type === ChatType.Static) {
+      return Promise.resolve({
+        cached: true,
+        result: Promise.resolve({
+          history: this.chat.staticMessages?.map(message => message.mid) || [],
+          count: this.chat.staticMessages?.length || 0,
+          messages: this.chat.staticMessages || [],
+          isEnd: {
+            both: true,
+            bottom: true,
+            top: true
+          }
+        })
+      });
+    } else if([ChatType.Chat, ChatType.Discussion, ChatType.Saved, ChatType.Search].includes(this.chat.type)) {
+      return this.managers.acknowledged.appMessagesManager.getHistory({
+        ...this.chat.requestHistoryOptionsPart,
+        offsetPeerId,
+        offsetId,
+        limit,
+        backLimit,
+        // * the bubbles go by `isEnd`: an album a page's edge cuts may come with the next page. Search results are kept
+        // * apart from the history, and their albums filled as before
+        leaveOutEdgeAlbums: this.chat.type !== ChatType.Search
+      });
+    } else if(this.chat.type === ChatType.Pinned) {
+      return this.managers.acknowledged.appMessagesManager.getHistory({
+        peerId: this.peerId,
+        inputFilter: {_: 'inputMessagesFilterPinned'},
+        // thread-scoped in a forum topic, like `getPinnedMessagesMaxId` above
+        threadId: this.chat.threadId,
+        offsetPeerId,
+        offsetId,
+        limit,
+        backLimit
+      });
+    } else if(this.chat.type === ChatType.Welcome) {
+      return this.managers.acknowledged.appMessagesManager.getWelcomeMessages(this.peerId).then((ackedResult) => {
+        return {
+          cached: ackedResult.cached,
+          result: Promise.resolve(ackedResult.result).then((mids) => {
+            this.welcomeFirstMid = mids[0];
+            return {
+              history: mids.slice().reverse(),
+              count: mids.length,
+              isEnd: {
+                both: true,
+                bottom: true,
+                top: true
+              }
+            };
+          })
+        };
+      });
+    } else if(this.chat.type === ChatType.Scheduled) {
+      return this.managers.acknowledged.appMessagesManager.getScheduledMessages(this.peerId).then((ackedResult) => {
+        return {
+          cached: ackedResult.cached,
+          result: Promise.resolve(ackedResult.result).then((mids) => {
+            return {
+              history: mids.slice().reverse(),
+              count: mids.length,
+              isEnd: {
+                both: true,
+                bottom: true,
+                top: true
+              }
+            };
+          })
+        };
+      });
+    }
+  }
+
+  /**
+   * The list of the peer change is mounted: the zoom held back for it comes in, and so does at once one of a later
+   * render of the same change (the fresh page, while the change still waits for its dialog) - held back after this,
+   * nothing would bring it in, and the jump's highlights would wait for it for good
+   */
+  private startHeldLadder() {
+    this.ladderMountedIn = this.chat.setPeerPromise;
+    if(this.resolveLadderAnimation) {
+      this.resolveLadderAnimation();
+      this.resolveLadderAnimation = undefined;
+    }
+  }
+
+  private async animateAsLadder(additionalFullMid: FullMid, additionalFullMids: FullMid[], isAdditionalRender: boolean, backLimit: number, maxId: FullMid) {
+    /* const middleware = this.getMiddleware();
+    await this.ladderDeferred; */
+
+    const log = this.log.bindPrefix('ladder');
+    const {setPeerPromise} = this.chat;
+    if(setPeerPromise && setPeerPromise !== this.ladderMountedIn && !this.resolveLadderAnimation) {
+      log.warn('will be delayed');
+      // @ts-ignore
+      this.resolveLadderAnimation = this.animateAsLadder.bind(this, additionalFullMid, additionalFullMids, isAdditionalRender, backLimit, maxId);
+      return;
+    }
+
+    /* if(!middleware()) {
+      return;
+    } */
+
+    const appearance = this.ladderAppearance;
+    const fullMids = this.getRenderedHistory('desc');
+
+    if(!fullMids.length) {
+      log.warn('no bubbles');
+      appearance?.resolve();
+      return;
+    }
+
+    let sortedFullMids = fullMids.slice();
+
+    if(isAdditionalRender && additionalFullMids.length) {
+      sortedFullMids = sortedFullMids.filter((fullMid) => !additionalFullMids.includes(fullMid));
+    }
+
+    let targetMid: FullMid;
+    if(backLimit) {
+      targetMid = maxId || sortedFullMids[0]; // * on discussion enter
+    } else {
+      if(additionalFullMid) {
+        targetMid = additionalFullMid;
+      } else { // * if maxId === 0
+        targetMid = sortedFullMids[0];
+      }
+    }
+
+    const topIds = sortedFullMids.slice(sortedFullMids.findIndex((mid) => targetMid > mid));
+    const middleIds = isAdditionalRender ? [] : [targetMid];
+    const bottomIds = isAdditionalRender ? [] : sortedFullMids.slice(0, sortedFullMids.findIndex((mid) => targetMid >= mid)).reverse();
+
+    if(DEBUG) {
+      log('targeting mid:', targetMid, maxId, additionalFullMid, topIds, bottomIds);
+    }
+
+    const setBubbles: HTMLElement[] = [];
+
+    this.chatInner.classList.add('zoom-fading');
+    const delay = isAdditionalRender ? 10 : 40;
+    const offsetIndex = isAdditionalRender ? 0 : 1;
+    const animateAsLadder = (fullMids: string[], offsetIndex = 0) => {
+      const animationPromise = deferredPromise<void>();
+      let lastMsDelay = 0;
+      fullMids.forEach((fullMid, idx) => {
+        const bubble = this.getBubble(fullMid);
+        if(!bubble || this.skippedMids.has(fullMid)) {
+          log.warn('no bubble by mid:', fullMid);
+          return;
+        }
+
+        lastMsDelay = ((idx + offsetIndex) || 0.1) * delay;
+        // lastMsDelay = (idx + offsetIndex) * delay;
+        // lastMsDelay = (idx || 0.1) * 1000;
+
+        const contentWrapper = bubble.lastElementChild as HTMLElement;
+        if(!contentWrapper) {
+          log.warn('bubble not ready yet', fullMid, this.batchProcessor);
+          return;
+        }
+
+        const elementsToAnimate: HTMLElement[] = [contentWrapper];
+        const item = this.bubbleGroups.getItemByBubble(bubble);
+        if(item && item.group.avatar && item.group.lastItem === item) {
+          elementsToAnimate.push(item.group.avatar.node);
+        }
+
+        elementsToAnimate.forEach((element) => {
+          element.classList.add('zoom-fade', 'can-zoom-fade');
+          element.style.setProperty('transition-delay', lastMsDelay + 'ms', 'important');
+        });
+
+        if(idx === (fullMids.length - 1)) {
+          const onTransitionEnd = (e: TransitionEvent) => {
+            if(e.target !== contentWrapper) {
+              return;
+            }
+
+            animationPromise.resolve();
+            contentWrapper.removeEventListener('transitionend', onTransitionEnd);
+          };
+
+          contentWrapper.addEventListener('transitionend', onTransitionEnd);
+        }
+
+        setBubbles.push(...elementsToAnimate);
+      });
+
+      if(!fullMids.length) {
+        animationPromise.resolve();
+      }
+
+      return {lastMsDelay, animationPromise};
+    };
+
+    const topRes = animateAsLadder(topIds, offsetIndex);
+    const middleRes = animateAsLadder(middleIds);
+    const bottomRes = animateAsLadder(bottomIds, offsetIndex);
+    const promises = [topRes.animationPromise, middleRes.animationPromise, bottomRes.animationPromise];
+    const delays: number[] = [topRes.lastMsDelay, middleRes.lastMsDelay, bottomRes.lastMsDelay];
+
+    if(this.onAnimateLadder) {
+      await this.onAnimateLadder();
+    }
+
+    // * a scroll while they zoom moves them under the frame: the pieces of the gradient they hold are placed where the
+    // * frame is again, once a frame, read before written
+    let hold: VoidFunction;
+    const onScroll = throttleWith((measure: VoidFunction) => {
+      sequentialDom.measure(measure);
+      sequentialDom.mutate(() => hold?.());
+    }, () => hold = measureOutgoingMessageGradientHold(setBubbles));
+    const {container: scrollContainer} = this.scrollable;
+
+    fastRaf(() => {
+      // * the list is in place by now, even one that was laid out before it was mounted: the zoom takes the pieces of
+      // * the bubbles' gradient in
+      holdOutgoingMessageGradient(setBubbles);
+      if(setBubbles.length) scrollContainer.addEventListener('scroll', onScroll, {passive: true});
+      this.setStickyDateManually(); // ! maybe it's not efficient
+
+      setBubbles.forEach((element) => {
+        element.classList.remove('zoom-fade');
+      });
+    });
+
+    let promise: Promise<any>;
+    if(topIds.length || middleIds.length || bottomIds.length) {
+      promise = Promise.all(promises);
+
+      const TRANSITION_TIME = 300;
+      const timeout = Math.max(...delays) + TRANSITION_TIME;
+      dispatchHeavyAnimationEvent(promise, timeout)
+      .then(() => {
+        fastRaf(() => {
+          scrollContainer.removeEventListener('scroll', onScroll);
+          setBubbles.forEach((element) => {
+            element.style.transitionDelay = '';
+            element.classList.remove('can-zoom-fade');
+          });
+
+          this.chatInner.classList.remove('zoom-fading');
+          appearance?.resolve();
+        });
+
+        // ! в хроме, каким-то образом из-за zoom-fade класса начинает прыгать скролл при подгрузке сообщений вверх,
+        // ! т.е. скролл не ставится, так же, как в сафари при translateZ на блок выше scrollable
+        // if(!IS_SAFARI) {
+        //   this.needReflowScroll = true;
+        // }
+      });
+    } else {
+      appearance?.resolve();
+    }
+
+    return promise;
+  }
+
+  private async renderEmptyPlaceholder(
+    type: EmptyPlaceholderType,
+    bubble: HTMLElement,
+    message: any,
+    elements: (Node | string)[]
+  ) {
+    const BASE_CLASS = 'empty-bubble-placeholder';
+    bubble.classList.add(BASE_CLASS, BASE_CLASS + '-' + type);
+
+    let title: HTMLElement, topic: ForumTopic.forumTopic;
+    if(type === 'group') title = i18n('GroupEmptyTitle1');
+    else if(type === 'saved') title = i18n('ChatYourSelfTitle');
+    else if(type === 'noMessages' || type === 'greeting') title = i18n('NoMessages');
+    else if(type === 'noScheduledMessages') title = i18n('NoScheduledMessages');
+    else if(type === 'welcomeMessages') title = i18n('WelcomeMessages.EmptyTitle');
+    else if(type === 'restricted') {
+      title = document.createElement('span');
+      const reason = getRestrictionReason(await this.managers.appPeersManager.getPeerRestrictions(this.peerId))
+
+      if(reason) {
+        if(!reason.text && reason.reason === 'sensitive') {
+          title.replaceChildren(i18n('SensitiveChannel'));
+        } else {
+          title.innerText = reason.text;
+        }
+      } else {
+        title.replaceChildren(i18n(this.peerId.isUser() ? 'RestrictedUser' : 'RestrictedChat'));
+      }
+    }
+
+    if(title) {
+      title.classList.add('center', BASE_CLASS + '-title');
+      elements.push(title);
+    }
+
+    let listElements: HTMLElement[];
+    if(type === 'welcomeMessages') {
+      elements.push(i18n('WelcomeMessages.EmptyAbout'));
+    } else if(type === 'group') {
+      elements.push(i18n('GroupEmptyTitle2'));
+      listElements = [
+        i18n('GroupDescription1'),
+        i18n('GroupDescription2'),
+        i18n('GroupDescription3'),
+        i18n('GroupDescription4')
+      ];
+    } else if(type === 'saved') {
+      listElements = [
+        i18n('ChatYourSelfDescription1'),
+        i18n('ChatYourSelfDescription2'),
+        i18n('ChatYourSelfDescription3'),
+        i18n('ChatYourSelfDescription4')
+      ];
+    } else if(type === 'greeting') {
+      let {subtitle} = wrapBusinessIntroLines();
+
+      // findAndSplice(this.messagesQueue, q => q.bubble === bubble);
+
+      const stickerDiv = document.createElement('div');
+      stickerDiv.classList.add(BASE_CLASS + '-sticker');
+
+      const middleware = this.getMiddleware();
+
+      const promises = Promise.all([
+        this.managers.appStickersManager.getGreetingSticker(),
+        this.managers.appProfileManager.getProfile(message.peerId.toUserId())
+      ]);
+      await promises.then(async([doc, userFull]) => {
+        if(!middleware()) return;
+
+        const intro = userFull.business_intro;
+        if(intro) {
+          const lines = wrapBusinessIntroLines(intro);
+          elements[elements.indexOf(title)] = lines.title;
+          subtitle = lines.subtitle;
+
+          if(intro.sticker) {
+            doc = intro.sticker as MyDocument;
+          }
+
+          const bubbleContainer = bubble.querySelector('.bubble-content');
+          const content = bubbleContainer.cloneNode(false) as HTMLElement;
+          const service = bubbleContainer.querySelector('.service-msg').cloneNode(false) as HTMLElement;
+
+          service.append(i18n(
+            intro.title || intro.description ? 'ChatEmpty.BusinessIntro.How' : 'ChatEmpty.BusinessIntro.Sticker.How',
+            [
+              await wrapPeerTitle({peerId: message.peerId, onlyFirstName: true}),
+              anchorCallback(() => {
+                hotReloadGuard.showPremiumPopup();
+              })
+            ]
+          ));
+
+          content.classList.add('has-service-before');
+          content.append(service);
+          bubbleContainer.after(content);
+          bubble.classList.add('wider');
+        }
+
+        const loadPromises: Promise<any>[] = [];
+        await wrapSticker({
+          doc,
+          // doc: appDocsManager.getDoc("5431607541660389336"), // cubigator mockup
+          div: stickerDiv,
+          middleware,
+          lazyLoadQueue: this.lazyLoadQueue,
+          group: this.chat.animationGroup,
+          // play: !!message.pending || !multipleRender,
+          play: true,
+          loop: true,
+          withThumb: true,
+          loadPromises,
+          liteModeKey: 'stickers_chat'
+        });
+
+        attachClickEvent(stickerDiv, (e) => {
+          cancelEvent(e);
+          this.chat.input.emoticonsDropdown.onMediaClick({target: e.target}, undefined, undefined, true);
+        });
+
+        return Promise.all(loadPromises);
+      });
+
+      // this.renderMessagesQueue({
+      //   message,
+      //   bubble,
+      //   reverse: false,
+      //   promises: [loadPromise]
+      // });
+
+      elements.push(subtitle, stickerDiv);
+    } else if(type === 'premiumRequired') {
+      const stickerDiv = document.createElement('div');
+      stickerDiv.classList.add(BASE_CLASS + '-sticker');
+      stickerDiv.append(Icon('premium_restrict_filled'));
+
+      const subtitle = i18n('Chat.PremiumRequired', [await wrapPeerTitle({peerId: this.peerId, onlyFirstName: true})]);
+      subtitle.classList.add('center', BASE_CLASS + '-subtitle');
+
+      const button = Button('bubble-service-button', {noRipple: true, text: 'Chat.PremiumRequiredButton'});
+      attachClickEvent(button, () => {
+        hotReloadGuard.showPremiumPopup();
+      });
+
+      elements.push(stickerDiv, subtitle, button);
+    } else if(type === 'paidMessages') {
+      const stickerDiv = document.createElement('div');
+      stickerDiv.classList.add(BASE_CLASS + '-sticker');
+      stickerDiv.append(Icon('premium_restrict_filled'));
+
+      const starsAmount = await this.managers.appPeersManager.getStarsAmount(this.peerId); // should be cached probably here
+
+      const starsElement = document.createElement('span');
+      starsElement.classList.add(BASE_CLASS + '-stars');
+      starsElement.append(
+        Icon('star', BASE_CLASS + '-star-icon'),
+        numberThousandSplitterForStars(starsAmount)
+      );
+
+      const subtitle = i18n('PaidMessages.NewChatDescription', [
+        await wrapPeerTitle({peerId: this.peerId, onlyFirstName: true}),
+        starsElement
+      ]);
+      subtitle.classList.add('center', BASE_CLASS + '-subtitle');
+
+      const button = Button('bubble-service-button overflow-hidden', {noRipple: true, text: 'BuyStars'});
+      button.append(Sparkles({isDiv: true, mode: 'button'}));
+      attachClickEvent(button, () => {
+        hotReloadGuard.showStarsPopup({spendPurposePeerId: this.peerId});
+      });
+
+      elements.push(stickerDiv, subtitle, button);
+    } else if(type === 'directChannelMessages') {
+      const stickerDiv = document.createElement('div');
+      stickerDiv.classList.add(BASE_CLASS + '-sticker');
+      stickerDiv.append(Icon('round_chats_filled'));
+
+      const starsAmount = await this.managers.appPeersManager.getStarsAmount(this.peerId);
+
+      let starsElement: HTMLElement;
+
+      if(starsAmount) {
+        starsElement = document.createElement('span');
+        starsElement.classList.add(BASE_CLASS + '-stars');
+        starsElement.append(
+          Icon('star', BASE_CLASS + '-star-icon'),
+          numberThousandSplitterForStars(starsAmount)
+        );
+      }
+
+      const subtitle = i18n(starsAmount ? 'ChannelDirectMessages.WelcomePaid' : 'ChannelDirectMessages.Welcome', [await wrapPeerTitle({peerId: this.peerId}), starsElement]);
+      subtitle.classList.add('center', BASE_CLASS + '-subtitle');
+
+      let button: HTMLElement;
+      if(starsAmount) {
+        button = Button('bubble-service-button overflow-hidden', {noRipple: true, text: 'BuyStars'});
+        button.append(Sparkles({isDiv: true, mode: 'button'}));
+        attachClickEvent(button, () => {
+          hotReloadGuard.showStarsPopup({spendPurposePeerId: this.peerId});
+        });
+      }
+
+      elements.push(...[stickerDiv, subtitle, button].filter(Boolean));
+    } else if(type === 'topic' && (topic = await this.managers.dialogsStorage.getForumTopic(this.peerId, this.chat.threadId))) {
+      const stickerDiv = document.createElement('div');
+      stickerDiv.classList.add(BASE_CLASS + '-sticker');
+
+      stickerDiv.append(
+        await wrapTopicIcon({topic, middleware: this.getMiddleware(), customEmojiSize: TOPIC_ICON_SIZE})
+      );
+
+      this.placeholderTopicIconContainer = stickerDiv;
+      this.getMiddleware().onDestroy(() => {
+        this.placeholderTopicIconContainer = undefined;
+      });
+
+      const title = i18n('TopicEmptyTitle');
+      title.classList.add('center', BASE_CLASS + '-topic-title');
+
+      const subtitle = i18n('TopicEmptyDescription');
+      subtitle.classList.add('center', BASE_CLASS + '-topic-subtitle');
+
+      elements.push(stickerDiv, title, subtitle);
+    } else if(type === 'logs') {
+      const stickerDiv = document.createElement('div');
+      stickerDiv.classList.add(BASE_CLASS + '-sticker');
+      stickerDiv.append(Icon('clipboard'));
+
+      const hasFilters = this.inChatQuery || this.committedLogsFilters;
+
+      const title = i18n(!hasFilters ? 'AdminRecentActionsPlaceholder.Title' : 'AdminRecentActionsPlaceholder.WithFilterTitle');
+      title.classList.add('center', BASE_CLASS + '-title');
+
+      const subtitle = i18n(!hasFilters ? 'AdminRecentActionsPlaceholder.Description' : 'AdminRecentActionsPlaceholder.WithFilterDescription');
+      subtitle.classList.add('center', BASE_CLASS + '-logs-subtitle');
+
+      elements.push(stickerDiv, title, subtitle);
+    }
+
+    if(listElements) {
+      elements.push(
+        ...listElements.map((elem) => {
+          const span = document.createElement('span');
+          span.classList.add(BASE_CLASS + '-list-item');
+          span.append(elem);
+          return span;
+        })
+      );
+
+      if(type === 'group') {
+        listElements.forEach((elem) => {
+          const i = Icon('check', BASE_CLASS + '-list-check');
+          elem.prepend(i);
+        });
+      } else if(type === 'saved') {
+        listElements.forEach((elem) => {
+          const i = document.createElement('span');
+          i.classList.add(BASE_CLASS + '-list-bullet');
+          i.innerText = '•';
+          elem.prepend(i);
+        });
+      }
+    }
+
+    if(elements.length > 1) {
+      bubble.classList.add('has-service-description');
+    }
+
+    elements.forEach((element: any) => element.classList.add(BASE_CLASS + '-line'));
+  }
+
+  private async processLocalMessageRender(
+    message: Message.message | Message.messageService,
+    animate?: boolean
+  ) {
+    const isSponsored = !!(message as Message.message).pFlags.sponsored;
+    // * an ad rendered as a new message ends here, and its bubble is registered right after with no await between:
+    // * one turned off while it waited (`dropSponsoredMessages`) stops here, one turned off later is deleted. An ad
+    // * between posts is taken from `sponsoredAfterMids`, which the drop empties, and is registered as it is taken
+    if(isSponsored && !this.liveSponsoredMessages.has(message as MyMessage)) {
+      return;
+    }
+
+    const onClearedBefore = () => {
+      this.log.warn('local message was cleared before render', message);
+    };
+
+    const p: Parameters<ChatBubbles['safeRenderMessage']>[0]['processResult'] = async(result) => {
+      const {bubble} = await result;
+      if(!bubble) {
+        onClearedBefore();
+        return result;
+      }
+
+      const fullMid = makeFullMid(message);
+
+      const middleware = bubble.middlewareHelper.get();
+      const m = middlewarePromise(middleware);
+
+      (bubble as any).message = message;
+
+      bubble.classList.add('is-group-last', 'is-group-first');
+
+      const updatePosition = () => {
+        if(this.updatePlaceholderPosition === updatePosition) {
+          this.updatePlaceholderPosition = undefined;
+        }
+
+        if(!middleware() || this.getBubble(fullMid) !== bubble) {
+          onClearedBefore();
+          return;
+        }
+
+        appendTo[method](appendWhat);
+      };
+
+      if(!isSponsored) {
+        if(!this.shouldShowBotforumNewTopic()) bubble.classList.add('bubble-first');
+        bubble.classList.remove('can-have-tail', 'is-in');
+      }
+
+      if(this.shouldShowBotforumNewTopic()) bubble.classList.add('bubble-last', 'botforum-new-topic-bubble');
+
+      const elements: (Node | string)[] = [];
+      const isBot = this.chat.isBot;
+      const appendWhat = bubble;
+      let renderPromise: Promise<any>,
+        appendTo = this.container,
+        method: 'append' | 'prepend' | 'replaceChildren' = 'append',
+        elementsMethod: 'prepend' | 'replaceChildren' = 'prepend';
+      if(this.chat.isRestricted) {
+        renderPromise = this.renderEmptyPlaceholder('restricted', bubble, message, elements);
+      } else if(isSponsored) {
+        bubble.classList.add('avoid-selection');
+
+        appendTo = this.chatInner;
+        method = 'append';
+        animate = false;
+      } else if(this.shouldShowBotforumNewTopic()) {
+        animate = false;
+        appendTo = this.chatInner;
+        method = 'append';
+        elementsMethod = 'replaceChildren';
+
+        elements.push(new BotforumNewTopic);
+      } else if(isBot && message._ === 'message') {
+        if(isMessageForVerificationBot(message)) {
+          const langPackString = I18n.strings.get('VerificationCodesBotDescription');
+          assumeType<LangPackString.langPackString>(langPackString);
+
+          const messageText = langPackString.value;
+          elements.push(messageText);
+          elementsMethod = 'replaceChildren';
+
+          bubble.classList.add('placeholder-when-no-messages');
+        } else {
+          const b = document.createElement('b');
+          b.append(i18n('BotInfoTitle'));
+          elements.push(b, '\n\n');
+        }
+
+        method = 'prepend';
+        appendTo = this.chatInner;
+      } else if(this.chat.isMonoforum && !this.chat.canManageDirectMessages) {
+        renderPromise = this.renderEmptyPlaceholder('directChannelMessages', bubble, message, elements);
+      } else if(this.chat.type === ChatType.Welcome) {
+        // before the group's own intro: the section is about its welcome messages, not the group
+        renderPromise = this.renderEmptyPlaceholder('welcomeMessages', bubble, message, elements);
+      } else if(this.chat.isAnyGroup && (this.chat.peer as MTChat.chat).pFlags.creator) {
+        renderPromise = this.renderEmptyPlaceholder('group', bubble, message, elements);
+      } else if(this.chat.type === ChatType.Scheduled) {
+        renderPromise = this.renderEmptyPlaceholder('noScheduledMessages', bubble, message, elements);
+      } else if(rootScope.myId === this.peerId) {
+        renderPromise = this.renderEmptyPlaceholder('saved', bubble, message, elements);
+      } else if(this.peerId.isUser() && !isBot && await m(this.chat.canSend()) && this.chat.type === ChatType.Chat) {
+        const requirement = await this.managers.appUsersManager.getRequirementToContact(this.peerId.toUserId());
+        if(requirement._ === 'requirementToContactPremium') {
+          renderPromise = this.renderEmptyPlaceholder('premiumRequired', bubble, message, elements);
+        } else if(
+          requirement._ === 'requirementToContactPaidMessages' &&
+          !(await this.managers.appProfileManager.hasBussinesIntro(this.peerId.toUserId()) && this.chat.starsAmount <= +this.chat.stars())
+        ) {
+          renderPromise = this.renderEmptyPlaceholder('paidMessages', bubble, message, elements);
+        } else {
+          renderPromise = this.renderEmptyPlaceholder('greeting', bubble, message, elements);
+        }
+      } else if((this.chat.isBotforum || this.chat.isForum) && this.chat.threadId) {
+        renderPromise = this.renderEmptyPlaceholder('topic', bubble, message, elements);
+      } else if(this.chat.type === ChatType.Logs) {
+        renderPromise = this.renderEmptyPlaceholder('logs', bubble, message, elements);
+      } else {
+        renderPromise = this.renderEmptyPlaceholder('noMessages', bubble, message, elements);
+      }
+
+      if(renderPromise) {
+        await renderPromise;
+      }
+
+      if(elements.length) {
+        const messageDiv = bubble.querySelector('.message, .service-msg');
+        messageDiv[elementsMethod](...elements);
+      }
+
+      const isWaitingForAnimation = !!this.messagesQueueOnRenderAdditional;
+      const noTransition = this.setPeerCached && !isWaitingForAnimation;
+      if(noTransition) {
+        const setOn = bubble.firstElementChild;
+        setOn.classList.add('no-transition');
+
+        if(this.chat.setPeerPromise) {
+          this.chat.setPeerPromise.catch(noop).finally(() => {
+            setOn.classList.remove('no-transition');
+          });
+        }
+      }
+
+      // * the ladder's zoom runs with full animations only, and is waited for
+      if(animate === undefined && !noTransition) {
+        animate = liteMode.isAvailable('motion');
+      }
+
+      if(isWaitingForAnimation || animate) {
+        this.updatePlaceholderPosition = updatePosition;
+
+        this.onAnimateLadder = () => {
+          // appendTo[method](bubble);
+          this.onAnimateLadder = undefined;
+
+          // need raf here because animation won't fire if this message is single
+          if(!this.messagesQueuePromise) {
+            return fastRafPromise();
+          }
+        };
+      } else if(this.chat.setPeerPromise) {
+        this.attachPlaceholderOnRender = () => {
+          this.attachPlaceholderOnRender = undefined;
+          updatePosition();
+          // appendTo[method](bubble);
+        };
+      } else {
+        this.updatePlaceholderPosition = updatePosition;
+        // appendTo[method](bubble);
+      }
+
+      if(!isWaitingForAnimation && animate) {
+        await m(getHeavyAnimationPromise());
+        const additionalFullMids = this.getRenderedHistory('asc');
+        indexOfAndSplice(additionalFullMids, fullMid);
+        this.animateAsLadder(fullMid, additionalFullMids, false, 0, EMPTY_FULL_MID);
+      }
+
+      bubble.middlewareHelper.onDestroy(() => {
+        if(this.emptyPlaceholderBubble === bubble) {
+          this.emptyPlaceholderBubble = undefined;
+        }
+      });
+
+      this.emptyPlaceholderBubble = bubble;
+
+      return result;
+    };
+
+    return this.safeRenderMessage({
+      message,
+      reverse: !isSponsored,
+      updatePosition: false,
+      processResult: p,
+      canAnimateLadder: true
+    });
+  }
+
+  private makeViewButton<T extends Parameters<typeof Button>[1]>(options: T) {
+    const button = Button('btn-primary btn-primary-transparent bubble-view-button', options);
+    const text = button.querySelector('.i18n');
+    if(text) {
+      text.classList.add('bubble-view-button-text');
+    }
+    return button;
+  }
+
+  private generateLocalMessageId(addOffset = 0) {
+    // const INCREMENT = 0x10;
+    const offset = (this.chat.type === ChatType.Scheduled ? -1 : 0) + addOffset;
+    // offset = generateMessageId(offset);
+    // id: -Math.abs(+this.peerId * INCREMENT + offset),
+    const id = -Math.abs(offset);
+    // const mid = -Math.abs(generateMessageId(id));
+    const mid = id;
+    return {id, mid};
+  }
+
+  private async generateLocalFirstMessage<T extends boolean>(
+    service?: T,
+    fill?: (message: GenerateLocalMessageType<T>) => void,
+    addOffset = 0
+  ): Promise<GenerateLocalMessageType<T>> {
+    const {id, mid} = this.generateLocalMessageId(addOffset);
+    let message: Omit<Message.message | Message.messageService, 'message'> & {message?: string} = {
+      _: service ? 'messageService' : 'message',
+      date: 0,
+      id,
+      mid,
+      peer_id: await this.managers.appPeersManager.getOutputPeer(this.peerId),
+      pFlags: {
+        local: true
+      }
+    };
+
+    if(!service) {
+      message.message = '';
+    }/*  else {
+      (message as Message.messageService).action = {} as any;
+    } */
+
+    assumeType<GenerateLocalMessageType<T>>(message);
+
+    fill?.(message);
+
+    const savedMessages = await this.managers.appMessagesManager.saveMessages([message], {storage: new Map() as any});
+    message = savedMessages[0];
+    message.mid = mid;
+    return message as any;
+  }
+
+  public getViewportSlice(useExtra?: boolean) {
+    // this.log.trace('viewport slice');
+    return getViewportSlice({
+      overflowElement: this.scrollable.container,
+      selector: '.bubbles-date-group .bubble:not(.is-date)',
+      extraSize: useExtra ? Math.max(700, windowSize.height) * 2 : undefined,
+      extraMinLength: useExtra ? 5 : undefined
+    });
+  }
+
+  public deleteViewportSlice(slice: ReturnType<ChatBubbles['getViewportSlice']>, ignoreScrollSaving?: boolean) {
+    if(DO_NOT_SLICE_VIEWPORT_ON_RENDER) {
+      return;
+    }
+
+    const {invisibleTop, invisibleBottom} = slice;
+    const invisible = invisibleTop.concat(invisibleBottom);
+    if(!invisible.length) {
+      return;
+    }
+
+    const log = this.log.bindPrefix('VIEWPORT-SLICE');
+
+    if(invisibleTop.length) {
+      this.setLoaded('top', false);
+      this.getHistoryTopPromise = undefined;
+      log('will slice top', invisible);
+    }
+
+    if(invisibleBottom.length) {
+      this.setLoaded('bottom', false);
+      this.getHistoryBottomPromise = undefined;
+      log('will slice bottom', invisible);
+    }
+
+    const fullMids = invisible.map(({element}) => getBubbleFullMid(element));
+    if(fullMids.some((fullMid) => {
+      const {peerId, mid} = splitFullMid(fullMid);
+      return isEphemeralMessage(this.chat.getMessageByPeer(peerId, mid));
+    })) {
+      this.ephemeralHistoryLoaded = false;
+      ++this.ephemeralHistoryGeneration;
+    }
+
+    let scrollSaver: ScrollSaver;
+    if(/* !!invisibleTop.length !== !!invisibleBottom.length &&  */!ignoreScrollSaving) {
+      scrollSaver = this.createScrollSaver(!!invisibleTop.length);
+      scrollSaver.save();
+    }
+
+    log('slicing mids', fullMids);
+    this.deleteMessagesByIds(fullMids, false, true);
+
+    if(scrollSaver) {
+      scrollSaver.restore();
+    } else if(invisibleTop.length) {
+      this.scrollable.lastScrollPosition = this.scrollable.scrollPosition;
+    }
+  }
+
+  public sliceViewport(ignoreHeavyAnimation?: boolean) {
+    // Safari cannot reset the scroll.
+    if(IS_SAFARI || (this.isHeavyAnimationInProgress && !ignoreHeavyAnimation) || DO_NOT_SLICE_VIEWPORT) {
+      return;
+    }
+
+    // a jump in flight shows the old list until the new one is built: slicing that old one forgets the
+    // new one's history load (`getHistoryTopPromise`), whose render then gives up — the jump went
+    // nowhere, as a search result clicked a few seconds after a scroll did
+    if(this.chat.setPeerPromise) {
+      return;
+    }
+
+    // const scrollSaver = new ScrollSaver(this.scrollable, true);
+    // scrollSaver.save();
+    const slice = this.getViewportSlice(true);
+    // if(IS_SAFARI) slice.invisibleTop = [];
+    this.deleteViewportSlice(slice);
+    // scrollSaver.restore();
+  }
+
+  private async setLoaded(side: SliceSides, value: boolean, checkPlaceholders = true) {
+    const willChange = this.scrollable.loadedAll[side] !== value;
+    if(!willChange) {
+      return;
+    }
+
+    const log = this.log.bindPrefix('setLoaded');
+    log('change', side, value);
+
+    this.scrollable.loadedAll[side] = value;
+    if(side === 'bottom') {
+      this.updateGoDownVisibility();
+    }
+    this.scrollable.onScroll(); // ! WARNING
+    // return;
+
+    if(value) {
+      void this.loadEphemeralHistory();
+    }
+
+    if(this.scrollable.loadedAll.bottom && this.scrollable.loadedAll.top) {
+      setPeerLanguageLoaded(this.peerId);
+    }
+
+    if(!checkPlaceholders) {
+      return;
+    }
+
+    if(this.pendingEphemeralHistory) {
+      return;
+    }
+
+    if(!this.chat.isRestricted) {
+      // * an ad that came before the bottom did, as a new message (`loadSponsoredMessages`)
+      if(side === 'bottom' && this.sponsoredMessagesAvailable.length > 0) {
+        Promise.all([this.getHistoryTopPromise, this.messagesQueuePromise]).then(() => {
+          const message = this.sponsoredMessagesAvailable.shift();
+          message && this.renderNewMessage(message);
+        })
+      }
+
+      if(side === 'bottom' && value && this.shouldShowBotforumNewTopic()) {
+        return this.renderBotforumPlaceholder();
+      }
+
+      if(side === 'top' && value && this.chat.isBot && !this.chat.threadId) {
+        return this.renderBotPlaceholder();
+      }
+
+      if(side === 'top' && value && shouldShowUnknownUserPlaceholder(this.peerSettings)) {
+        return this.renderUnknownUserPlaceholder();
+      }
+    }
+
+    return this.checkIfEmptyPlaceholderNeeded();
+  }
+
+  private sponsoredMessagesMids: FullMid[] = [];
+  private sponsoredMessages: MyMessage[] = [];
+  private sponsoredMessagesAvailable: MyMessage[] = [];
+  private sponsoredMessageEvery = 0;
+  private messagesSinceLastSponsored = 0;
+  private sponsoredAfterMids = new Map<number, MyMessage>();
+  private sponsoredMessagesLoaded = false;
+  /** The ads of the chat's load, forgotten all at once by `dropSponsoredMessages`: a render of one checks it is here */
+  private liveSponsoredMessages = new WeakSet<MyMessage>();
+
+  /**
+   * Do Not Hide Ads turned off: the ads shown and the ones waiting for their place go at once. Turned
+   * back on, the chat's next load asks for them again, as Android's `addSponsoredMessages` checks the
+   * choice on each.
+   */
+  private onSponsoredMessagesToggle(enabled: boolean) {
+    this.dropSponsoredMessages();
+    this.sponsoredMessagesLoaded = !enabled;
+  }
+
+  /** Takes the chat's ads away: the shown ones, the queued ones and a load on its way. */
+  private dropSponsoredMessages() {
+    const fullMids = this.sponsoredMessagesMids;
+    // * a load on its way checks this promise (`loadSponsoredMessages`)
+    this.getSponsoredMessagePromise = undefined;
+    this.sponsoredMessagesMids = [];
+    this.sponsoredMessages = [];
+    this.sponsoredMessagesAvailable = [];
+    this.sponsoredMessageEvery = 0;
+    this.sponsoredAfterMids.clear();
+    // * an ad whose render still waits has no bubble to delete yet: it finds itself forgotten before it has one
+    this.liveSponsoredMessages = new WeakSet();
+    // * an id twice would destroy its bubble a second time, after the first took it out of `bubbles`
+    this.deleteMessagesByIds(filterUnique(fullMids));
+  }
+
+  private async generateSponsoredMessage(
+    sponsoredMessage: SponsoredMessage.sponsoredMessage,
+    idx: number,
+    middleware: () => boolean
+  ) {
+    const offset = SPONSORED_MESSAGE_ID_OFFSET + idx
+
+    const msg = await this.generateLocalFirstMessage(false, (message) => {
+      message.message = '';
+      message.from_id = {_: 'peerUser', user_id: NULL_PEER_ID};
+      message.pFlags.sponsored = true;
+      message.pFlags.invert_media = true;
+      message.sponsoredMessage = sponsoredMessage;
+
+      const sponsoredMedia = sponsoredMessage.media;
+
+      const localWebPage: WebPage.webPage = {
+        _: 'webPage',
+        id: message.mid,
+        pFlags: {
+          has_large_media: !!sponsoredMedia || undefined
+        },
+        url: '',
+        display_url: '',
+        hash: 0,
+        description: sponsoredMessage.message,
+        entities: sponsoredMessage.entities,
+        document: (sponsoredMedia as MessageMedia.messageMediaDocument)?.document,
+        photo: (sponsoredMedia as MessageMedia.messageMediaPhoto)?.photo
+      };
+
+      message.media = {
+        _: 'messageMediaWebPage',
+        pFlags: {
+          force_large_media: !!sponsoredMedia || undefined
+        },
+        webpage: localWebPage
+      };
+    }, offset)
+
+    // * every load makes the same ids: one dropped while it waited must not register them for the next
+    if(middleware()) {
+      this.sponsoredMessagesMids.push(makeFullMid(this.peerId, msg.mid));
+      // * every ad made, the ones put in their places too: their views are reported by them (`onViewed`)
+      this.sponsoredMessages.push(msg);
+      this.liveSponsoredMessages.add(msg);
+    }
+
+    return msg;
+  }
+  private async loadSponsoredMessages() {
+    if(this.sponsoredMessagesLoaded) return;
+
+    const log = this.log.bindPrefix('sponsored-' + (Math.random() * 1000 | 0));
+
+    const middleware = this.getMiddleware(() => this.getSponsoredMessagePromise === promise);
+
+    const promise = this.getSponsoredMessagePromise = this.managers.appMessagesManager.getSponsoredMessage(this.peerId)
+    .then((sponsoredMessages) => {
+      if(!middleware() || sponsoredMessages._ === 'messages.sponsoredMessagesEmpty') {
+        return;
+      }
+      log('sponsored messages:', sponsoredMessages);
+
+      // Ads are appended without moving the reader away from the last post.
+      if(sponsoredMessages.posts_between) {
+        this.sponsoredMessageEvery = sponsoredMessages.posts_between;
+        // * the load lasts until the ads are made, so that one dropped meanwhile (`dropSponsoredMessages`) stays dropped
+        return Promise.all(sponsoredMessages.messages.map((it, idx) => this.generateSponsoredMessage(it, idx, middleware))).then((msgs) => {
+          if(!middleware()) return;
+          this.messagesSinceLastSponsored = 0;
+          this.sponsoredMessagesAvailable = msgs
+          if(this.scrollable.loadedAll.bottom && msgs.length) {
+            this.renderNewMessage(msgs.shift());
+          }
+        });
+      }
+
+      const sponsoredMessage = sponsoredMessages.messages[0];
+      if(!sponsoredMessage) {
+        log('no message');
+        return;
+      }
+
+      const messagePromise = this.generateSponsoredMessage(sponsoredMessage, 0, middleware);
+
+      return Promise.all([
+        messagePromise,
+        this.getHistoryTopPromise, // wait for top load and execute rendering after or with it
+        this.messagesQueuePromise
+      ]).then(([message]) => {
+        if(!middleware()) return;
+        if(this.scrollable.loadedAll.bottom) {
+          this.renderNewMessage(message);
+        } else {
+          this.sponsoredMessagesAvailable = [message]
+        }
+      })
+    }).finally(() => {
+      if(this.getSponsoredMessagePromise === promise) {
+        this.getSponsoredMessagePromise = undefined;
+        this.sponsoredMessagesLoaded = true;
+      }
+    });
+  }
+
+  private async renderBotPlaceholder() {
+    const _log = this.log.bindPrefix('bot placeholder');
+
+    const middleware = this.getMiddleware();
+    const result = await this.managers.acknowledged.appProfileManager.getProfile(this.peerId.toUserId());
+    _log('getting profile, cached:', result.cached);
+    const processPromise = result.result.then(async(userFull) => {
+      if(!middleware()) {
+        return;
+      }
+
+      if(!userFull.bot_info?.description) {
+        _log.warn('no description');
+        return this.checkIfEmptyPlaceholderNeeded();
+      }
+
+      const message = await this.generateLocalFirstMessage(false, (message) => {
+        const botInfo = userFull.bot_info;
+        message.message = botInfo.description;
+        if(botInfo.description_document) message.media = {_: 'messageMediaDocument', document: botInfo.description_document, pFlags: {}};
+        if(botInfo.description_photo) message.media = {_: 'messageMediaPhoto', photo: botInfo.description_photo, pFlags: {}};
+      });
+
+      if(!middleware()) {
+        return;
+      }
+
+      _log('rendering');
+      const renderPromise = this.processLocalMessageRender(message, !result.cached).then(() => {
+        _log('done');
+      });
+
+      return {renderPromise};
+    });
+
+    if(!result.cached) {
+      return;
+    }
+
+    return processPromise;
+  }
+
+  private async renderBotforumPlaceholder() {
+    const middleware = this.getMiddleware();
+
+    const message = await this.generateLocalFirstMessage(false, (message) => {
+      message.message = '-'; // will get replaced anyway
+      message.date = tsNow(true);
+    });
+
+    if(!middleware()) {
+      return;
+    }
+
+    return {
+      renderPromise: this.processLocalMessageRender(message, false)
+    }
+  }
+
+  private async renderUnknownUserPlaceholder(profile?: UserFull) {
+    const middleware = this.getMiddleware();
+    const userId = this.peerId.toUserId();
+
+    const [
+      user,
+      userFull
+    ] = await Promise.all([
+      this.managers.appUsersManager.getUser(userId),
+      profile || this.managers.appProfileManager.getCachedFullUser(userId)
+    ])
+    if(!middleware()) return
+
+    // * the first screen does not wait for the network: without a profile at hand the bubble goes up when it comes -
+    // * as it does when the one at hand is from before the sender got a verification, which it has no words for
+    const isOutdated = !profile && !!userFull && !!user.bot_verification_icon && !userFull.bot_verification;
+    if(!userFull || isOutdated) {
+      this.managers.appProfileManager.getProfile(userId, isOutdated).then((userFull) => {
+        if(middleware()) return this.renderUnknownUserPlaceholder(userFull);
+      }).catch(noop);
+      return;
+    }
+
+    const message = await this.generateLocalFirstMessage(true);
+
+    return this.safeRenderMessage({
+      message,
+      reverse: true,
+      updatePosition: false,
+      processResult: async(result) => {
+        const {bubble} = await result;
+        if(!middleware()) return result;
+
+        bubble.classList.add('unknown-user-bubble');
+
+        const content = bubble.querySelector('.bubble-content');
+        content.replaceChildren()
+
+        const cleanup = render(() => UnknownUserBubble({
+          peerId: this.peerId,
+          user,
+          userFull,
+          peerSettings: this.peerSettings
+        }), content);
+        middleware.onDestroy(cleanup);
+
+        this.chatInner.prepend(bubble);
+        this.emptyPlaceholderBubble = bubble;
+        return result;
+      },
+      canAnimateLadder: true
+    });
+  }
+
+  // * a history of nothing but lines the chat leaves out (a cleared history) is empty to look at
+  private isHistoryNeverDrawn() {
+    const {history} = this.chat.getHistoryStorage();
+    return !!history.length && history.slice.every((mid) => {
+      const message = this.chat.getMessage(mid);
+      return !!message && isNeverDrawn(message);
+    });
+  }
+
+  public async checkIfEmptyPlaceholderNeeded() {
+    if(this.scrollable.loadedAll.top &&
+      this.scrollable.loadedAll.bottom &&
+      !this.pendingEphemeralHistory &&
+      !this.hasRenderedEphemeralMessages() &&
+      this.emptyPlaceholderBubble === undefined &&
+      !shouldShowUnknownUserPlaceholder(this.peerSettings) &&
+      (!this.chat.isBotforum || this.chat.canManageBotforumTopics) &&
+      (
+        this.chat.isRestricted ||
+        this.chat.type === ChatType.Logs ||
+        (
+          Object.keys(this.bubbles).length &&
+          !this.getRenderedLength()
+        ) ||
+        ((this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Welcome) && !this.getRenderedLength()) ||
+        !this.chat.getHistoryStorage().count ||
+        (!this.getRenderedLength() && this.isHistoryNeverDrawn())
+      )
+    ) {
+      this.log('inject empty peer placeholder');
+
+      const message = await this.generateLocalFirstMessage(true);
+      return {renderPromise: this.processLocalMessageRender(message)};
+    }
+  }
+
+  public getHistory1(maxId?: FullMid, reverse?: boolean, isBackLimit?: boolean, additionalFullMid?: FullMid, justLoad?: boolean, firstScreen?: FirstScreen, onCachedHistoryReady?: () => void, outOfSight?: boolean) {
+    const middleware = this.getMiddleware(justLoad ? undefined : () => {
+      return (reverse ? this.getHistoryTopPromise : this.getHistoryBottomPromise) === waitPromise;
+    });
+
+    const result = this.getHistory(maxId, reverse, isBackLimit, additionalFullMid, justLoad, middleware, firstScreen, onCachedHistoryReady, outOfSight);
+    const waitPromise = result.then((res) => res && (res.waitPromise || res.promise));
+
+    // * the load is over, and the next one of this end may go: not when the next one has taken over, nor in a chat left
+    const release = () => {
+      if(!middleware()) {
+        return false;
+      }
+
+      (reverse ? this.getHistoryTopPromise = undefined : this.getHistoryBottomPromise = undefined);
+      return true;
+    };
+
+    (reverse ? this.getHistoryTopPromise = waitPromise : this.getHistoryBottomPromise = waitPromise);
+    waitPromise.then(() => {
+      if(!release()) {
+        return;
+      }
+
+      if(!justLoad) {
+        // preload more
+        // if(!isFirstMessageRender) {
+        if(this.chat.type === ChatType.Chat/*  || this.chat.type === 'discussion' */) {
+          /* const storage = this.appMessagesManager.getHistoryStorage(peerId, this.chat.threadId);
+            const isMaxIdInHistory = storage.history.indexOf(maxId) !== -1;
+            if(isMaxIdInHistory || true) { // * otherwise it is a search or jump */
+          setTimeout(() => {
+            if(reverse) {
+              this.loadMoreHistory(true, true);
+            } else {
+              this.loadMoreHistory(false, true);
+            }
+          }, 0);
+          // }
+        }
+        // }
+
+        // this.scrollable.onScroll();
+      }
+    }, () => {
+      // * a load taken over by the next one ends in PEER_CHANGED_ERROR, which its owner handles. One that failed is
+      // * over as well: the next scroll to this end asks again, rather than wait for it till the chat is opened anew
+      release();
+    });
+
+    return result;
+  }
+
+  // private async getDiscussionMessages() {
+  //   const mids = await this.chat.getMidsByMid(this.chat.threadId);
+  //   return Promise.all(mids.map((mid) => this.chat.getMessage(mid)));
+  // }
+
+  /**
+   * Load and render history
+   * @param maxId max message id
+   * @param reverse 'true' means up
+   * @param isBackLimit is search
+   * @param additionalFullMid for the last message
+   * @param justLoad do not render
+   * @param firstScreen where an opening chat opens: only what surely fills its screen there is rendered first
+   * @param outOfSight the history goes in above or below what the screen shows (loaded by scrolling)
+   */
+  public async getHistory(
+    maxId: FullMid = EMPTY_FULL_MID,
+    reverse = false,
+    isBackLimit = false,
+    additionalFullMid?: FullMid,
+    justLoad = false,
+    middleware?: () => boolean,
+    firstScreen?: FirstScreen,
+    onCachedHistoryReady?: () => void,
+    outOfSight?: boolean
+  ): Promise<{cached: boolean, promise: Promise<void>, waitPromise: Promise<any>}> {
+    const peerId = this.peerId;
+
+    const isBroadcast = this.chat.isBroadcast;
+    // console.time('appImManager call getHistory');
+    const pageCount = Math.min(40, windowSize.height / 40/*  * 1.25 */ | 0);
+    // const loadCount = Object.keys(this.bubbles).length > 0 ? 50 : pageCount;
+    const realLoadCount = isBroadcast ? 20 : (this.getRenderedHistory(undefined, true).length > 0 ? Math.max(35, pageCount) : pageCount);
+    // const realLoadCount = pageCount;//const realLoadCount = 50;
+    let loadCount = realLoadCount;
+
+    /* if(TEST_SCROLL) {
+      //loadCount = 1;
+      if(Object.keys(this.bubbles).length > 0)
+      return {cached: false, promise: Promise.resolve(true)};
+    } */
+    // if(TEST_SCROLL !== undefined) {
+    //   if(TEST_SCROLL) {
+    //     if(Object.keys(this.bubbles).length > 0) {
+    //       --TEST_SCROLL;
+    //     }
+    //   } else {
+    //     return {cached: false, promise: Promise.resolve(), waitPromise: Promise.resolve()};
+    //   }
+    // }
+
+    // //console.time('render history total');
+
+    let backLimit = 0;
+    if(isBackLimit) {
+      backLimit = loadCount;
+
+      if(!reverse) { // if not jump
+        loadCount = 0;
+        // maxId = this.appMessagesManager.incrementMessageId(maxId, 1);
+      }
+    }
+
+    let additionalFullMids: FullMid[];
+    if(additionalFullMid && !isBackLimit) {
+      if(this.chat.type === ChatType.Pinned) {
+        additionalFullMids = [additionalFullMid];
+      } else {
+        const historyStorage = this.chat.getHistoryStorage();
+        const slicedArray = historyStorage.history;
+        const slice = slicedArray.slice;
+        if(slice.isEnd(SliceEnd.Bottom) && !slice.isEnd(SliceEnd.Both)) {
+          const {mid, peerId} = splitFullMid(additionalFullMid);
+          const sliced = slicedArray.sliceMe(mid, 0, loadCount);
+          if(sliced) {
+            additionalFullMids = [additionalFullMid, ...sliced.slice.map((mid) => makeFullMid(peerId, mid))];
+          } else {
+            additionalFullMids = slice.slice(0, loadCount).map((mid) => makeFullMid(peerId, mid));
+          }
+
+          // * filter last album, because we don't know is it the last item
+          for(let i = additionalFullMids.length - 1; i >= 0; --i) {
+            const message = this.chat.getMessage(additionalFullMids[i]);
+            if((message as Message.message)?.grouped_id) additionalFullMids.splice(i, 1);
+            else break;
+          }
+
+          loadCount = Math.max(0, loadCount - additionalFullMids.length);
+          maxId = additionalFullMids[additionalFullMids.length - 1] || maxId;
+        }
+      }
+    }
+
+    /* const result = additionMsgID ?
+      {history: [additionMsgID]} :
+      appMessagesManager.getHistory(this.peerId, maxId, loadCount, backLimit); */
+    let result: AckedResult<MyHistoryResult> = await this.requestHistory(maxId, loadCount, backLimit) as any;
+    let resultPromise: typeof result['result'];
+
+    this.log('i vin brehnya', result, maxId, loadCount, backLimit);
+
+    // const isFirstMessageRender = !!additionMsgID && result.cached && !appMessagesManager.getMessage(additionMsgID).grouped_id;
+    // const isAdditionRender = additionMsgIds?.length && !result.cached;
+    const isAdditionRender = !!additionalFullMids?.length;
+    // const isFirstMessageRender = (this.isFirstLoad && backLimit && !result.cached) || (isAdditionRender && loadCount > 0);
+    const isFirstMessageRender = this.isFirstLoad && !result.cached && (isAdditionRender || loadCount > 0);
+    if(isAdditionRender) {
+      resultPromise = result.result;
+
+      result = {
+        cached: true,
+        result: Promise.resolve({history: additionalFullMids.map((fullMid) => splitFullMid(fullMid).mid)})
+      };
+
+      // additionMsgID = 0;
+    }
+
+    this.isFirstLoad = false;
+
+    const processResult = async(historyResult: Awaited<typeof result['result']>) => {
+      // if((historyResult as HistoryResult).isEnd?.top) {
+      //   // * synchronize bot placeholder & user premium appearance
+      //   await this.managers.appProfileManager.getProfileByPeerId(peerId);
+
+      //   // await this.setLoaded('top', true);
+      // }
+    };
+
+    const sup = (historyResult: Awaited<typeof result['result']>, sight?: RenderSight) => {
+      return getHeavyAnimationPromise().then(() => {
+        return processResult(historyResult);
+      }).then(() => {
+        if(!isAdditionRender && additionalFullMid) {
+          historyResult.history.unshift(splitFullMid(additionalFullMid).mid);
+        }
+
+        return this.performHistoryResult(historyResult, reverse, true, sight ?? (outOfSight ? OUT_OF_SIGHT : undefined));
+      });
+    };
+
+    // * the first frame gets what fills the screen where the chat opens: the bubbles of the rest of a page cost it as
+    // * much again, for messages nobody sees before scrolling. As much as viewport slicing keeps comes right after it
+    let cut: ReturnType<ChatBubbles['cutToFirstScreen']>['cut'], restPromise: Promise<void>;
+    const renderFirstScreen = (historyResult: Awaited<typeof result['result']>) => {
+      const rendered = this.renderFirstScreen(historyResult, firstScreen, sup);
+      cut = rendered.cut;
+      restPromise = rendered.restPromise;
+      return rendered.promise;
+    };
+
+    const processPromise = (_promise: typeof result['result'], isFirstScreen?: boolean) => {
+      const promise = Promise.resolve(_promise).then((result) => {
+        if(middleware && !middleware()) {
+          throw PEER_CHANGED_ERROR;
+        }
+
+        if(justLoad) {
+          // нужно делать из-за ранней прогрузки
+          this.scrollable.onScroll();
+          // fastRaf(() => {
+          //   this.scrollable.checkForTriggers();
+          // });
+          return;
+        }
+
+        return isFirstScreen ? renderFirstScreen(result) : sup(result);
+      }, (err) => {
+        this.log.error('getHistory error:', err);
+        throw err;
+      });
+
+      return promise;
+    };
+
+    let promise: Promise<void>, cached: boolean;
+    if(!result.cached) {
+      cached = false;
+      // * a page from the server is cut the same way once it comes
+      promise = processPromise(result.result, !!firstScreen);
+    } else if(justLoad) {
+      // нужно делать из-за ранней прогрузки
+      this.scrollable.onScroll();
+      return null;
+    } else {
+      cached = true;
+      const historyResult = await result.result;
+      if(onCachedHistoryReady) {
+        if(middleware && !middleware()) throw PEER_CHANGED_ERROR;
+        onCachedHistoryReady();
+        // * let the worker bridge send the parts' requests before the synchronous sizing of the first screen
+        await Promise.resolve();
+        if(middleware && !middleware()) throw PEER_CHANGED_ERROR;
+      }
+      promise = renderFirstScreen(historyResult);
+    }
+
+    // * the fresh page renders what is new at the bottom, not the posts left out above. What was cached may not have
+    // * filled the screen (a chat with its last message only): then the page is what fills it, and is cut as one
+    const waitPromise = isAdditionRender ?
+      processPromise(
+        (restPromise ? restPromise.then(() => resultPromise) : resultPromise).then((result) => cut ? keepFrom(result, cut.oldestMid) : result),
+        !cut && !!firstScreen
+      ).then(() => restPromise) :
+      promise.then(() => restPromise);
+
+    if(isFirstMessageRender && liteMode.isAvailable('motion')/*  && false */) {
+      let times = isAdditionRender ? 2 : 1;
+      this.ladderAppearance?.resolve();
+      const appearance = this.ladderAppearance = deferredPromise();
+      const arm = this.messagesQueueOnRenderAdditional = () => {
+        this.log('messagesQueueOnRenderAdditional');
+
+        if(--times) return;
+
+        this.messagesQueueOnRenderAdditional = undefined;
+
+        const preload = () => setTimeout(() => this.loadMoreHistory(reverse, true), 0);
+        // * a page that comes to a list its cached part already fills the screen of (its oldest message reaches past the
+        // * top, before the page goes in; not a date, which sticks to the top) comes in as a page scrolled to does: the
+        // * ladder is the chat's opening, never something added to a chat on screen, maybe being scrolled
+        const oldest = isAdditionRender && this.chatInner.isConnected && this.chatInner.querySelector('.bubble:not(.is-date)');
+        if(oldest && oldest.getBoundingClientRect().top < this.scrollable.container.getBoundingClientRect().top) {
+          appearance.resolve();
+          preload();
+          return;
+        }
+
+        this.animateAsLadder(additionalFullMid, additionalFullMids, isAdditionRender, backLimit, maxId).then(preload);
+      };
+
+      // * the renders of this load are through without running it: it does not come
+      waitPromise.catch(noop).then(() => {
+        if(this.messagesQueueOnRenderAdditional === arm) appearance.resolve();
+      });
+    } else {
+      // * one armed that has not run by now does not come any more
+      if(this.messagesQueueOnRenderAdditional) this.ladderAppearance?.resolve();
+      this.messagesQueueOnRenderAdditional = undefined;
+    }
+
+    if(justLoad) {
+      return null;
+    }
+
+    return {cached, promise, waitPromise};
+  }
+
+  /** The first rendered incoming message past the read cursor — where the unread delimiter goes */
+  private findFirstUnreadFullMid(readMaxId: number) {
+    return this.getRenderedHistory('asc', true).find((fullMid) => {
+      const bubble = this.getBubble(fullMid);
+      return splitFullMid(fullMid).mid > readMaxId && bubble && !bubble.classList.contains('is-out');
+    });
+  }
+
+  /**
+   * The bubble the unread delimiter sits on (or would sit on), i.e. tdesktop's
+   * `History::firstUnreadMessage()`. The delimiter is frozen on its message: sliced out of the viewport, it is that
+   * message's bubble once rendered again, or none. Only with no delimiter at all is the read cursor scanned for
+   * one - the live cursor, which follows the bottom of the screen as it is read
+   */
+  private getFirstUnreadBubble(readMaxId: number) {
+    if(this.firstUnreadBubble?.parentElement) {
+      return this.firstUnreadBubble;
+    }
+
+    if(this.firstUnreadFullMid) {
+      return this.getBubble(this.firstUnreadFullMid);
+    }
+
+    const fullMid = this.findFirstUnreadFullMid(readMaxId);
+    return fullMid ? this.getBubble(fullMid) : undefined;
+  }
+
+  /**
+   * tdesktop's `HistoryWidget::insideJumpToEndInsteadOfToUnread` — in an already opened chat the
+   * go-down button (and re-clicking the open dialog in the chat list) jumps to the first unread
+   * message, and only goes to the very end once that message is no longer below the viewport.
+   */
+  private shouldJumpToEndInsteadOfUnread(readMaxId: number) {
+    const bubble = this.getFirstUnreadBubble(readMaxId);
+    if(bubble) {
+      return bubble.getBoundingClientRect().top <= this.chat.bubblesViewport.getBoundingClientRect().bottom;
+    }
+
+    // * the delimiter's bubble was sliced away: above the screen, read down from, unless it stands past the bottom
+    // * of it. Asking the read cursor instead found the message right below the screen every time - a press went
+    // * down one screen, not to the end
+    if(this.firstUnreadFullMid) {
+      return this.isScrolledPast(this.firstUnreadFullMid, this.getViewportBottomPosition());
+    }
+
+    return false;
+  }
+
+  /**
+   * A press of the go-down button lands on the first unread message, which is the delimiter from now on: the next
+   * press finds it on screen and goes to the end, instead of after the read cursor the screen has just moved down
+   */
+  private scrollToFirstUnread(bubble: HTMLElement) {
+    this.firstUnreadFullMid = getBubbleFullMid(bubble);
+    return this.scrollToBubble(bubble, 'start');
+  }
+
+  public async setUnreadDelimiter() {
+    if(!(this.chat.type === ChatType.Chat || this.chat.type === ChatType.Discussion)) {
+      return;
+    }
+
+    if(this.attachedUnreadBubble) {
+      return;
+    }
+
+    // * the aggregated monoforum admin view has no single unread cursor to draw a delimiter for
+    if(this.chat.isMonoforum && this.chat.canManageDirectMessages && !this.chat.monoforumThreadId) {
+      return;
+    }
+
+    const middleware = this.getMiddleware();
+
+    const {peerId, threadId, monoforumThreadId} = this.chat;
+
+    const historyMaxId = this.chat.getHistoryMaxId();
+    // * a plain chat's history is mirrored here: the same decision against the mirror, not another round trip to
+    // * the worker that the opening batch waits for
+    const historyStorage = this.chat.historyStorage;
+    const mirroredReadMaxId = historyStorage?.readMaxId;
+    const mirroredMaxId = historyStorage?.maxId;
+    const useMirror = this.chat.type === ChatType.Chat && !threadId && !monoforumThreadId && !this.chat.isMonoforum &&
+      historyStorage?.type === 'history' && !historyStorage.searchHistory &&
+      Number.isFinite(mirroredReadMaxId) && Number.isFinite(mirroredMaxId);
+    const readMaxId = useMirror ? getReadMaxIdIfUnread({
+      readMaxId: mirroredReadMaxId,
+      maxId: mirroredMaxId,
+      topMessageOut: this.chat.getMessageByPeer(peerId, mirroredMaxId)?.pFlags?.out
+    }) : await this.managers.appMessagesManager.getReadMaxIdIfUnread(peerId, threadId || monoforumThreadId);
+    if(!readMaxId || !middleware()) return;
+
+    const firstUnreadFullMid = this.findFirstUnreadFullMid(readMaxId);
+    if(!firstUnreadFullMid) {
+      return;
+    }
+
+    const firstUnreadMid = splitFullMid(firstUnreadFullMid).mid;
+    const bubble = this.getBubble(peerId, firstUnreadMid);
+    if(!bubble) {
+      return;
+    }
+
+    if(this.firstUnreadBubble && this.firstUnreadBubble !== bubble) {
+      this.firstUnreadBubble.classList.remove('is-first-unread');
+      this.firstUnreadBubble = null;
+    }
+
+    if(firstUnreadMid !== historyMaxId) {
+      bubble.classList.add('is-first-unread');
+    }
+
+    this.firstUnreadBubble = bubble;
+    this.firstUnreadFullMid = firstUnreadFullMid;
+    this.attachedUnreadBubble = true;
+  }
+
+  public deleteEmptyDateGroups() {
+    let deleted = false;
+    for(const i in this.dateMessages) {
+      const dateMessage = this.dateMessages[i];
+
+      if(dateMessage.groupsLength) {
+        continue;
+      }
+
+      dateMessage.container.remove();
+      this.stickyIntersector?.unobserve(dateMessage.container, dateMessage.div);
+      delete this.dateMessages[i];
+      deleted = true;
+
+      // * no sense in it
+      /* if(dateMessage.div === this.previousStickyDate) {
+        this.previousStickyDate = undefined;
+      } */
+    }
+
+    if(!deleted) {
+      return;
+    }
+
+    if(!Object.keys(this.dateMessages).length) {
+      this.container.classList.remove('has-groups');
+    }
+
+    this.checkIfEmptyPlaceholderNeeded();
+    this.setStickyDateManually();
+  }
+
+  public setPeerSettings(peerId: PeerId, peerSettings: PeerSettings) {
+    if(this.peerId !== peerId) return;
+    // * the first render may have had these very settings (`setPeer`): its placeholder is not built again
+    if(this.peerSettings && deepEqual(this.peerSettings, peerSettings)) return;
+
+    const hadHiddenLinks = this.shouldHideCurrentPeerMessageLinks();
+    this.peerSettings = peerSettings;
+    this.syncCurrentMessageLinkPolicyState();
+    const hasHiddenLinks = this.shouldHideCurrentPeerMessageLinks();
+
+    if(shouldShowUnknownUserPlaceholder(peerSettings)) {
+      this.cleanupPlaceholders()
+      this.renderUnknownUserPlaceholder();
+    }
+
+    this.handleMessageLinkPolicyChange(hadHiddenLinks, hasHiddenLinks);
+  }
+
+  // * the plate brings the settings only to the open that asked for them, and a jump within the chat before they come
+  // * cuts that off: without them the links of a sender who is not a contact would stay links until the chat is opened again
+  private requestMissingPeerSettings(peerId: PeerId) {
+    if(
+      this.peerSettings ||
+      !peerId.isUser() ||
+      peerId === rootScope.myId ||
+      apiManagerProxy.getUser(peerId.toUserId())?.pFlags.contact
+    ) {
+      return;
+    }
+
+    this.managers.appProfileManager.getPeerSettings(peerId).then((peerSettings) => {
+      this.setPeerSettings(peerId, peerSettings);
+    }, noop);
+  }
+
+  private shouldForceHideNonContactLinks() {
+    if(!Modes.forceHideNonContactLinks) return false;
+
+    // Keep the preview override fail-closed until the worker's canonical
+    // contact cache classifies regular users; bots and self are known locally.
+    return shouldForceHideNonContactLinkTest(
+      this.peerId,
+      rootScope.myId,
+      this.chat.isBot,
+      this.testPeerNonContactState
+    );
+  }
+
+  private shouldHideCurrentPeerMessageLinks() {
+    return shouldHidePeerMessageLinks(this.peerId, this.peerSettings) ||
+      this.shouldForceHideNonContactLinks();
+  }
+
+  private refreshTestPeerNonContactState(force = false) {
+    if(!Modes.forceHideNonContactLinks || !this.peerId?.isUser()) return;
+
+    const peerId = this.peerId;
+    const userId = peerId.toUserId();
+    if(!force && this.testPeerNonContactState?.userId === userId) return;
+
+    if(peerId === rootScope.myId || this.chat.isBot) {
+      ++this.testPeerNonContactRequest;
+      const hadHiddenLinks = this.shouldHideCurrentPeerMessageLinks();
+      this.testPeerNonContactState = {userId, isNonContact: false};
+      this.syncCurrentMessageLinkPolicyState();
+      this.handleMessageLinkPolicyChange(
+        hadHiddenLinks,
+        this.shouldHideCurrentPeerMessageLinks()
+      );
+      return;
+    }
+
+    const request = ++this.testPeerNonContactRequest;
+    this.managers.appUsersManager.isNonContactUser(userId).then((isNonContact) => {
+      if(!isTestPeerNonContactRequestCurrent(
+        request,
+        this.testPeerNonContactRequest,
+        peerId,
+        this.peerId
+      )) return;
+
+      const hadHiddenLinks = this.shouldHideCurrentPeerMessageLinks();
+      this.testPeerNonContactState = {userId, isNonContact};
+      this.syncCurrentMessageLinkPolicyState();
+      this.handleMessageLinkPolicyChange(
+        hadHiddenLinks,
+        this.shouldHideCurrentPeerMessageLinks()
+      );
+    }).catch(noop);
+  }
+
+  private handleMessageLinkPolicyChange(hadHiddenLinks: boolean, hasHiddenLinks: boolean) {
+    if(!hasHiddenLinks && this.hiddenLinksPendingBubbles.size) {
+      this.hiddenLinksPendingBubbles.forEach((bubble) => {
+        setBubbleHiddenLinksPending(bubble, false);
+        setBubbleHiddenLinksFallback(bubble, false);
+      });
+      this.hiddenLinksPendingBubbles.clear();
+    }
+
+    if(hadHiddenLinks === hasHiddenLinks) return;
+
+    this.chat.topbar?.pinnedMessage?.refreshActionButton();
+
+    const peerId = this.peerId;
+    const pendingRender = this.messagesQueuePromise;
+    this.refreshHiddenLinks(hasHiddenLinks);
+    pendingRender?.then(() => {
+      if(
+        this.peerId === peerId &&
+        this.shouldHideCurrentPeerMessageLinks() === hasHiddenLinks
+      ) {
+        this.refreshHiddenLinks(hasHiddenLinks);
+      }
+    }).catch(noop);
+  }
+
+  private refreshHiddenLinks(force = false) {
+    const visited = new Set<HTMLElement>();
+    for(const fullMid of this.getRenderedHistory('desc', true)) {
+      const bubble = this.getBubble(fullMid);
+      if(!bubble || visited.has(bubble)) {
+        continue;
+      }
+      visited.add(bubble);
+
+      const {peerId, mid} = splitFullMid(fullMid);
+      const groupedMessage = this.bubbleGroups.getItemByBubble(bubble)?.message || this.chat.getMessageByPeer(peerId, mid);
+      if(!groupedMessage || groupedMessage._ === 'channelAdminLogEvent') {
+        continue;
+      }
+      // * the group's item keeps the message it was grouped by - an edit that gave it a link preview leaves it as it was
+      const message = this.getMessageAsItIsNow(groupedMessage as MyMessage);
+      const replacement = this.bubblesToReplace.get(bubble);
+      const visibleBubble = replacement?.source || bubble;
+
+      const hideLinks = shouldHideMessageLinks(
+        message,
+        this.peerId,
+        this.peerSettings,
+        this.shouldForceHideNonContactLinks()
+      );
+
+      const solidMessageBodyEntries = this.solidMessageBodies.get(visibleBubble) ||
+        this.solidMessageBodies.get(bubble);
+      // * a link preview and the buttons are the bubble's own, not its Solid body's: ones the message has now, or ones
+      // * the bubble on screen still shows (the body keeps the message it is drawn from, an edit without them may be on
+      // * its way)
+      const hasBubbleParts = (message: Message.message | Message.messageService) => {
+        return (message as Message.message).media?._ === 'messageMediaWebPage' ||
+          (message as Message.message).reply_markup?._ === 'replyInlineMarkup';
+      };
+      const bubbleHasParts = hasBubbleParts(message) || [...(solidMessageBodyEntries?.values() ?? [])].some((entry) => hasBubbleParts(entry.message));
+      if(solidMessageBodyEntries?.size && !bubbleHasParts) {
+        this.hiddenLinksPendingBubbles.delete(visibleBubble);
+        setBubbleHiddenLinksPending(visibleBubble, false);
+        setBubbleHiddenLinksFallback(visibleBubble, false);
+        if(hideLinks) bubble.dataset.hiddenLinks = '1';
+        else delete bubble.dataset.hiddenLinks;
+        if(visibleBubble !== bubble) {
+          if(hideLinks) visibleBubble.dataset.hiddenLinks = '1';
+          else delete visibleBubble.dataset.hiddenLinks;
+        }
+        solidMessageBodyEntries.forEach((entry) => entry.refreshPolicy());
+        continue;
+      }
+
+      if(
+        hideLinks &&
+        bubble.dataset.hiddenLinks &&
+        (!this.hiddenLinksPendingBubbles.has(visibleBubble) || replacement)
+      ) {
+        if(replacement) {
+          visibleBubble.dataset.hiddenLinks = '1';
+          setBubbleHiddenLinksPending(visibleBubble, true);
+          this.hiddenLinksPendingBubbles.add(visibleBubble);
+        }
+        continue;
+      }
+
+      if(!bubble.dataset.hiddenLinks && (!force || !hideLinks)) {
+        continue;
+      }
+
+      if(hideLinks) {
+        bubble.dataset.hiddenLinks = '1';
+        visibleBubble.dataset.hiddenLinks = '1';
+        setBubbleHiddenLinksPending(visibleBubble, true);
+        this.hiddenLinksPendingBubbles.add(visibleBubble);
+      } else {
+        delete bubble.dataset.hiddenLinks;
+        if(visibleBubble !== bubble) delete visibleBubble.dataset.hiddenLinks;
+        setBubbleHiddenLinksPending(visibleBubble, false);
+        setBubbleHiddenLinksFallback(visibleBubble, false);
+        this.hiddenLinksPendingBubbles.delete(visibleBubble);
+      }
+
+      const onReplacementSettled = (result?: Awaited<ReturnType<ChatBubbles['safeRenderMessage']>>) => {
+        if(
+          result ||
+          !visibleBubble.isConnected ||
+          !this.hiddenLinksPendingBubbles.has(visibleBubble)
+        ) return;
+
+        // Rendering was cancelled or rejected. Keep only navigation inert on the still-visible
+        // legacy DOM; the rest of the message must not remain blocked indefinitely.
+        setBubbleHiddenLinksPending(visibleBubble, false);
+        setBubbleHiddenLinksFallback(visibleBubble, true);
+      };
+      this.safeRenderMessage({
+        message,
+        reverse: true,
+        bubble
+      }).then(onReplacementSettled, () => onReplacementSettled());
+    }
+  }
+
+  private shouldShowBotforumNewTopic() {
+    return this.chat.isBotforum && !this.chat.threadId && this.chat.canManageBotforumTopics;
+  }
+
+  private commitFinalTypingMessage(
+    message: Message.message,
+    tempId: number,
+    bubble: HTMLElement,
+    entry: SolidMessageBodyEntry,
+    structure: unknown,
+    preserveStructure = false,
+    finalizeImmediately = false
+  ) {
+    const fullTempMid = makeFullMid(message.peerId, tempId);
+    const fullMid = makeFullMid(message);
+    const entries = this.solidMessageBodies.get(bubble);
+    if(this.getBubble(fullTempMid) !== bubble || entries?.get(tempId) !== entry) return false;
+
+    const currentFinalBubble = this.getBubble(fullMid);
+    if(fullMid !== fullTempMid && currentFinalBubble && currentFinalBubble !== bubble) return false;
+
+    const revision = ++entry.revision;
+    entry.message = message;
+    if(!preserveStructure) entry.structure = structure;
+    if(!this.rekeySolidMessageBody(bubble, entry, tempId)) return false;
+
+    if(fullTempMid !== fullMid) delete this.bubbles[fullTempMid];
+    this.bubbles[fullMid] = bubble;
+    bubble.dataset.mid = '' + message.mid;
+    bubble.dataset.timestamp = '' + message.date;
+    (bubble as any).maxBubbleMid = message.mid;
+    this.repositionMessageBubblePreservingScroll(bubble, message);
+    const context = this.contexts.get(bubble);
+    if(context && !context.isInUnread && !message.pFlags.out && message.pFlags.unread) {
+      context.isInUnread = true;
+      if(this.observer && !this.unreaded.has(bubble)) {
+        this.setUnreadObserver('history', bubble, message.mid);
+      }
+    }
+    if(this.observer && !this.unreadedContent.has(bubble)) {
+      this.observeUnreadContent(bubble, message);
+    }
+
+    const isCurrent = () => this.isSolidMessageBodyRegistered(bubble, entry) &&
+      entry.revision === revision &&
+      this.getBubble(fullMid) === bubble;
+    if(finalizeImmediately && isCurrent()) {
+      entry.controller.finalize(message, revision);
+    }
+    this.modifyBubble(() => {
+      if(!isCurrent()) return;
+      if(!finalizeImmediately) entry.controller.finalize(message, revision);
+      this.updateSolidMessageBodyContext(bubble, entry, message, false);
+      entry.reconcileShell?.(message);
+      if(entry.ownsTime) this.updateSolidMessageBodyTime(bubble, message);
+    });
+    return true;
+  }
+
+  private finalizeTypingMessage(message: MyMessage, tempId: number) {
+    if(message._ !== 'message') return false;
+
+    const fullTempMid = makeFullMid(message.peerId, tempId);
+    const bubble = this.getBubble(fullTempMid);
+    const entry = this.getSolidMessageBody(bubble, tempId);
+    if(!bubble || !entry || entry.controller.getSnapshot().phase !== 'streaming') return false;
+
+    const fullMid = makeFullMid(message);
+    const structure = getSolidMessageBodyStructure(message);
+    if(!deepEqual(entry.structure, structure)) {
+      // Text/rich-text revisions share one shell. A final message can still introduce genuinely
+      // structural UI (reply markup, media, forward metadata, etc.); only that case
+      // is allowed to replace the legacy shell until the shell itself becomes Solid.
+      const peerMiddleware = this.getMiddleware();
+      let fallbackAttempted = false;
+      let retried = false;
+      const finalizeVisibleOld = () => {
+        const snapshot = entry.controller.getSnapshot();
+        if(!bubble.isConnected || snapshot.phase !== 'streaming' || snapshot.message.mid !== tempId) return;
+        entry.controller.finalize(message, ++entry.revision);
+      };
+      peerMiddleware.onClean(finalizeVisibleOld);
+
+      const onReplacementSettled = (
+        result?: Awaited<ReturnType<ChatBubbles['safeRenderMessage']>>
+      ) => {
+        if(result) {
+          if(this.getBubble(fullMid) === result.bubble) {
+            // `changeBubbleByBubble` moves the existing item to the replacement before the batch
+            // mounts it, but deliberately keeps its old message identity for rollback. Commit the
+            // final identity now so grouping/history observe the final mid during that same batch —
+            // in place when it fits there; when it does not, the batch's regroup gives it the
+            // final identity and place at once.
+            this.updateGroupedMessage(result.bubble, message);
+            const transaction = this.bubblesToReplace.get(result.bubble);
+            if(transaction) transaction.regroupMessage = message;
+            if(this.bubbles[fullTempMid] === bubble) delete this.bubbles[fullTempMid];
+          }
+          finalizeVisibleOld();
+          return;
+        }
+
+        if(fallbackAttempted) return;
+        fallbackAttempted = true;
+        if(!peerMiddleware()) {
+          finalizeVisibleOld();
+          return;
+        }
+
+        const committed = this.commitFinalTypingMessage(
+          message,
+          tempId,
+          bubble,
+          entry,
+          structure,
+          true,
+          true
+        );
+        if(!committed) {
+          finalizeVisibleOld();
+          return;
+        }
+
+        if(retried) return;
+        retried = true;
+        queueMicrotask(() => {
+          if(
+            !peerMiddleware() ||
+            this.getBubble(fullMid) !== bubble ||
+            this.getSolidMessageBody(bubble, message.mid) !== entry
+          ) return;
+          void this.safeRenderMessage({message, bubble, reverse: true});
+        });
+      };
+      this.safeRenderMessage({message, bubble, reverse: true})
+      .then(onReplacementSettled, () => onReplacementSettled());
+      return true;
+    }
+
+    return this.commitFinalTypingMessage(message, tempId, bubble, entry, structure);
+  }
+
+  makeFullMid(message: MyMessage | AdminLog) {
+    if(message._ === 'channelAdminLogEvent') return makeFullMid(this.chat.peerId, +message.id);
+    return makeFullMid(message);
+  }
+
+  public isAvatarNeeded(message: Message.message | Message.messageService | AdminLog) {
+    if(message?._ === 'channelAdminLogEvent') {
+      const entry = this.resolveAdminLogUnsafe({
+        log: message,
+        noJsx: true
+      });
+
+      if(!entry) return false;
+
+      if(entry.type === 'default') message = entry.message;
+      else if(entry.type === 'regular') return message.user_id?.toPeerId() !== rootScope.myId;
+      else return false;
+    }
+
+    if(isMessageForVerificationBot(message)) return true;
+    // * guest-chat messages carry the guest bot's avatar even in a 1-on-1 chat
+    if(isGuestChatMessage(message)) return true;
+    return this.chat.isLikeGroup && !this.chat.isOutMessage(message);
+  }
+
+  private reload() {
+    this.cleanup(true);
+    this.setPeer({
+      peerId: this.peerId,
+      type: this.chat.type,
+      samePeer: true,
+      sameSearch: false,
+      forceIsFirstLoad: true
+    });
+  }
+
+  public setInChatQuery(query: string) {
+    query = query || undefined;
+    if(query === this.inChatQuery) return;
+
+    this.inChatQuery = query;
+    this.reload();
+  }
+
+  public setLogFilters(filters?: CommittedFilters) {
+    filters = filters || undefined;
+    if(filters === this.committedLogsFilters) return;
+
+    this.committedLogsFilters = filters;
+    this.reload();
+  }
+
+  public async resolveAdminLog(args: BubblesResolveAdminLogArgs) {
+    const promise = ensureAdminLogResolver();
+    if(promise) await promise;
+
+    return this.resolveAdminLogUnsafe(args);
+  }
+
+  /**
+   * Doesn't ensure the resolver function was loaded
+   */
+  public resolveAdminLogUnsafe(args: BubblesResolveAdminLogArgs) {
+    if(!resolveAdminLog) return null;
+
+    const {log} = args;
+
+    const wrapOptions: WrapSomethingOptions = args.noJsx !== true ? {
+      lazyLoadQueue: this.lazyLoadQueue,
+      middleware: args.middleware,
+      customEmojiSize: this.chat.appImManager.customEmojiSize,
+      animationGroup: this.chat.animationGroup
+    } : undefined;
+
+    const promises = args.noJsx !== true ? args.promises : undefined;
+
+    const isOut = log.user_id.toPeerId() === rootScope.myId;
+
+    const entry = resolveAdminLog({
+      channelId: this.peerId.toChatId(),
+      event: log,
+      isBroadcast: this.chat.isBroadcast,
+      isForum: this.chat.isForum,
+      peerId: log.user_id.toPeerId(),
+      isOut,
+      makePeerTitle: promises ?
+        (peerId) => {
+          return createPeerTitleElement({peerId, link: true}, promises);
+        } :
+        () => document.createElement('span'),
+      makeMessagePeerTitle: wrapOptions ?
+        (peerId) => {
+          const {element, textColorProperty} = this.createTitle(peerId, wrapOptions, false, promises);
+          element.style.color = `rgb(var(--${textColorProperty}))`;
+          return element;
+        } :
+        () => document.createElement('span')
+    });
+
+    return entry;
+  }
+
+  /** the answer a jump points at (a poll option link), -1 when there is none */
+  private getBubblePollAnswerIndex(bubble?: HTMLElement, lastMsgFullMid?: FullMid, pollOption?: string | Uint8Array) {
+    if(!bubble || lastMsgFullMid === EMPTY_FULL_MID || !pollOption) return -1;
+
+    const message = this.chat.getMessage(lastMsgFullMid);
+    if(!message || message?._ !== 'message' || message?.media?._ !== 'messageMediaPoll') return -1;
+
+    let option: Uint8Array;
+    if(pollOption instanceof Uint8Array) {
+      option = pollOption;
+    } else {
+      const maxLength = 100;
+      if(pollOption.length > maxLength) return -1; // discard possibly malformed parameter
+      option = linkToPollOption(pollOption);
+      if(!option) return -1;
+    }
+
+    return message.media.poll.answers.findIndex((answer) => answer._ === 'pollAnswer' && compareUint8Arrays(answer.option, option));
+  }
+
+  private highlightBubblePollAnswer(bubble?: HTMLElement, lastMsgFullMid?: FullMid, pollOption?: string | Uint8Array) {
+    const pollOptionIndex = this.getBubblePollAnswerIndex(bubble, lastMsgFullMid, pollOption);
+    if(pollOptionIndex === -1) return;
+
+    this.contexts.get(bubble)?.pollMessageContentControls?.highlightAnswerWithTimeout?.(pollOptionIndex, 3000);
+  }
+}
+
+// a method edited here takes effect on the open chats' bubbles, without a reload (see @helpers/hotRegistry)
+if(import.meta.hot) import.meta.hot.accept();

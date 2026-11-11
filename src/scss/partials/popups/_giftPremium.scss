@@ -1,0 +1,62 @@
+@use "sass:string";
+@use "../../shared" as *;
+
+ 
+.popup-gift-premium {
+  --popup-width: 26.25rem;
+  --popup-max-height: 43.5rem;
+
+  &-options {
+    display: flex;
+    flex-direction: column;
+  }
+
+  &-option {
+    .row-title {
+      text-transform: capitalize;
+    }
+  }
+
+  &-discount {
+    background-color: var(--primary-color);
+    border-radius: 6px;
+    color: #fff;
+    margin-inline-end: .375rem;
+    padding: 0 0.3125rem;
+    height: 20px;
+    display: inline-block;
+    line-height: 20px;
+    font-weight: var(--font-weight-bold);
+    font-size: var(--font-size-13);
+    // * "-20%" keeps its sign in front in RTL: no strong character, so the run is laid out
+    // * left to right, while `direction` (and so the inline-end margin) stays the UI's
+    unicode-bidi: plaintext;
+
+    // the contrast-checked fill, with the a11y layer (Increase Contrast is part of it)
+    :where(.a11y) & {
+      background-color: var(--primary-button-color, var(--primary-color));
+    }
+  }
+
+  &-confirm {
+    --ripple-color: rgba(255, 255, 255, #{$hover-alpha});
+    background: linear-gradient(88.39deg, #6C93FF -2.56%, #976FFF 51.27%, #DF69D1 107.39%) !important;
+    font-weight: var(--font-weight-bold);
+    color: #fff;
+    text-transform: uppercase;
+    height: 3rem;
+
+    @include hover() {
+      &:after {
+        content: " ";
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        background-color: #fff;
+        opacity: $hover-alpha;
+      }
+    }
+  }
+}

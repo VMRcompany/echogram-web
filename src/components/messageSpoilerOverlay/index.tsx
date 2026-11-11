@@ -1,0 +1,546 @@
+import {batch, createEffect, createMemo, createSignal, onCleanup, onMount} from 'solid-js';
+import {render} from 'solid-js/web';
+
+import {animateValue} from '@helpers/animateValue';
+import {animate} from '@helpers/animation';
+import ListenerSetter from '@helpers/listenerSetter';
+import debounce from '@helpers/schedulers/debounce';
+import createMiddleware from '@helpers/solid/createMiddleware';
+import {logger} from '@lib/logger';
+import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
+import type SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
+import type {AnimationItemGroup} from '@components/animationIntersector';
+import BluffSpoilerController from '@components/bluffSpoilerController';
+import DotRenderer from '@components/dotRenderer';
+import {observeResize} from '@components/resizeObserver';
+import {drawImageFromSource} from '@components/messageSpoilerOverlay/drawImageFromSource';
+import drawGlyphMask from '@components/messageSpoilerOverlay/glyphMask';
+import {
+  adjustSpaceBetweenCloseRects,
+  computeMaxDistToMargin,
+  CustomDOMRect,
+  getCustomDOMRectsForSpoilerSpan,
+  getParticleColor,
+  getTimeForDist,
+  isMouseCloseToAnySpoilerElement,
+  UnwrapEasing
+} from '@components/messageSpoilerOverlay/utils';
+
+
+type MessageSpoilerOverlayProps = {
+  mid: number;
+  messageElement: HTMLDivElement;
+  animationGroup: AnimationItemGroup;
+};
+
+type InternalMessageSpoilerOverlayProps = MessageSpoilerOverlayProps & {
+  parentElement: HTMLDivElement;
+  controlsRef: (controls: MessageSpoilerOverlayControls) => void;
+};
+
+type MessageSpoilerOverlayControls = {
+  update: () => void;
+};
+
+const UNWRAPPED_TIMEOUT_MS = 10e3;
+const OVERLAY_HEIGHT_STEP = 256; // css px, see pushOverlayState
+
+const log = logger('spoiler-overlay');
+
+
+type RendererTarget = {
+  animation: ReturnType<typeof DotRenderer.attachTextSpoilerTarget>['animation'],
+  dpr: number,
+  sourceCanvas?: HTMLCanvasElement
+};
+
+function MessageSpoilerOverlay(props: InternalMessageSpoilerOverlayProps) {
+  const {rootScope} = useHotReloadGuard();
+
+  // when supported, the drawing runs inside the spoiler-renderer worker and this
+  // component only measures the DOM and pushes geometry/colors/unwraps to it
+  const useWorker = BluffSpoilerController.isWorkerSimSupported();
+  let overlayHandle: ReturnType<typeof DotRenderer.attachTextSpoilerOverlay>['overlay'];
+
+  const [spanRects, setSpanRects] = createSignal<CustomDOMRect[]>([]);
+  const [backgroundColor, setBackgroundColor] = createSignal('transparent'); // For now is just as fallback if inner spans fail to compute individual color
+  const [particleColor, setParticleColor] = createSignal(getParticleColor());
+  const [unwrapProgress, setUnwrapProgress] = createSignal<number>(0);
+  const [clickCoordinates, setClickCoordinates] = createSignal<[number, number]>();
+  const [maxDist, setMaxDist] = createSignal<number>();
+  const [rendererInitResult, setRendererInitResult] = createSignal<RendererTarget>();
+  const [resizing, setResizing] = createSignal(false);
+
+  const dpr = createMemo(() => rendererInitResult()?.dpr || window.devicePixelRatio);
+
+  const controls: MessageSpoilerOverlayControls = {
+    update() {
+      update();
+      // * the canvas drawn here is cleared by being sized: it is drawn again at once, as on a resize
+      if(!useWorker) draw();
+    }
+  };
+
+  props.controlsRef(controls);
+
+  let glyphsKey: string;
+  let unwrapTimeout: number;
+  let cancelAnimation: () => void;
+
+  onMount(() => {
+    update();
+
+    const listenerSetter = new ListenerSetter();
+    // const resizeObserver = new ResizeObserver(resizeObserverCallback);
+    // * follows the message on every frame it resizes - a details or a quote opening moves the spoilers
+    // * with it; they used to be wiped and drawn again once the size settled, missing for the animation
+    const unobserve = observeResize(props.parentElement, onResize);
+
+    listenerSetter.add(props.messageElement)('click', onMessageClick, true);
+    listenerSetter.add(props.messageElement)('mousemove', onMessageHover);
+    listenerSetter.add(props.messageElement)('mouseout', onMessageOut);
+    // listenerSetter.add(window)('blur', returnToInitial);
+    listenerSetter.add(rootScope)('chat_background_set', onChatBackgroundSet);
+
+    listenerSetter.add(rootScope)('theme_changed', () => {
+      setTimeout(() => {
+        update();
+      }, 200);
+    });
+    // resizeObserver.observe(props.parentElement);
+
+    attachDotRendererTarget();
+
+    onCleanup(() => {
+      cancelAnimation?.();
+      window.clearTimeout(unwrapTimeout);
+      settleResize.clearTimeout();
+      listenerSetter.removeAll();
+      unobserve();
+      // resizeObserver.disconnect();
+
+      log('cleaning-up', props.mid);
+    });
+  });
+
+  const canShowSpoilers = createMemo(() => rendererInitResult() && spanRects().length);
+
+  createEffect(() => {
+    if(!canShowSpoilers() || resizing()) return;
+    const timeout = window.setTimeout(() => {
+      props.parentElement.closest('.spoilers-container')?.classList.add('can-show-spoiler-text');
+    }, 400);
+    onCleanup(() => window.clearTimeout(timeout));
+  });
+
+  createEffect(() => {
+    // Hide text when collapsing / uncollapsing blockquote, and while the message resizes (see onResize)
+    if((!spanRects().length || resizing()) && unwrapProgress() === 0) {
+      props.parentElement.closest('.spoilers-container')?.classList.remove('can-show-spoiler-text');
+    }
+  });
+
+
+  /**
+   * If it fails the first time to compute the rects, try again after some time
+  */
+  let failTimeout: number;
+  createEffect(() => {
+    if(spanRects().length) return;
+
+    failTimeout ||= window.setTimeout(() => {
+      failTimeout = undefined;
+      if(spanRects().length) return;
+
+      update();
+    }, 3000);
+
+    onCleanup(() => {
+      if(failTimeout) window.clearTimeout(failTimeout);
+    });
+  });
+
+  const canvas = (
+    <canvas
+      class="message-spoiler-overlay__canvas"
+      classList={{
+        'message-spoiler-overlay__canvas--hidden': unwrapProgress() === 1 || !canShowSpoilers(),
+        'message-spoiler-overlay__canvas--committed-size': useWorker
+      }}
+    />
+  ) as HTMLCanvasElement;
+  const ctx = useWorker ? undefined : canvas.getContext('2d');
+
+  const offScreenCanvas = useWorker ? undefined : (
+    <canvas />
+  ) as HTMLCanvasElement;
+  const offScreenCtx = offScreenCanvas?.getContext('2d');
+
+
+  //
+
+
+  async function attachDotRendererTarget() {
+    const middlewareHelper = createMiddleware();
+
+    onCleanup(() => {
+      middlewareHelper.destroy();
+    });
+
+    if(useWorker) {
+      const initResult = DotRenderer.attachTextSpoilerOverlay({
+        animationGroup: props.animationGroup,
+        canvas,
+        middleware: middlewareHelper.get()
+      });
+      overlayHandle = initResult.overlay;
+      await initResult.readyResult;
+
+      setRendererInitResult(initResult);
+      update(); // push the state with the final dpr
+      return;
+    }
+
+    const initResult = DotRenderer.attachTextSpoilerTarget({
+      animationGroup: props.animationGroup,
+      canvas,
+      draw,
+      middleware: middlewareHelper.get()
+    });
+    await initResult.readyResult;
+
+    setRendererInitResult(initResult);
+  }
+
+  function update() {
+    batch(() => {
+      updateCanvasSize();
+      updateSpanRects();
+      updateColors();
+    });
+
+    pushOverlayState();
+  }
+
+  // * the worker's canvas in device pixels: a step taller than the message, not its height - a message growing on
+  // * every frame (a details opening) does not resize the worker's canvas on every frame, only the spoilers move in it
+  function getOverlaySize(rect: DOMRect) {
+    return {
+      width: Math.round(rect.width * dpr()),
+      height: Math.round(Math.ceil(rect.height / OVERLAY_HEIGHT_STEP) * OVERLAY_HEIGHT_STEP * dpr())
+    };
+  }
+
+  function pushOverlayState() {
+    if(!overlayHandle) return;
+
+    const rect = props.parentElement.getBoundingClientRect();
+
+    // * shown at the size of the picture the worker last drew (`--committed-size`): one sized here
+    // * changed a frame before the picture of that size came, and the old one was stretched over it
+    canvas.style.setProperty('--dpr', '' + dpr());
+
+    overlayHandle.update({
+      ...getOverlaySize(rect),
+      rects: spanRects(),
+      backgroundColor: backgroundColor(),
+      particleColor: particleColor()
+    });
+  }
+
+  // * what the dust of Spoiler 2.0 gathers into: the letters of the hidden text, measured as it is tapped - only a
+  // * reveal needs them, and a message that resizes (a details opening) would measure them again on every frame
+  function pushGlyphs() {
+    const rects = spanRects();
+    if(!overlayHandle || !rects.length) return;
+
+    const rect = props.parentElement.getBoundingClientRect();
+    const {width, height} = getOverlaySize(rect);
+    // * the text itself: an edit of the same length and boxes (equal-width digits) has other letters
+    const text = Array.from(props.messageElement.querySelectorAll('.spoiler-text'), (span) => span.textContent).join('\n');
+    const key = width + 'x' + height + ':' + text + ':' +
+      rects.map((spanRect) => Math.round(spanRect.left) + ',' + Math.round(spanRect.top) + ',' + Math.round(spanRect.width)).join(';');
+    if(key === glyphsKey) return;
+
+    glyphsKey = key;
+    const bitmap = drawGlyphMask(props.messageElement, rect, width, height, dpr());
+    if(bitmap) overlayHandle.glyphs(bitmap);
+  }
+
+  // * The overlay follows a frame behind the layout, so the text under it stays hidden while the message
+  // * resizes: a spoiler coming out from under a clip (a details opening) was readable for that frame
+  const settleResize = debounce(() => setResizing(false), 200, false, true);
+  function onResize() {
+    setResizing(true);
+    settleResize();
+    update();
+    if(!useWorker) draw();
+  }
+
+  function resetBeforeResize() {
+    if(useWorker) overlayHandle?.clear();
+    else ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setSpanRects([]);
+  }
+
+  createEffect(() => {
+    updateCanvasSize(); // React to dpr() change
+  });
+
+  function updateCanvasSize() {
+    if(useWorker) return; // the worker owns the transferred canvas, the size goes through pushOverlayState
+
+    const rect = props.parentElement.getBoundingClientRect();
+
+    offScreenCanvas.width =
+    canvas.width = rect.width * dpr();
+
+    offScreenCanvas.height =
+    canvas.height = rect.height * dpr();
+  }
+
+  function updateSpanRects() {
+    const parentRect = props.parentElement.getBoundingClientRect();
+    const spoilers = Array.from(props.messageElement.querySelectorAll('.spoiler-text'));
+
+    const rects = spoilers.map((el) => getCustomDOMRectsForSpoilerSpan(el as HTMLElement, parentRect, props.messageElement)).flat();
+    const adjustedRects = adjustSpaceBetweenCloseRects(rects);
+    setSpanRects(adjustedRects);
+  }
+
+  function updateColors() {
+    batch(() => {
+      updateBackgroundColor();
+      updateParticleColor();
+    });
+  }
+
+  function updateBackgroundColor() {
+    let bg: string = 'transparent';
+    const targetElement = props.messageElement.parentElement;
+    if(targetElement) {
+      const computedStyle = window.getComputedStyle(targetElement);
+      bg = computedStyle.backgroundColor;
+    }
+
+    setBackgroundColor(bg);
+  }
+
+  function updateParticleColor() {
+    setParticleColor(getParticleColor());
+  }
+
+  function onMessageClick(e: MouseEvent) {
+    if(!isMouseCloseToAnySpoilerElement(e, props.parentElement, spanRects())) return;
+
+    if(unwrapProgress()) {
+      // returnToInitial();
+      return;
+    }
+
+    e.stopImmediatePropagation();
+    e.stopPropagation();
+    e.preventDefault();
+
+    const rect = props.parentElement.getBoundingClientRect();
+
+    setClickCoordinates([e.clientX - rect.left, e.clientY - rect.top]);
+    setMaxDist(computeMaxDistToMargin(e, rect, spanRects() || []) + 20);
+
+    props.messageElement.classList.remove('is-hovering-spoiler');
+
+    pushGlyphs();
+
+    // the worker mirrors the same curve for the pixels; the signal animation below
+    // keeps driving the visibility class and the click guards
+    overlayHandle?.unwrap(clickCoordinates(), maxDist(), getTimeForDist(maxDist(), useWorker));
+
+    cancelAnimation = animateValue(0, 1, getTimeForDist(maxDist(), useWorker), setUnwrapProgress, {
+      easing: UnwrapEasing,
+      onEnd: () => {
+        unwrapTimeout = window.setTimeout(() => {
+          returnToInitial();
+        }, UNWRAPPED_TIMEOUT_MS);
+      }
+    });
+  }
+
+  // There is some space between span lines, so we need to manually set the cursor because of this
+  function onMessageHover(e: MouseEvent) {
+    if(unwrapProgress()) return;
+    props.messageElement.classList.toggle(
+      'is-hovering-spoiler',
+      isMouseCloseToAnySpoilerElement(e, props.parentElement, spanRects())
+    );
+  }
+
+  function onMessageOut() {
+    props.messageElement.classList.remove('is-hovering-spoiler');
+  }
+
+  function returnToInitial() {
+    cancelAnimation?.();
+    window.clearTimeout(unwrapTimeout);
+
+    if(unwrapProgress() !== 1) {
+      overlayHandle?.wrap(200);
+      cancelAnimation = animateValue(unwrapProgress(), 0, 200, setUnwrapProgress, {
+        onEnd: () => {
+          batch(() => {
+            setClickCoordinates();
+            setMaxDist();
+          });
+        }
+      });
+    } else {
+      overlayHandle?.reset();
+      batch(() => {
+        setUnwrapProgress(0);
+        setClickCoordinates();
+        setMaxDist();
+      });
+      if(!useWorker && rendererInitResult()?.animation.paused) {
+        animate(() => {
+          draw();
+        });
+      }
+    }
+  }
+
+  function onChatBackgroundSet() {
+    resetBeforeResize();
+    setTimeout(() => {
+      update();
+      if(!useWorker) draw();
+    }, 200);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawSpoilerRects();
+    drawClippingCircle();
+  }
+
+  function timesDpr<T extends number[]>(...values: T) {
+    return values.map((value) => value * dpr()) as T;
+  }
+
+  function drawSpoilerRects() {
+    const bg = backgroundColor();
+    const rects = spanRects();
+    const progress = unwrapProgress();
+    const initialCoords = clickCoordinates();
+
+    if(!rects) return;
+
+    const {sourceCanvas} = rendererInitResult() || {};
+
+    for(const rect of rects) {
+      const x = rect.left;
+      const y = Math.max(0, rect.top);
+      const dw = rect.width;
+      const dh = rect.height;
+
+      ctx.fillStyle = rect.color || bg;
+      // ctx.fillStyle = 'red';
+      ctx.fillRect(...timesDpr(x, y, dw, dh));
+
+      if(!sourceCanvas) continue;
+
+      offScreenCtx.clearRect(...timesDpr(x, y, dw, dh));
+      if(!initialCoords) {
+        drawImageFromSource(offScreenCtx, sourceCanvas, ...timesDpr(x, y, dw, dh, x, y, dw, dh));
+      } else {
+        const scaledProgress = progress ** 2 /* * Math.sqrt(progress) */ * 0.4;
+        drawImageFromSource(
+          offScreenCtx,
+          sourceCanvas,
+          ...timesDpr(
+            x + (initialCoords[0] - x) * scaledProgress,
+            y + (initialCoords[1] - y) * scaledProgress,
+            dw * (1 - scaledProgress),
+            dh * (1 - scaledProgress),
+            x,
+            y,
+            dw,
+            dh
+          )
+        );
+      }
+
+      offScreenCtx.globalCompositeOperation = 'source-atop';
+
+      offScreenCtx.fillStyle = particleColor();
+      offScreenCtx.fillRect(...timesDpr(x, y, dw, dh));
+
+      offScreenCtx.globalCompositeOperation = 'source-over';
+
+      ctx.drawImage(offScreenCanvas, ...timesDpr(x, y, dw, dh, x, y, dw, dh));
+    }
+  }
+
+  function drawClippingCircle() {
+    const initialCoords = clickCoordinates();
+    const radius = maxDist();
+    if(!initialCoords || !radius) return;
+
+    const progress = unwrapProgress();
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = 'white';
+    ctx.shadowBlur = radius / 3.5 * dpr() * progress;
+    ctx.shadowColor = 'white';
+    ctx.beginPath();
+    ctx.arc(...timesDpr(initialCoords[0], initialCoords[1], radius * progress), 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+  }
+
+  return <>{canvas}</>;
+}
+
+const overlayControls = new WeakMap<Element, MessageSpoilerOverlayControls>();
+
+/**
+ * The overlays in `root` measure their spoilers and the colours under them again: what they read while something
+ * painted the message's background for it (a bubble changing, `bubbleTransitions`) was not the message's
+ */
+export function updateMessageSpoilerOverlays(root: ParentNode) {
+  root.querySelectorAll('.message-spoiler-overlay').forEach((element) => overlayControls.get(element)?.update());
+}
+
+export function createMessageSpoilerOverlay(props: MessageSpoilerOverlayProps, HotReloadGuardProvider: typeof SolidJSHotReloadGuardProvider) {
+  const element = document.createElement('div');
+  element.classList.add('message-spoiler-overlay');
+
+  let controls: MessageSpoilerOverlayControls;
+
+  const disposeRender = render(
+    () => (
+      <HotReloadGuardProvider>
+        <MessageSpoilerOverlay
+          parentElement={element}
+          controlsRef={(value) => {
+            controls = value;
+            overlayControls.set(element, value);
+          }}
+          {...props}
+        />
+      </HotReloadGuardProvider>
+    ),
+    element
+  );
+
+  return {
+    element,
+    get controls() {
+      return controls;
+    },
+    dispose: () => {
+      overlayControls.delete(element);
+      disposeRender();
+    }
+  };
+}

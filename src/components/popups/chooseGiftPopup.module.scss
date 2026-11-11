@@ -1,0 +1,10 @@
+@use "../../scss/mixins" as *;
+
+.popup {
+  --popup-width: 26.25rem;
+  --popup-max-height: calc(var(--100vh) - 6.5rem);
+}
+
+.grid {
+  padding-bottom: 0 !important;
+}

@@ -1,0 +1,58 @@
+@use "../../scss/mixins" as *;
+
+.popup {
+  :global(.popup-container) {
+    width: 21.5rem;
+    border-radius: 10px;
+    padding: 0;
+    overflow: visible;
+  }
+
+  :global(.popup-buttons) {
+    padding: 0 0.25rem;
+    margin: 0.5rem;
+    justify-content: space-between;
+  }
+
+  :global(.popup-body) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.5rem;
+    overflow: visible;
+  }
+
+  // the heading and the copy read as a paragraph pair, further apart than a centred header
+  .confirmation {
+    gap: 1.125rem;
+    align-self: stretch;
+  }
+}
+
+.onlyTon {
+  font-size: 16px;
+  line-height: 20px;
+  color: var(--secondary-text-color);
+  margin-top: 0.875rem;
+  text-align: center;
+}
+
+.graph {
+  margin-block: 1.5rem;
+}
+
+// the popup body is a centering flex column, so a full-width control has to ask for it
+.messageInput {
+  align-self: stretch;
+  margin-block: 1rem 0.5rem;
+}
+
+.hideNameRow {
+  align-self: stretch;
+}
+
+.starsBalance {
+  left: 50%;
+  top: -1rem;
+  transform: translate(-50%, -100%);
+}

@@ -1,0 +1,2032 @@
+import {createEffect, createRoot, createSignal, createUniqueId, on} from 'solid-js';
+import appImManager from '@lib/appImManager';
+import rootScope from '@lib/rootScope';
+import {createSearchGroup, getSearchTransitionDuration, SearchGroup} from '@components/searchGroup';
+import crossfadeContent, {CROSS_FADE_KEYFRAMES, getAnimatedOptions} from '@helpers/dom/crossfadeContent';
+import DialogsContextMenu from '@components/dialogsContextMenu';
+import Scrollable, {ScrollableX} from '@components/scrollable';
+import InputSearch from '@components/inputSearch';
+import SidebarSlider, {SliderSuperTab} from '@components/slider';
+import TransitionSlider from '@components/transition';
+import AppSearchSuper, {SearchSuperMediaType} from '@components/appSearchSuper';
+import {DateData, fillTipDates} from '@helpers/date';
+import {MOUNT_CLASS_TO} from '@config/debug';
+import {AppSettingsTab} from '@components/solidJsTabs';
+import {AppNewChannelTab} from '@components/solidJsTabs/tabs';
+import {AppContactsTab} from '@components/solidJsTabs/tabs';
+import {AppCallsTab} from '@components/solidJsTabs/tabs';
+import {AppArchivedTab} from '@components/solidJsTabs/tabs';
+import createNewGroupTab from '@components/sidebarLeft/tabs/createNewGroupTab';
+import I18n, {i18n, LangPackKey} from '@lib/langPack';
+import ButtonMenu, {ButtonMenuItemOptions, ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
+import {IS_APPLE, IS_MOBILE_SAFARI} from '@environment/userAgent';
+import appNavigationController, {NavigationItem} from '@components/appNavigationController';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import findUpTag from '@helpers/dom/findUpTag';
+import App, {getAppVersionText} from '@config/app';
+import Modes from '@config/modes';
+import ButtonMenuToggle from '@components/buttonMenuToggle';
+import sessionStorage from '@lib/sessionStorage';
+import focusWhenSettled from '@helpers/dom/focusWhenSettled';
+import isLastInputPointer from '@helpers/dom/inputModality';
+import {attachClickEvent, CLICK_EVENT_NAME, simulateClickEvent} from '@helpers/dom/clickEvent';
+import ensureButtonSemantics from '@helpers/dom/ensureButtonSemantics';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import ButtonIcon from '@components/buttonIcon';
+import confirmationPopup from '@components/confirmationPopup';
+import {replaceButtonIcon} from '@components/button';
+import noop from '@helpers/noop';
+import ripple from '@components/ripple';
+import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
+import lastItem from '@helpers/array/lastItem';
+import ListenerSetter from '@helpers/listenerSetter';
+import formatNumber from '@helpers/number/formatNumber';
+import {TabManagers} from '@lib/managers';
+import themeController from '@helpers/themeController';
+import contextMenuController from '@helpers/contextMenuController';
+import appDialogsManager from '@lib/appDialogsManager';
+import {DIALOG_LIST_ELEMENT_TAG} from '@components/dialogElement';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import {FOLDER_ID_ARCHIVE, TEST_NO_STORIES} from '@appManagers/constants';
+import mediaSizes from '@helpers/mediaSizes';
+import updateColumnWidths, {setOpenTabsLeftSidebar} from '@helpers/updateColumnWidths';
+import installColumnResize from '@helpers/installColumnResize';
+import {fastRaf} from '@helpers/schedulers';
+import {getInstallPrompt} from '@helpers/dom/installPrompt';
+import DOCUMENT_PICTURE_IN_PICTURE_SUPPORTED from '@environment/documentPictureInPictureSupport';
+import openClientPip, {closeClientPip, isClientPipOpen} from '@components/clientPip';
+import liteMode, {AnimationLevel} from '@helpers/liteMode';
+import {AppPowerSavingTab} from '@components/solidJsTabs/tabs';
+import {AppMyStoriesTab} from '@components/solidJsTabs/tabs';
+import {AppPasscodeLockTab} from '@components/solidJsTabs/tabs';
+import Icon from '@components/icon';
+import AppSelectPeers from '@components/appSelectPeers';
+import setBadgeContent, {setBadgeCount} from '@helpers/setBadgeContent';
+import createBadge from '@helpers/createBadge';
+import {MyDocument} from '@appManagers/appDocsManager';
+import getAttachMenuBotIcon from '@appManagers/utils/attachMenuBots/getAttachMenuBotIcon';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import wrapUrl from '@lib/richTextProcessor/wrapUrl';
+import flatten from '@helpers/array/flatten';
+import {AttachMenuBot, EmojiStatus, User} from '@layer';
+import {Middleware, MiddlewareHelper} from '@helpers/middleware';
+import wrapEmojiStatus from '@components/wrappers/emojiStatus';
+import {makeMediaSize} from '@helpers/mediaSize';
+import ReactionElement from '@components/chat/reaction';
+import setBlankToAnchor from '@lib/richTextProcessor/setBlankToAnchor';
+import AccountController from '@lib/accounts/accountController';
+import {MAX_ACCOUNTS, MAX_ACCOUNTS_FREE} from '@lib/accounts/constants';
+import {getCurrentAccount} from '@lib/accounts/getCurrentAccount';
+import {createProxiedManagersForAccount} from '@lib/getProxiedManagers';
+import limitSymbols from '@helpers/string/limitSymbols';
+import filterAsync from '@helpers/array/filterAsync';
+import pause from '@helpers/schedulers/pause';
+import showAccountsLimitPopup from '@components/sidebarLeft/accountsLimitPopup';
+import {changeAccount} from '@lib/accounts/changeAccount';
+import switchAccount from '@lib/accounts/switchAccount';
+import addAccount from '@lib/accounts/addAccount';
+import uiNotificationsManager from '@lib/uiNotificationsManager';
+import {renderFoldersSidebarContent} from '@components/sidebarLeft/foldersSidebarContent';
+import SolidJSHotReloadGuardProvider, {registerHotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
+import {AppChatFoldersTab} from '@components/solidJsTabs/tabs';
+import {SliderSuperTabConstructable} from '@components/sliderTab';
+import showSliderPopup from '@components/sliderPopup';
+import {AppEditFolderTab} from '@components/solidJsTabs/tabs';
+import {addShortcutListener} from '@helpers/shortcutListener';
+import tsNow from '@helpers/tsNow';
+import {toastNew} from '@components/toast';
+import DeferredIsUsingPasscode from '@lib/passcode/deferredIsUsingPasscode';
+import createLockButton from '@components/sidebarLeft/lockButton';
+import createSubmenuTrigger, {CreateSubmenuArgs} from '@components/createSubmenuTrigger';
+import ChatTypeMenu from '@components/chatTypeMenu';
+import {RequestHistoryOptions} from '@appManagers/appMessagesManager';
+import EmptySearchPlaceholder from '@components/emptySearchPlaceholder';
+import useHasFoldersSidebar, {
+  useIsSidebarCollapsed,
+  useHasOpenLeftTabs,
+  useIsLeftSearchActive,
+  useFoldersSidebarShown
+} from '@stores/foldersSidebar';
+import isObject from '@helpers/object/isObject';
+import {useAppSettings} from '@stores/appSettings';
+import {useCollapsedCommunityDialogsKey} from '@stores/communities';
+import isCommunity from '@appManagers/utils/communities/isCommunity';
+import {openEmojiStatusPicker} from '@components/sidebarLeft/emojiStatusPicker';
+import IS_CONFERENCE_CALL_SUPPORTED from '@environment/conferenceCallSupport';
+import IS_CALL_SUPPORTED from '@environment/callSupport';
+import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
+import verifyMenuItem from '@helpers/verifyMenuItem';
+import {isWalletAvailable, isWalletReleased} from '@lib/wallet/release';
+
+
+type SearchInitResult = {
+  open: (focus?: boolean) => void;
+  openWithPeerId: (peerId: PeerId) => void;
+  openWithArchive: () => void;
+  close: () => void;
+}
+
+// * the key of the search chip that keeps the search inside the archive
+const ARCHIVE_SEARCH_KEY = 'archive';
+
+export class AppSidebarLeft extends SidebarSlider {
+  // * the column lives as long as the tab, whichever account it shows
+  protected declare managers: TabManagers;
+  private chatListContainer: HTMLElement;
+  private buttonsContainer: HTMLElement;
+  private toolsBtn: HTMLElement;
+  private backBtn: HTMLButtonElement;
+  public inputSearch: InputSearch;
+
+  public archivedCount: HTMLSpanElement;
+  private totalNotificationsCount: HTMLSpanElement;
+  public rect: DOMRect;
+
+  private newBtnMenu: HTMLElement;
+
+  private searchGroups: {[k in 'contacts' | 'globalContacts' | 'messages' | 'people' | 'recent']: SearchGroup} = {} as any;
+  public searchSuper: AppSearchSuper;
+  private searchInitResult: SearchInitResult;
+  private get isSearchActive() {
+    return useIsLeftSearchActive()[0]();
+  }
+  private set isSearchActive(value: boolean) {
+    useIsLeftSearchActive()[1](value);
+  }
+  // Tabbed into from another control, rather than clicked or summoned by Escape — see the back button.
+  private searchEnteredWithKeyboard: boolean;
+  private searchTriggerWhenCollapsed: HTMLElement;
+
+  private updateBtn: HTMLElement;
+  private hasUpdate: boolean;
+
+  private onResize: () => void;
+
+  constructor() {
+    super({
+      sidebarEl: document.getElementById('column-left') as HTMLDivElement,
+      navigationType: 'left'
+    });
+  }
+
+  construct(managers: TabManagers) {
+    this.managers = managers;
+
+    this.chatListContainer = document.getElementById('chatlist-container');
+    // the placeholder up front names the field; without the keyboard layer the connection status sets it, as it always did
+    this.inputSearch = new InputSearch({oldStyle: true, placeholder: Modes.a11y ? 'Search' : undefined});
+    if(!Modes.a11y) (this.inputSearch.input as HTMLInputElement).placeholder = ' ';
+    const sidebarHeader = this.sidebarEl.querySelector('.item-main .sidebar-header');
+    sidebarHeader.append(this.inputSearch.container);
+
+    this.backBtn = this.sidebarEl.querySelector('.sidebar-back-button') as HTMLButtonElement;
+    this.backBtn.setAttribute('aria-label', I18n.format('StarsRating.Back', true));
+
+    this.toolsBtn = this.createToolsMenu();
+    // .is-visible is owned by the Solid effect below (see "burger element
+    // has two visual states") — don't seed it here.
+    this.toolsBtn.classList.add('sidebar-tools-button');
+    this.toolsBtn.setAttribute('role', 'button');
+    if(Modes.a11y) this.toolsBtn.tabIndex = 0;
+    this.totalNotificationsCount = createBadge('span', 20, 'primary');
+    this.totalNotificationsCount.classList.add('sidebar-tools-button-notifications');
+    this.toolsBtn.append(this.totalNotificationsCount);
+
+    const [allNotificationsCount, setAllNotificationsCount] = createSignal(0);
+    const mainMiddleware = this.middlewareHelper.get();
+    // renderFoldersSidebarContent creates the #folders-sidebar element
+    // itself and inserts it as the first child of #main-columns.
+    renderFoldersSidebarContent(
+      document.getElementById('main-columns'),
+      allNotificationsCount,
+      SolidJSHotReloadGuardProvider,
+      mainMiddleware
+    );
+
+    // If it has z-index to early, the browser makes it shift a few times before showing it properly in its position (on very large screens)
+    // Doesn't solve the blinking, which doesn't seem to appear when the project is built
+    pause(1000).then(() => {
+      this.sidebarEl.classList.add('can-menu-have-z-index');
+    });
+
+    rootScope.addEventListener('notification_count_update', async() => {
+      const notificationsCount = await uiNotificationsManager.getNotificationsCountForAllAccounts();
+      const count = Object.entries(notificationsCount).reduce(
+        (prev, [accountNumber, count]) =>
+          prev +
+          (+accountNumber !== getCurrentAccount() ? count || 0 : 0),
+         0);
+
+      setAllNotificationsCount(count);
+      setBadgeCount(this.totalNotificationsCount, count);
+    });
+
+    this.backBtn.parentElement.insertBefore(this.toolsBtn, this.backBtn);
+
+    this.buttonsContainer = this.backBtn.parentElement;
+
+    this.newBtnMenu = this.createNewChatsMenuButton();
+    sidebarHeader.nextElementSibling.append(this.newBtnMenu);
+
+    this.updateBtn = document.createElement('div');
+    this.updateBtn.className = 'btn-circle rp btn-corner z-depth-1 btn-update is-hidden';
+    this.updateBtn.tabIndex = -1;
+    ripple(this.updateBtn);
+    this.updateBtn.append(i18n('Update'));
+
+    attachClickEvent(this.updateBtn, () => {
+      if(this.updateBtn.classList.contains('is-hidden')) {
+        return;
+      }
+
+      appNavigationController.reload();
+    });
+
+    sidebarHeader.nextElementSibling.append(this.updateBtn);
+
+    // Ahead of the listener below: the first focus of an open search says how it was entered.
+    this.inputSearch.input.addEventListener('focus', (e) => {
+      this.searchEnteredWithKeyboard ??= !!e.relatedTarget && !isLastInputPointer();
+    });
+    this.inputSearch.input.addEventListener('focus', () => this.initSearch(), {once: true});
+
+    this.archivedCount = createBadge('span', 24, 'gray');
+    this.archivedCount.classList.add('archived-count');
+
+    let archiveCountGeneration = 0;
+    const updateArchivedCount = async() => {
+      const generation = ++archiveCountGeneration;
+      const {unreadCount} = await rootScope.managers.dialogsStorage
+      .getFolderUnreadCount(FOLDER_ID_ARCHIVE, true);
+      if(generation !== archiveCountGeneration) {
+        return;
+      }
+
+      setBadgeCount(this.archivedCount, unreadCount, formatNumber(unreadCount, 1));
+    };
+    rootScope.addEventListener('folder_unread', (folder) => {
+      if(folder.id === FOLDER_ID_ARCHIVE) {
+        void updateArchivedCount().catch(noop);
+      }
+    });
+    createRoot(() => {
+      const projectionKey = useCollapsedCommunityDialogsKey();
+      createEffect(on(projectionKey, () => {
+        void updateArchivedCount().catch(noop);
+      }));
+    });
+
+    let statusMiddlewareHelper: MiddlewareHelper, fireOnNew: boolean;
+    const premiumMiddlewareHelper = this.getMiddleware().create();
+    const statusBtnIcon = ButtonIcon(' sidebar-emoji-status', {noRipple: true, ariaLabel: 'SetAsEmojiStatus'});
+
+    const lockButton = createLockButton();
+
+    attachClickEvent(statusBtnIcon, () => {
+      openEmojiStatusPicker({
+        managers: bindManagersToSession(this.managers),
+        anchorElement: statusBtnIcon,
+        onChosen: () => {
+          fireOnNew = true
+        }
+      })
+    });
+
+    const wrapStatus = async(middleware: Middleware) => {
+      const user = apiManagerProxy.getUser(rootScope.myId.toUserId());
+      const emojiStatus = user.emoji_status as EmojiStatus.emojiStatus;
+      if(!emojiStatus) {
+        statusBtnIcon.replaceChildren();
+        replaceButtonIcon(statusBtnIcon, 'star');
+        return;
+      }
+
+      fireOnNew && ReactionElement.fireAroundAnimation({
+        middleware: statusMiddlewareHelper?.get() || this.getMiddleware(),
+        reaction: {
+          _: 'reactionCustomEmoji',
+          document_id: emojiStatus.document_id
+        },
+        sizes: {
+          genericEffect: 26,
+          genericEffectSize: 100,
+          size: 22 + 18,
+          effectSize: 80
+        },
+        stickerContainer: statusBtnIcon,
+        cache: statusBtnIcon as any,
+        textColor: 'primary-color'
+      });
+
+      fireOnNew = false;
+
+      const container = await wrapEmojiStatus({
+        wrapOptions: {
+          middleware
+        },
+        emojiStatus,
+        size: makeMediaSize(24, 24)
+      });
+
+      container.classList.replace('emoji-status', 'sidebar-emoji-status-emoji');
+
+      statusBtnIcon.replaceChildren(container);
+    };
+
+    const onPremium = async(isPremium: boolean) => {
+      premiumMiddlewareHelper.clean();
+      const middleware = premiumMiddlewareHelper.get();
+      if(isPremium) {
+        await wrapStatus((statusMiddlewareHelper = middleware.create()).get());
+        if(!middleware()) return;
+        toggleRightButtons(true, await DeferredIsUsingPasscode.isUsingPasscode());
+
+        const onEmojiStatusChange = () => {
+          const oldStatusMiddlewareHelper = statusMiddlewareHelper;
+          wrapStatus((statusMiddlewareHelper = middleware.create()).get())
+          .finally(() => {
+            oldStatusMiddlewareHelper.destroy();
+          });
+        };
+
+        rootScope.addEventListener('emoji_status_change', onEmojiStatusChange);
+
+        middleware.onClean(() => {
+          rootScope.removeEventListener('emoji_status_change', onEmojiStatusChange);
+        });
+      } else {
+        toggleRightButtons(false, await DeferredIsUsingPasscode.isUsingPasscode());
+      }
+
+      appDialogsManager.resizeStoriesList?.();
+    };
+
+    const toggleRightButtons = (isPremium: boolean, isUsingPasscode: boolean) => {
+      if(isPremium) sidebarHeader.append(statusBtnIcon);
+      else statusBtnIcon.remove();
+
+      if(isUsingPasscode) sidebarHeader.append(lockButton.element);
+      else lockButton.element.remove();
+
+      sidebarHeader.classList.toggle('is-input-the-last-child', !isPremium && !isUsingPasscode);
+    };
+
+    appImManager.addEventListener('premium_toggle', onPremium);
+    rootScope.addEventListener('toggle_using_passcode', (isUsingPasscode) => {
+      toggleRightButtons(rootScope.premium, isUsingPasscode);
+    });
+
+    // * the search shows them the moment it opens; nothing is lost if the server refuses for now
+    const warmTopPeers = () => this.managers.appUsersManager.getTopPeers('correspondents').catch(noop);
+
+    // * another account: its own emoji status and archive, even when both are premium
+    rootScope.addEventListener('account_switched', () => {
+      onPremium(rootScope.premium);
+      void updateArchivedCount().catch(noop);
+      void warmTopPeers();
+    });
+
+    const [appSettings] = useAppSettings();
+    toggleRightButtons(rootScope.premium, appSettings.passcode?.enabled);
+
+    void warmTopPeers();
+
+    this.initNavigation();
+
+    {
+      const CHECK_UPDATE_INTERVAL = 1800e3;
+      const checkUpdateInterval = setInterval(() => {
+        fetch('version', {cache: 'no-cache'})
+        .then((res) => (res.status === 200 && res.ok && res.text()) || Promise.reject())
+        .then((text) => {
+          if(text !== App.versionFull) {
+            this.hasUpdate = true;
+            clearInterval(checkUpdateInterval);
+
+            if(!this.newBtnMenu.classList.contains('is-hidden')) {
+              this.updateBtn.classList.remove('is-hidden');
+            }
+          }
+        })
+        .catch(noop);
+      }, CHECK_UPDATE_INTERVAL);
+    }
+
+    this.onResize = () => {
+      this.rect = this.tabsContainer.getBoundingClientRect();
+      updateColumnWidths();
+    };
+
+    fastRaf(this.onResize);
+    // mediaSizes.resize subscription happens inside installColumnWidthsUpdater().
+
+    this.searchTriggerWhenCollapsed = document.createElement('div');
+    this.searchTriggerWhenCollapsed.className = 'sidebar-header-search-trigger';
+    this.searchTriggerWhenCollapsed.append(ButtonIcon('search', {ariaLabel: 'Search'}));
+    this.searchTriggerWhenCollapsed.addEventListener('click', () => {
+      this.initSearch().open();
+    });
+
+    this.buttonsContainer.parentElement.prepend(this.searchTriggerWhenCollapsed);
+
+    // Visibility lives in JS — drives the `.is-visible` class from the
+    // signals that decide whether the icon-only search affordance should
+    // be shown. The CSS only reads that class, no body/parent-selector
+    // cascades.
+    createRoot(() => {
+      const [hasFoldersSidebar] = useHasFoldersSidebar();
+      const [isCollapsed] = useIsSidebarCollapsed();
+      const [hasOpenLeftTabs] = useHasOpenLeftTabs();
+      createEffect(() => {
+        const visible =
+          hasFoldersSidebar() &&
+          isCollapsed() &&
+          !hasOpenLeftTabs();
+        this.searchTriggerWhenCollapsed.classList.toggle('is-visible', visible);
+      });
+    });
+
+    // The burger element has two visual states: the three-line menu icon (a
+    // click on it opens the burger menu) and the back arrow (a click on it
+    // closes the open search). Three classes encode that state — toolsBtn /
+    // backBtn `.is-visible` (which click target is active) and the animated
+    // icon's `.state-back` (which shape it renders as). They all flow from
+    // the same condition, so a single Solid effect owns the truth:
+    //
+    //   showBack = useFoldersSidebarShown OR useIsLeftSearchActive
+    //
+    // When the folders panel is actually shown it has its own menu trigger, so
+    // the in-sidebar burger never serves as a menu — it stays in back state
+    // regardless of search activity. NOTE: gate on the viewport-aware *shown*
+    // value, not the raw useHasFoldersSidebar preference — below 925px the panel
+    // is hidden (its menu trigger with it), so the burger MUST fall back to the
+    // menu icon. Without the panel shown, back state follows search activity.
+    createRoot(() => {
+      const [foldersSidebarShown] = useFoldersSidebarShown();
+      const [isLeftSearchActive] = useIsLeftSearchActive();
+      const animatedMenuIcon = this.buttonsContainer.firstElementChild as HTMLElement;
+      createEffect(() => {
+        const showBack = foldersSidebarShown() || isLeftSearchActive();
+        this.toolsBtn.classList.toggle('is-visible', !showBack);
+        this.backBtn.classList.toggle('is-visible', showBack);
+        animatedMenuIcon.classList.toggle('state-back', showBack);
+      });
+    });
+
+    const sidebarOverlay = document.querySelector('.sidebar-left-overlay');
+    sidebarOverlay.addEventListener('click', () => {
+      this.closeEverythingInside();
+    });
+
+    this.initSidebarResize();
+    appDialogsManager.onSomeDrawerToggle = () => {
+      this.onSomethingOpenInsideChange();
+    };
+
+    addShortcutListener(['ctrl+f', 'alt+f', 'meta+f'], () => {
+      if(appNavigationController.findItemByType('popup')) return;
+      // * from inside the archive the search stays in it
+      if(lastItem(this.getHistory()) instanceof AppArchivedTab) {
+        this.openArchiveSearch();
+        return;
+      }
+
+      this.initSearch().open();
+    });
+
+    addShortcutListener(['ctrl+0', 'meta+0'], () => {
+      if(appNavigationController.findItemByType('popup') ||
+        appImManager.chat.peerId === appImManager.myId) return;
+      appImManager.setPeer({
+        peerId: appImManager.myId
+      });
+    });
+  }
+
+  /**
+   * Focus search input by pressing Escape
+   */
+  public initNavigation() {
+    const navigationItem: NavigationItem = {
+      type: 'global-search-focus',
+      onPop: () => {
+        setTimeout(() => {
+          if(this.isAnimatingCollapse) return;
+          this.initSearch().open();
+        }, 0);
+
+        return false;
+      },
+      noHistory: true
+    };
+    appNavigationController.removeByType('global-search-focus');
+    // * the fallback goes under whatever is up already: a call's panel kept through an account switch
+    appNavigationController.unshiftItem(navigationItem);
+  }
+
+  public isCollapsed() {
+    // In the floating range the bar is always rendered expanded — the
+    // is-collapsed class is preserved as the remembered preference for
+    // wider viewports, but every consumer should see "not collapsed".
+    if(mediaSizes.isLessThanFloatingLeftSidebar) return false;
+    return this.sidebarEl.classList.contains('is-collapsed');
+  }
+
+  public hasFoldersSidebar() {
+    return document.body.classList.contains('has-folders-sidebar');
+  }
+
+  public onCollapsedChange(canShowCtrlFTip = false) {
+    this.chatListContainer.parentElement.classList.toggle('fade', this.isCollapsed());
+    this.chatListContainer.parentElement.classList.toggle('zoom-fade', !this.isCollapsed());
+    appDialogsManager.xd.toggleAvatarUnreadBadges(this.isCollapsed(), undefined);
+    appDialogsManager.onChatListNarrowChange();
+
+    const [hasFoldersSidebar] = useHasFoldersSidebar();
+
+    if(canShowCtrlFTip && this.isCollapsed() && !hasFoldersSidebar()) {
+      this.showCtrlFTip();
+    }
+
+    if(!this.isCollapsed()) appDialogsManager.resizeStoriesList?.();
+  }
+
+  public hasSomethingOpenInside() {
+    return this.hasTabsInNavigation() || this.isSearchActive || !!appDialogsManager.forumTab;
+  }
+
+  public closeEverythingInside() {
+    this.closeSearch();
+    appDialogsManager.toggleForumTab();
+
+    return this.closeAllTabs();
+  }
+
+  // Like closeEverythingInside, but closes stacked tabs the "natural" way (via
+  // the back arrow) so a tab can still confirm before closing. Returns false —
+  // without touching the search or the forum — if the user declines a tab's
+  // close confirmation, so the caller can cancel whatever triggered the close.
+  public async closeEverythingInsideNaturally() {
+    if(!await this.closeAllTabsNaturally()) {
+      return false;
+    }
+
+    if(this.isSearchActive) {
+      this.closeSearch();
+    }
+    appDialogsManager.toggleForumTab();
+
+    return true;
+  }
+
+  private isAnimatingCollapse = false;
+  // * settles as the bar's resize under way is over (`isAnimatingCollapse` back to false)
+  private collapseAnimation: Promise<void>;
+  private onSomethingOpenInsideChange = (force = false) => {
+    const wasFloating = this.sidebarEl.classList.contains('has-open-tabs');
+    const isFloating = force || this.hasSomethingOpenInside();
+    const isCollapsed = this.isCollapsed();
+    const hasRealTabs = this.hasTabsInNavigation();
+
+    this.sidebarEl.classList.toggle('has-open-tabs', isFloating);
+    this.sidebarEl.classList.toggle('has-real-tabs', hasRealTabs);
+    this.sidebarEl.classList.toggle('has-forum-open', !!appDialogsManager.forumTab);
+    // A floating forum stays mounted under its own management tabs — take it out
+    // of hit-testing so the selected tab gets pointer and keyboard interaction.
+    if(appDialogsManager.forumTab) {
+      appDialogsManager.forumTab.container.inert = hasRealTabs;
+    }
+    useHasOpenLeftTabs()[1](isFloating);
+
+    // Keep the pop-out flag in sync with the actual tabs state regardless of
+    // the early-return paths below. If we only set it inside the
+    // isFloating/!isFloating branches, opening a tab from an expanded sidebar
+    // and then closing it would leave the flag stuck at true — and a later
+    // collapse via the resize handle would render at default width instead of
+    // SIDEBAR_COLLAPSED_WIDTH.
+    setOpenTabsLeftSidebar(isFloating);
+
+    if(!isCollapsed && !this.hasSomethingOpenInside()) {
+      pause(300).then(() => {
+        // Mainly for stories when changing tabs view left <-> top
+        rootScope.dispatchEvent('resizing_left_sidebar');
+      });
+      return;
+    }
+
+    if(wasFloating === isFloating) return;
+
+
+    // Width is animated by CSS (transition on #column-left.is-collapsed
+    // width). The numbers below define how long we hold the auxiliary
+    // class state — they must match the layer-transition duration the CSS
+    // rule uses (currently 200ms).
+    const ANIMATION_TIME = 200;
+    // Wait a touch longer than the width transition before removing the
+    // force-* classes so child layouts don't shift while the bar is still
+    // visually resizing.
+    const DELAY_AFTER_ANIMATION = 150;
+
+    if(isFloating) {
+      this.sidebarEl.classList.add(
+        'force-hide-large-content',
+        'force-hide-menu',
+        'force-chatlist-thin'
+      );
+      !this.isSearchActive && this.sidebarEl.classList.add('force-hide-search');
+
+      this.isAnimatingCollapse = true;
+      this.collapseAnimation = pause(ANIMATION_TIME + DELAY_AFTER_ANIMATION).then(() => {
+        this.isAnimatingCollapse = false;
+        this.sidebarEl.classList.remove(
+          'force-hide-large-content',
+          'force-hide-menu',
+          'force-hide-search',
+          'force-chatlist-thin'
+        );
+      });
+      if(!appDialogsManager.forumTab)
+        appDialogsManager.xd?.toggleAvatarUnreadBadges(false, undefined);
+    } else {
+      this.sidebarEl.classList.add(
+        'force-fixed',
+        'hide-add-folders',
+        'force-chatlist-thin'
+      );
+
+      this.isAnimatingCollapse = true;
+      this.collapseAnimation = pause(ANIMATION_TIME + DELAY_AFTER_ANIMATION).then(() => {
+        this.sidebarEl.classList.remove(
+          'force-fixed',
+          'hide-add-folders',
+          'force-chatlist-thin'
+        );
+
+        appDialogsManager.xd.toggleAvatarUnreadBadges(true, undefined);
+
+        return pause(200).then(() => {
+          this.isAnimatingCollapse = false;
+        });
+      });
+    }
+  }
+
+  public showCtrlFTip() {
+    const DATE_KEY = 'ctrlf-toast-to-show-again';
+    const showAgain = parseInt(localStorage.getItem(DATE_KEY));
+    const now = tsNow(true);
+
+    if(showAgain && now < showAgain) return;
+
+    toastNew({
+      langPackKey: IS_APPLE ? 'CtrlFSearchTipMac' : 'CtrlFSearchTip'
+    });
+    // Show once between 1 week to 2 months
+    const waitSeconds = (Math.round(Math.random() * 7 * 7) + 7) * 24 * 60 * 60;
+    localStorage.setItem(DATE_KEY, now + waitSeconds + '');
+  }
+
+  private initSidebarResize() {
+    this.onTabsCountChange = () => {
+      this.onSomethingOpenInsideChange();
+    }
+
+    installColumnResize({
+      columnEl: this.sidebarEl,
+      side: 'left',
+      isCollapsed: () => this.isCollapsed(),
+      setCollapsed: (collapsed) => {
+        // Drag only fires off-handheld (the resize handle is display:none
+        // at handheld), so the raw drag value is already the effective
+        // one — push it into the signal and the mirror effect in
+        // setSidebarLeftWidth (index.ts) toggles #column-left.is-collapsed.
+        useIsSidebarCollapsed()[1](collapsed);
+      },
+      onCollapsedChange: () => this.onCollapsedChange(true),
+      preventCollapse: () => this.hasSomethingOpenInside(),
+      onSwipeTick: () => appImManager.adjustChatPatternBackground()
+    });
+  }
+
+  public createToolsMenu(mountTo?: HTMLElement, positionPadding?: Parameters<typeof ButtonMenuToggle>[0]['positionPadding']) {
+    const closeTabsBefore = async(clb: () => void) => {
+      this.closeEverythingInside() && await pause(200);
+
+      clb();
+    }
+
+    const btnArchive: typeof menuButtons[0] = {
+      icon: 'archive',
+      text: 'ArchivedChats',
+      onClick: () => {
+        this.openArchiveTab();
+      },
+      verify: async() => {
+        const managers = bindManagersToSession(this.managers);
+        const folder = await managers.dialogsStorage.getFolderDialogs(FOLDER_ID_ARCHIVE, false);
+        const hasArchiveStories = await managers.appStoriesManager.hasArchive();
+        return !!folder.length || hasArchiveStories || !(await managers.dialogsStorage.isDialogsLoaded(FOLDER_ID_ARCHIVE));
+      }
+    };
+
+    const onContactsClick = () => {
+      closeTabsBefore(() => {
+        this.createTab(AppContactsTab).open();
+      });
+    };
+
+    const moreSubmenu = createSubmenuTrigger({
+      options: {
+        text: 'MultiAccount.More',
+        icon: 'more'
+      },
+      createSubmenu: (args) => this.createMoreSubmenu(args, closeTabsBefore)
+    });
+
+    const newSubmenu = createSubmenuTrigger({
+      options: {
+        text: 'CreateANew',
+        icon: 'edit',
+        verify: () => this.isCollapsed(),
+        separator: true
+      },
+      createSubmenu: () => this.createNewChatsSubmenu()
+    });
+
+    const menuButtons: (ButtonMenuItemOptions & {verify?: () => boolean | Promise<boolean>})[] = [{
+      icon: 'plus',
+      text: 'MultiAccount.AddAccount',
+      onClick: this.addAccount,
+      verify: async() => {
+        const totalAccounts = await AccountController.getTotalAccounts();
+        return totalAccounts < MAX_ACCOUNTS && !!(await AccountController.getFreeAccountNumber());
+      }
+    }, newSubmenu, {
+      icon: 'savedmessages',
+      text: 'SavedMessages',
+      onClick: () => {
+        setTimeout(() => { // menu doesn't close if no timeout (lol)
+          appImManager.setPeer({
+            peerId: appImManager.myId
+          });
+        }, 0);
+      },
+      separator: true
+    }, btnArchive, {
+      icon: 'stories',
+      text: 'MyStories.Title',
+      onClick: () => {
+        closeTabsBefore(() => {
+          this.createTab(AppMyStoriesTab).open(AppMyStoriesTab.getInitArgs());
+        });
+      },
+      verify: () => !TEST_NO_STORIES
+    }, {
+      icon: 'user',
+      text: 'Contacts',
+      onClick: onContactsClick
+    }, {
+      icon: 'wallet',
+      text: 'WalletAttachMoney',
+      new: true,
+      onClick: () => {
+        import('@components/wallet').then(({default: showWalletPopup}) => showWalletPopup());
+      },
+      verify: async() => isWalletReleased() && isWalletAvailable(await apiManagerProxy.getAppConfig())
+    }, {
+      icon: 'phone',
+      text: 'Calls',
+      onClick: () => {
+        closeTabsBefore(() => {
+          this.createTab(AppCallsTab).open();
+        });
+      },
+      verify: () => IS_CALL_SUPPORTED || IS_CONFERENCE_CALL_SUPPORTED
+    }, {
+      id: 'settings',
+      icon: 'settings',
+      text: 'Settings',
+      separator: true,
+      onClick: () => {
+        closeTabsBefore(() => {
+          this.createTab(AppSettingsTab).open();
+        });
+      }
+    }, moreSubmenu];
+
+    const filteredButtons = menuButtons.filter(Boolean);
+    const filteredButtonsSliced = filteredButtons.slice();
+    const buttonMenuToggle = ButtonMenuToggle({
+      direction: 'bottom-right',
+      buttons: filteredButtons,
+      container: mountTo,
+      buttonOptions: {ariaLabel: 'MultiAccount.More'},
+      positionPadding,
+      onOpenBefore: async() => {
+        const managers = bindManagersToSession(this.managers);
+        const emptyAttachMenuBots: AttachMenuBot[] = [];
+        const attachMenuBots = await Promise.race([
+          pause(30).then(() => emptyAttachMenuBots),
+          managers.appAttachMenuBotsManager.getAttachMenuBots().catch(() => emptyAttachMenuBots)
+        ]);
+        const buttons = filteredButtonsSliced.slice();
+        const attachMenuBotsButtons = attachMenuBots.filter((attachMenuBot) => {
+          return attachMenuBot.pFlags.show_in_side_menu;
+        }).map((attachMenuBot) => {
+          const icon = getAttachMenuBotIcon(attachMenuBot);
+          const button: typeof buttons[0] = {
+            regularText: wrapEmojiText(attachMenuBot.short_name),
+            onClick: () => {
+              appImManager.openWebApp({
+                attachMenuBot,
+                botId: attachMenuBot.bot_id,
+                isSimpleWebView: true,
+                fromSideMenu: true
+              });
+            },
+            iconDoc: icon?.icon as MyDocument,
+            new: attachMenuBot.pFlags.side_menu_disclaimer_needed || attachMenuBot.pFlags.inactive
+          };
+
+          return button;
+        });
+
+        function wrapUserName(user: User.user | PeerId) {
+          if(!isObject(user)) {
+            return '' + user;
+          }
+
+          let name = user.first_name;
+          if(user.last_name) name += ' ' + user.last_name;
+
+          name = limitSymbols(name, 15, 18);
+          return wrapEmojiText(name);
+        }
+
+        const targetIdx = buttons.findIndex((btn) => btn.id === 'settings');
+        buttons[targetIdx].separator = !!attachMenuBotsButtons.length;
+        buttons.splice(targetIdx, 0, ...attachMenuBotsButtons);
+        buttons[targetIdx].separator = true;
+
+        const [accountNumbers, notificationsCount] = await Promise.all([
+          AccountController.getAccountNumbers(),
+          uiNotificationsManager.getNotificationsCountForAllAccounts()
+        ]);
+        const accountButtons: typeof buttons = [];
+        for(const accountNumber of accountNumbers) {
+          if(accountNumber === getCurrentAccount()) {
+            const user = await managers.appUsersManager.getSelf();
+            accountButtons.push({
+              avatarInfo: {
+                accountNumber: getCurrentAccount(),
+                peerId: rootScope.myId.toPeerId(),
+                active: true
+              },
+              regularText: wrapUserName(user),
+              onClick: () => {
+                closeTabsBefore(() => {
+                  this.createTab(AppSettingsTab).open();
+                });
+              }
+            });
+          } else {
+            const otherManagers = createProxiedManagersForAccount(accountNumber);
+            const accountData = await AccountController.get(accountNumber);
+            const peerId = accountData.userId?.toPeerId();
+            const user = await otherManagers.appUsersManager.getSelf();
+
+            const content = document.createElement('span');
+            content.append(wrapUserName(user || peerId));
+
+            if(notificationsCount[accountNumber]) {
+              const badge = createBadge('span', 20, 'primary');
+              setBadgeContent(badge, '' + notificationsCount[accountNumber]);
+              content.append(badge);
+            }
+
+            accountButtons.push({
+              avatarInfo: {
+                accountNumber,
+                peerId,
+                peer: user
+              },
+              className: 'btn-menu-account-item',
+              regularText: content,
+              onClick: (e) => {
+                if(e.ctrlKey || e.metaKey) {
+                  changeAccount(accountNumber, true);
+                } else {
+                  switchAccount(accountNumber);
+                }
+              }
+            });
+          }
+        }
+
+        buttons.splice(0, 0, ...accountButtons);
+
+        filteredButtons.splice(0, filteredButtons.length, ...buttons);
+      },
+      onOpen: () => {
+        moreSubmenu.onOpen();
+        newSubmenu.onOpen();
+        btnArchive.element?.append(this.archivedCount);
+      },
+      onClose: () => {
+        moreSubmenu.onClose();
+        newSubmenu.onClose();
+      },
+      noIcon: true
+    });
+
+    return buttonMenuToggle;
+  }
+
+
+  private async createMoreSubmenu(
+    {middleware}: CreateSubmenuArgs,
+    closeTabsBefore: (clb: () => void) => void
+  ) {
+    const toggleTheme = () => {
+      const item = btns[0].element;
+      const icon = item.querySelector('.tgico');
+      const rect = icon.getBoundingClientRect();
+      themeController.switchTheme(undefined, {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+      });
+    };
+
+    const darkModeText = document.createElement('span');
+    darkModeText.append(i18n(themeController.isNight() ? 'DisableDarkMode': 'EnableDarkMode'));
+    const animationsText = document.createElement('span');
+
+    const btns: ButtonMenuItemOptionsVerifiable[] = [{
+      icon: 'darkmode',
+      regularText: darkModeText,
+      onClick: () => {}
+    }, {
+      id: 'animations-toggle',
+      icon: 'animations',
+      regularText: animationsText,
+      onClick: () => {
+        // * full → reduced → off → full again; the system's reduce motion leaves only reduced and off
+        const level = liteMode.getAnimationLevel();
+        liteMode.setAnimationLevel(level ? level - 1 as AnimationLevel : (liteMode.isMotionHeldBySystem() ? 1 : 2));
+        updateAnimationsToggleButton();
+      },
+      // * the next level is a click away
+      keepOpen: true,
+      verify: () => !liteMode.isEnabled()
+    }, {
+      icon: 'animations',
+      text: 'LiteMode.Title',
+      onClick: () => {
+        closeTabsBefore(() => {
+          this.createTab(AppPowerSavingTab).open();
+        });
+      },
+      verify: () => liteMode.isEnabled()
+    }, {
+      icon: 'aversion',
+      text: 'ChatList.Menu.SwitchTo.A',
+      onClick: () => {
+        // * with a passcode the accounts are kept encrypted, where Web A can't read them; and it asks
+        // * the same before switching here
+        const [appSettings] = useAppSettings();
+        if(appSettings.passcode?.enabled) {
+          confirmationPopup({
+            titleLangKey: 'ChatList.Menu.SwitchTo.A',
+            descriptionLangKey: 'ChatList.Menu.SwitchTo.A.Passcode',
+            button: {langKey: 'Continue'}
+          }).then(() => {
+            closeTabsBefore(() => {
+              AppPasscodeLockTab.openChecked(this);
+            });
+          }, noop);
+          return;
+        }
+
+        Promise.all([
+          sessionStorage.set({kz_version: 'Z'}),
+          sessionStorage.delete('tgme_sync')
+        ]).then(() => {
+          appNavigationController.navigateToUrl('https://web.telegram.org/a/');
+        });
+      },
+      separator: App.isMainDomain,
+      verify: () => App.isMainDomain
+    }, {
+      icon: 'help',
+      text: 'TelegramFeatures',
+      onClick: () => {
+        const url = I18n.format('TelegramFeaturesUrl', true);
+        appImManager.openUrl(url);
+      },
+      separator: !App.isMainDomain
+    }, {
+      icon: 'bug',
+      text: 'ReportBug',
+      onClick: () => {
+        const a = document.createElement('a');
+        setBlankToAnchor(a);
+        a.href = 'https://bugs.telegram.org/?tag_ids=40&sort=time';
+        document.body.append(a);
+        a.click();
+        setTimeout(() => {
+          a.remove();
+        }, 0);
+      }
+    }, {
+      icon: 'plusround',
+      text: 'PWA.Install',
+      onClick: () => {
+        const installPrompt = getInstallPrompt();
+        installPrompt?.();
+      },
+      verify: () => !!getInstallPrompt()
+    }, {
+      icon: 'pip',
+      // The More submenu is rebuilt on every open (createMoreSubmenu runs per open), so reading the live
+      // pip state here keeps the label in sync: while popped out the entry flips to "Exit". The whole app
+      // — including this menu — lives in the pip window when active, so that's where the user sees it.
+      text: isClientPipOpen() ? 'ClientPip.Exit' : 'PictureInPicture',
+      onClick: () => {
+        // The click is the user gesture `requestWindow` needs; closing the menu doesn't consume it.
+        if(isClientPipOpen()) {
+          closeClientPip();
+        } else {
+          openClientPip();
+        }
+      },
+      // Document Picture-in-Picture is Chromium-only — gate the entry on actual support.
+      verify: () => DOCUMENT_PICTURE_IN_PICTURE_SUPPORTED
+    }];
+
+
+    // * the toggle names what its click does
+    const animationsToggleTexts: {[level in AnimationLevel]: LangPackKey} = {
+      2: 'ReduceAnimations',
+      1: 'DisableAnimations',
+      0: 'EnableAnimations'
+    };
+
+    function updateAnimationsToggleButton() {
+      const animationToggleButton = btns.find((button) => button.id === 'animations-toggle')?.element;
+      if(!animationToggleButton) return;
+
+      const level = liteMode.getAnimationLevel();
+      const icon = animationToggleButton.querySelector('.tgico');
+      icon?.classList.toggle('animations-icon-reduce', level === 2);
+      icon?.classList.toggle('animations-icon-off', level === 1);
+
+      animationsText.replaceChildren(i18n(animationsToggleTexts[level]));
+    }
+
+    const filtered = await filterAsync(btns, verifyMenuItem);
+    const menu = await ButtonMenu({
+      buttons: filtered
+    });
+
+    menu.append(getVersionLink());
+    menu.classList.add('sidebar-tools-submenu');
+
+    const darkModeBtn = btns[0].element;
+    darkModeBtn.addEventListener(CLICK_EVENT_NAME, (e) => {
+      e.stopPropagation();
+      toggleTheme();
+      pause(20).then(() => contextMenuController.close());
+    }, true);
+
+    updateAnimationsToggleButton();
+
+    if(!middleware()) return;
+
+    return menu;
+  }
+
+  private createNewChatsMenuOptions(closeBefore?: boolean, singular?: boolean): ButtonMenuItemOptionsVerifiable[]  {
+    const closeTabsBefore = async(clb: () => void) => {
+      if(closeBefore) {
+        this.closeEverythingInside() && await pause(200);
+      }
+      clb();
+    }
+
+    const onNewGroupClick = () => {
+      closeTabsBefore(() => {
+        createNewGroupTab(this);
+      });
+    };
+
+    const onContactsClick = () => {
+      closeTabsBefore(() => {
+        this.createTab(AppContactsTab).open();
+      });
+    };
+
+    return [{
+      icon: 'newchannel',
+      text: singular ? 'Channel' : 'NewChannel',
+      onClick: () => {
+        closeTabsBefore(() => {
+          this.createTab(AppNewChannelTab).open({});
+        });
+      }
+    }, {
+      icon: 'newgroup',
+      text: singular ? 'Group' : 'NewGroup',
+      onClick: onNewGroupClick
+    }, {
+      icon: 'phone',
+      text: 'ConferenceCall.New',
+      verify: () => IS_CONFERENCE_CALL_SUPPORTED,
+      onClick: () => {
+        closeTabsBefore(() => {
+          void appImManager.createConference().catch(noop);
+        });
+      }
+    }, {
+      icon: 'newprivate',
+      text: singular ? 'PrivateChat' : 'NewPrivateChat',
+      onClick: onContactsClick
+    }];
+  }
+
+  private createNewChatsMenuButton() {
+    const btnMenu = ButtonMenuToggle({
+      direction: 'top-left',
+      buttons: this.createNewChatsMenuOptions(false),
+      noIcon: true,
+      buttonOptions: {ariaLabel: 'ChatAutomation.NewChats'},
+      positionPadding: {bottom: 10}
+    });
+    btnMenu.className = 'btn-new-menu btn-circle rp btn-corner z-depth-1 btn-menu-toggle animated-button-icon';
+    btnMenu.tabIndex = 0;
+    btnMenu.setAttribute('role', 'button');
+    // The keyboard layer activates it through attachClickEvent; without the layer it does so itself, as before.
+    if(!Modes.a11y) {
+      btnMenu.addEventListener('keydown', (e: KeyboardEvent) => {
+        if(e.key !== 'Enter' && e.key !== ' ') return;
+
+        cancelEvent(e);
+        // Use the same synthetic event as pointer activation. On touch-capable
+        // desktops the shared click helper listens to mousedown, not click.
+        simulateClickEvent(btnMenu);
+      });
+    }
+    const icons: Icon[] = ['newchat_filled', 'close'];
+    btnMenu.prepend(...icons.map((icon, idx) => Icon(icon, 'animated-button-icon-icon', 'animated-button-icon-icon-' + (idx === 0 ? 'first' : 'last'))));
+    btnMenu.id = 'new-menu';
+
+    return btnMenu;
+  }
+
+  private createNewChatsSubmenu() {
+    return ButtonMenu({
+      buttons: this.createNewChatsMenuOptions(true, true)
+    });
+  }
+
+  public initSearch() {
+    if(this.searchInitResult) return this.searchInitResult;
+
+    const searchContainer = this.sidebarEl.querySelector('#search-container') as HTMLDivElement;
+
+    const scrollable = new Scrollable(searchContainer);
+
+    const close = () => {
+      simulateClickEvent(this.backBtn);
+    };
+
+    const searchListenerSetter = new ListenerSetter();
+    // * the search's own lifetime: the sidebar's middleware is never cleaned, and each opening of the
+    // * search left its groups (their roots and lists) registered there
+    const searchMiddlewareHelper = this.middlewareHelper.get().create();
+    const middleware = searchMiddlewareHelper.get();
+    this.searchGroups = {
+      contacts: createSearchGroup({name: 'SearchAllChatsShort', type: 'contacts', onFound: close, middleware}),
+      globalContacts: createSearchGroup({name: 'GlobalSearch', type: 'contacts', onFound: close, middleware}),
+      messages: createSearchGroup({name: 'SearchMessages', type: 'messages', middleware}),
+      people: createSearchGroup({name: false, type: 'contacts', className: 'search-group-people', autonomous: false, onFound: close, noIcons: true, middleware, scrollableX: true}),
+      recent: createSearchGroup({
+        name: 'Recent',
+        type: 'contacts',
+        className: 'search-group-recent',
+        onFound: (element) => {
+          this.managers.appUsersManager.pushRecentSearch(element.dataset.peerId.toPeerId());
+          close();
+        },
+        middleware
+      })
+    };
+
+    this.searchGroups.messages.createPlaceholder = () => {
+      const placeholder = new EmptySearchPlaceholder;
+      const canSearchAllChats = chatTypeMenu.props.selected !== 'all' && !chatTypeMenu.props.hidden;
+      if(canSearchAllChats)
+        placeholder.feedProps({
+          onAllChats: () => {
+            chatTypeMenu.props.selected = 'all';
+            updateSearchQuery({search: this.inputSearch.value, chatType: 'all'})
+          }
+        });
+
+      // * the same notice for the next query stays on screen as it is (`commitSearchGroups`)
+      placeholder.dataset.key = canSearchAllChats ? 'chat-type' : 'all';
+      return placeholder;
+    };
+
+    const chatTypeMenu = new ChatTypeMenu();
+    chatTypeMenu.feedProps({
+      onChange: (chatType) => void updateSearchQuery({search: this.inputSearch.value, chatType}),
+      selected: 'all'
+    });
+
+    this.searchGroups.messages.setNameRight({
+      children: chatTypeMenu
+    });
+
+    const searchSuper = this.searchSuper = new AppSearchSuper({
+      mediaTabs: [{
+        inputFilter: 'inputMessagesFilterEmpty',
+        name: 'FilterChats',
+        type: 'chats'
+      }, {
+        name: 'ChannelsTab',
+        type: 'channels'
+      }, {
+        name: 'MiniApps.AppsSearch',
+        type: 'apps'
+      }, {
+        name: 'PostsSearch.TabName',
+        type: 'posts'
+      }, {
+        inputFilter: 'inputMessagesFilterPhotoVideo',
+        name: 'SharedMediaTab2',
+        type: 'media'
+      }, {
+        inputFilter: 'inputMessagesFilterUrl',
+        name: 'SharedLinksTab2',
+        type: 'links'
+      }, {
+        inputFilter: 'inputMessagesFilterDocument',
+        name: 'SharedFilesTab2',
+        type: 'files'
+      }, {
+        inputFilter: 'inputMessagesFilterMusic',
+        name: 'SharedMusicTab2',
+        type: 'music'
+      }, {
+        inputFilter: 'inputMessagesFilterRoundVoice',
+        name: 'SharedVoiceTab2',
+        type: 'voice'
+      }],
+      scrollable,
+      searchGroups: this.searchGroups,
+      asChatList: true,
+      hideEmptyTabs: false,
+      showSender: true,
+      managers: this.managers,
+      scrollOffset: 16
+    });
+
+    const dialogContextMenus = [
+      this.searchGroups.contacts.list,
+      this.searchGroups.globalContacts.list,
+      this.searchGroups.messages.list,
+      this.searchGroups.people.list,
+      this.searchGroups.recent.list,
+      searchSuper.mediaTabs.find((tab) => tab.type === 'channels').contentTab
+    ].map((list) => new DialogsContextMenu(this.managers, {
+      useDialogFolder: true,
+      recentSearch: list === this.searchGroups.recent.list
+    }).attach(list));
+
+    let prevTab: SearchSuperMediaType;
+    searchSuper.onChangeTab = (tab) => {
+      if(prevTab === 'posts') {
+        simulateClickEvent(this.inputSearch.clearBtn);
+      }
+
+      prevTab = tab.type;
+      searchSuper.searchContext.chatType = 'all';
+      if(tab.type === 'posts') {
+        searchSuper.globalPostsSearch?.setQuery(this.inputSearch.value);
+      }
+    };
+
+    this.watchChannelsTabVisibility(searchListenerSetter);
+
+    scrollable.append(searchSuper.container);
+
+    const resetSearch = () => {
+      searchSuper.changeQuery({
+        peerId: ''.toPeerId(),
+        folderId: 0
+      });
+      searchSuper.selectTab(0);
+    };
+
+    resetSearch();
+
+    const pickedElements: HTMLElement[] = [];
+    let selectedPeerId: PeerId = ''.toPeerId();
+    let selectedCommunityId: ChatId;
+    let selectedMinDate = 0;
+    let selectedMaxDate = 0;
+    let selectedArchive = false;
+    // * a screen reader hears what the search is narrowed to along with the field
+    let describingIds: string[] = [];
+    const describePicked = () => {
+      const input = this.inputSearch.input;
+      const ids = pickedElements.map((element) => {
+        const title = element.querySelector('.selector-user-title');
+        if(title) title.id ||= createUniqueId();
+        return title?.id;
+      }).filter(Boolean);
+      const describedBy = (input.getAttribute('aria-describedby') || '')
+      .split(/\s+/)
+      .filter((id) => id && !describingIds.includes(id))
+      .concat(describingIds = ids);
+
+      if(describedBy.length) {
+        input.setAttribute('aria-describedby', describedBy.join(' '));
+      } else {
+        input.removeAttribute('aria-describedby');
+      }
+    };
+
+    const updatePicked = () => {
+      describePicked();
+      // (this.inputSearch.input as HTMLInputElement).placeholder = pickedElements.length ? 'Search' : 'Telegram Search';
+      this.inputSearch.container.classList.toggle('is-picked-twice', pickedElements.length === 2);
+      this.inputSearch.container.classList.toggle('is-picked', !!pickedElements.length);
+      pickedElements.forEach((element, idx) => {
+        element.classList.remove('is-first', 'is-last');
+        element.classList.add(idx === 0 ? 'is-first' : 'is-last');
+      });
+
+      // * a search inside the archive can still be narrowed by chat type
+      if(pickedElements.some((element) => element.dataset.key !== ARCHIVE_SEARCH_KEY)) {
+        pause(0).then(() => chatTypeMenu.props.hidden = true);
+      } else {
+        chatTypeMenu.props.hidden = false;
+      }
+
+      if(pickedElements.length) {
+        // * how far the last chip reaches into the field from its inline start (`padding-inline-start`)
+        const pickedRect = pickedElements[pickedElements.length - 1].getBoundingClientRect();
+        const inputRect = this.inputSearch.input.getBoundingClientRect();
+        this.inputSearch.input.style.setProperty(
+          '--paddingLeft',
+          (I18n.getIsRTL() ? inputRect.right - pickedRect.left : pickedRect.right - inputRect.left) + 'px'
+        );
+      } else {
+        this.inputSearch.input.style.removeProperty('--paddingLeft');
+      }
+    };
+
+    // * a chip is a button that takes its filter off, by keyboard too under the a11y layer
+    const pickEntity = (element: HTMLElement) => {
+      ensureButtonSemantics(element);
+      const removeLabel = document.createElement('span');
+      removeLabel.classList.add('sr-only');
+      removeLabel.append(i18n('Search.RemoveFilter'), ' ');
+      element.querySelector('.selector-user-title')?.before(removeLabel);
+      attachClickEvent(element, () => {
+        unselectEntity(element);
+      });
+
+      // * before the field, where it is drawn, for the focus order
+      this.inputSearch.input.before(element);
+      pickedElements.push(element);
+    };
+
+    const helperMiddlewareHelper = this.middlewareHelper.get().create();
+    const helper = document.createElement('div');
+    helper.classList.add('search-helper', 'hide');
+    helper.addEventListener('click', (e) => {
+      const target = findUpClassName(e.target, 'selector-user');
+      if(!target) {
+        return;
+      }
+
+      target.classList.remove('selector-user-primary');
+      const key = target.dataset.key;
+      if(key.indexOf('date_') === 0) {
+        const [_, minDate, maxDate] = key.split('_');
+        selectedMinDate = +minDate;
+        selectedMaxDate = +maxDate;
+      } else {
+        selectedPeerId = key.toPeerId();
+        selectedCommunityId = undefined;
+      }
+
+      pickEntity(target);
+      this.inputSearch.onChange(this.inputSearch.value = '');
+      updatePicked();
+    });
+
+    searchSuper.nav.parentElement.append(helper);
+
+    // * only a community: a forum or a monoforum is searched as the chat it is
+    const getCommunityByPeerId = (peerId: PeerId) => {
+      const chat = peerId.isAnyChat() ? apiManagerProxy.getChat(peerId.toChatId()) : undefined;
+      return isCommunity(chat) ? chat : undefined;
+    };
+    const renderEntity = (key: PeerId | string, title?: string | HTMLElement) => {
+      const peerId = key.isPeerId() ? key.toPeerId() : undefined;
+      const community = peerId && getCommunityByPeerId(peerId);
+      const isArchive = key === ARCHIVE_SEARCH_KEY;
+      const rendered = AppSelectPeers.renderEntity({
+        key,
+        title: title ?? (isArchive ? i18n('ArchiveSearchFilter') : community?.title),
+        middleware: helperMiddlewareHelper.get(),
+        avatarSize: 30,
+        fallbackIcon: 'calendarfilter',
+        primary: true
+      });
+      if(community) {
+        void rendered.avatar.render({
+          peerId,
+          peer: community as any
+        });
+      } else if(isArchive) {
+        // * the archive row's own picture
+        rendered.avatar.set({icon: 'archive_filled', color: 'blue'});
+      }
+
+      return rendered.element;
+    };
+
+    const unselectEntity = (target: HTMLElement) => {
+      const key = target.dataset.key;
+      if(key.indexOf('date_') === 0) {
+        selectedMinDate = selectedMaxDate = 0;
+      } else if(key === ARCHIVE_SEARCH_KEY) {
+        selectedArchive = false;
+      } else {
+        selectedPeerId = ''.toPeerId();
+        selectedCommunityId = undefined;
+      }
+
+      // * a chip taken off by keyboard leaves the focus where the typing goes on
+      const hadFocus = target.contains(document.activeElement);
+      target.middlewareHelper.destroy();
+      target.remove();
+      indexOfAndSplice(pickedElements, target);
+      if(hadFocus) this.inputSearch.input.focus({preventScroll: true});
+
+      setTimeout(() => {
+        updatePicked();
+        this.inputSearch.onChange(this.inputSearch.value);
+      }, 0);
+    };
+
+    this.inputSearch.onClear = () => {
+      pickedElements.forEach((el) => {
+        unselectEntity(el);
+      });
+
+      setHelperChips([]);
+    };
+
+    // * the chips found for a query take the tabs' place, and give it back, with a crossfade
+    let finishHelperSwap: () => void;
+    const onHelperLength = (hide = !helper.firstElementChild) => {
+      finishHelperSwap?.();
+      const [shown, hidden] = hide ? [searchSuper.nav, helper] : [helper, searchSuper.nav];
+      const leaving = hidden.classList.contains('hide') ? undefined : hidden;
+      shown.classList.remove('hide');
+      // * a row of chips that has gone takes them with it
+      const onLeft = () => {
+        hidden.classList.add('hide');
+        if(hidden === helper) {
+          helper.replaceChildren();
+        }
+      };
+
+      if(!leaving || !liteMode.isAvailable('animations') || !helper.isConnected || document.hidden) {
+        onLeft();
+        return;
+      }
+
+      leaving.classList.add('search-helper-leaving');
+      // * out of the tab order while it fades away
+      leaving.inert = true;
+      const options = getAnimatedOptions(getSearchTransitionDuration());
+      const animations = [
+        shown.animate(CROSS_FADE_KEYFRAMES, options),
+        leaving.animate(CROSS_FADE_KEYFRAMES.slice().reverse(), {...options, fill: 'forwards'})
+      ];
+      const finish = finishHelperSwap = () => {
+        finishHelperSwap = undefined;
+        animations.forEach((animation) => animation.cancel());
+        leaving.classList.remove('search-helper-leaving');
+        leaving.inert = false;
+        onLeft();
+      };
+
+      animations[1].finished.then(() => finishHelperSwap === finish && finish(), noop);
+    };
+
+    const setHelperChips = (elements: HTMLElement[]) => {
+      if(!elements.length) {
+        onHelperLength(true);
+        return;
+      }
+
+      // * on screen and staying: the chips crossfade
+      if(!helper.classList.contains('hide') && !helper.classList.contains('search-helper-leaving')) {
+        crossfadeContent(helper, elements);
+        return;
+      }
+
+      finishHelperSwap?.();
+      helper.replaceChildren(...elements);
+      onHelperLength(false);
+    };
+
+    this.inputSearch.onChange = (value) => {
+      if(searchSuper.mediaTab.type !== 'chats') {
+        chatTypeMenu.props.selected = 'all';
+      }
+      updateSearchQuery({search: value, chatType: chatTypeMenu.props.selected});
+    };
+
+    this.inputSearch.onEnter = (value) => {
+      const trimmed = value.trim();
+      if(!trimmed) return;
+      const wrapped = wrapUrl(trimmed);
+      if(!wrapped.onclick) return;
+      this.inputSearch.value = '';
+      this.inputSearch.onChange?.('');
+      simulateClickEvent(this.backBtn);
+      appImManager.openUrl(trimmed);
+    };
+
+    type UpdateSearchQueryArgs = {
+      search?: string;
+      chatType?: RequestHistoryOptions['chatType'];
+    };
+
+    const updateSearchQuery = ({search: value, chatType}: UpdateSearchQueryArgs) => {
+      const globalOnlyTabs: SearchSuperMediaType[] = [
+        'channels',
+        'apps',
+        'posts'
+      ];
+      const hideGlobalOnlyTabs = !!selectedCommunityId || selectedArchive;
+      for(const type of globalOnlyTabs) {
+        searchSuper.mediaTabsMap
+        .get(type)
+        ?.menuTab.classList.toggle('hide', hideGlobalOnlyTabs);
+      }
+      if(
+        hideGlobalOnlyTabs &&
+        globalOnlyTabs.includes(searchSuper.mediaTab.type)
+      ) {
+        searchSuper.selectTab(
+          searchSuper.mediaTabs.indexOf(searchSuper.mediaTabsMap.get('chats')),
+          false
+        );
+      }
+
+      if(searchSuper.mediaTab.type === 'posts') {
+        searchSuper.globalPostsSearch?.setQuery(value);
+        return
+      }
+
+      // spot input
+      searchSuper.changeQuery({
+        peerId: selectedPeerId,
+        communityId: selectedCommunityId,
+        folderId: selectedPeerId || selectedCommunityId ? undefined : (selectedArchive ? FOLDER_ID_ARCHIVE : 0),
+        query: value,
+        chatType,
+        minDate: selectedMinDate,
+        maxDate: selectedMaxDate
+      });
+
+      helperMiddlewareHelper.clean();
+      const helperMiddleware = helperMiddlewareHelper.get();
+
+      const promises: MaybePromise<HTMLElement[]>[] = [];
+
+      if(!selectedMinDate && value.trim()) {
+        const dates: DateData[] = [];
+        fillTipDates(value, dates);
+        const elements = dates.map((dateData) => {
+          return renderEntity('date_' + dateData.minDate + '_' + dateData.maxDate, dateData.title);
+        });
+
+        promises.push(elements);
+      }
+
+      // * no chat chips next to the archive one: a chat would leave it nothing to narrow
+      if(!selectedPeerId && !selectedCommunityId && !selectedArchive && value.trim()) {
+        const middleware = searchSuper.middleware.get();
+        const promise = Promise.all([
+          this.managers.dialogsStorage.getDialogs({query: value}).then(({dialogs}) => dialogs.map((d) => d.peerId)),
+          this.managers.appUsersManager.getContactsPeerIds(value, true)
+        ]).then((results) => {
+          if(!middleware()) return;
+          const peerIds = new Set(results[0].concat(results[1]).slice(0, 20));
+
+          return [...peerIds].map((peerId) => renderEntity(peerId));
+        });
+
+        promises.push(promise);
+      }
+
+      Promise.all(promises).then((arrays) => {
+        // * an earlier query answering late must not take the chips of the current one away
+        if(!helperMiddleware()) {
+          return;
+        }
+
+        // * the chips shown stay until the new ones are known
+        setHelperChips(flatten(arrays));
+      });
+    };
+
+    searchSuper.tabs.inputMessagesFilterEmpty.addEventListener('mousedown', (e) => {
+      if(e.button !== 0) return;
+
+      const target = findUpTag(e.target, DIALOG_LIST_ELEMENT_TAG) as HTMLElement;
+      if(!target) {
+        return;
+      }
+
+      const searchGroup = findUpClassName(target, 'search-group');
+      if(!searchGroup || searchGroup.classList.contains('search-group-recent') || searchGroup.classList.contains('search-group-people')) {
+        return;
+      }
+
+      const peerId = target.getAttribute('data-peer-id').toPeerId();
+      this.managers.appUsersManager.pushRecentSearch(peerId);
+    }, {capture: true});
+
+    let first = true;
+    let hideNewBtnMenuTimeout: number;
+    // const transition = Transition.bind(null, searchContainer.parentElement, 150);
+    const cleanup = () => {
+      pickedElements.forEach((el) => {
+        el.middlewareHelper.destroy();
+        el.remove();
+      });
+      pickedElements.length = 0;
+      describePicked();
+
+      this.inputSearch.value = '';
+      this.inputSearch.container.classList.remove('is-picked', 'is-picked-twice');
+      this.inputSearch.input.style.removeProperty('--paddingLeft');
+      this.inputSearch.onChange = undefined;
+      this.inputSearch.onClear = undefined;
+      this.inputSearch.onEnter = undefined;
+
+      searchSuper.destroy();
+      dialogContextMenus.forEach((menu) => menu.destroy());
+      helperMiddlewareHelper.destroy();
+      searchMiddlewareHelper.destroy();
+      searchContainer.replaceChildren();
+      searchListenerSetter.removeAll();
+
+      this.searchInitResult = undefined;
+      this.searchSuper = undefined;
+
+      this.inputSearch.input.addEventListener('focus', () => this.initSearch(), {once: true});
+    };
+
+    const transition = TransitionSlider({
+      content: searchContainer.parentElement,
+      type: 'zoom-fade',
+      transitionTime: 150,
+      listenerSetter: searchListenerSetter,
+      onTransitionStart: (id) => {
+        searchContainer.parentElement.parentElement.classList.toggle('is-search-active', id === 1);
+      },
+      onTransitionEnd: (id) => {
+        if(hideNewBtnMenuTimeout) clearTimeout(hideNewBtnMenuTimeout);
+
+        if(id === 0 && !first) {
+          cleanup();
+          hideNewBtnMenuTimeout = window.setTimeout(() => {
+            hideNewBtnMenuTimeout = 0;
+            this.newBtnMenu.classList.remove('is-hidden');
+            this.hasUpdate && this.updateBtn.classList.remove('is-hidden');
+          }, 150);
+        }
+
+        first = false;
+      }
+    });
+
+    transition(0);
+
+    const onFocus = () => {
+      // toolsBtn/backBtn `.is-visible` and the animated icon's `.state-back`
+      // are owned by the Solid effect in init() — flipping `isSearchActive`
+      // below propagates to all three classes.
+      this.newBtnMenu.classList.add('is-hidden');
+      this.updateBtn.classList.add('is-hidden');
+
+      const navigationType: NavigationItem['type'] = 'global-search';
+      if(!IS_MOBILE_SAFARI && !appNavigationController.findItemByType(navigationType)) {
+        // * the bar still resizing as the search opened (the first ~0.5 s), it closes once that is over, not never:
+        // * the Escape or back that asked for it is taken already. Kept open meanwhile, and then popped the way that
+        // * Escape would have (the field let go of, the history entry taken back) - this search's own item only, at
+        // * most once: closed otherwise meanwhile, its item is gone, and a search opened again is not touched
+        const closeWhenSettled = (): void => {
+          if(this.isAnimatingCollapse) {
+            this.collapseAnimation.then(closeWhenSettled);
+            return;
+          }
+
+          // * what took the focus meanwhile (the composer, a popup) keeps it: only the search's own is let go of
+          const focused = document.activeElement;
+          navigationItem.noBlurOnPop = !!focused && focused !== document.body &&
+            !this.inputSearch.container.contains(focused) && !searchContainer.contains(focused);
+          appNavigationController.backByItem(navigationItem);
+        };
+        const navigationItem: NavigationItem = {
+          onPop: () => {
+            if(this.isAnimatingCollapse) {
+              closeWhenSettled();
+              return false;
+            }
+
+            close();
+          },
+          type: navigationType
+        };
+        appNavigationController.pushItem(navigationItem);
+      }
+
+      transition(1);
+
+      // Decide whether the burger should grow/shrink with a transition.
+      // Only set it on the first focus of this open cycle — re-focusing the
+      // input while search is already open would otherwise see the burger's
+      // own `.is-visible` and flip the flag off, breaking the close
+      // animation. Driven structurally off the search trigger's class
+      // because the user prefers checking button presence over proxying
+      // through `.is-collapsed`.
+      if(!this.buttonsContainer.classList.contains('is-visible')) {
+        const triggerIsVisible = this.searchTriggerWhenCollapsed.classList.contains('is-visible');
+        this.buttonsContainer.classList.toggle('appear-animated', !triggerIsVisible);
+      }
+
+      this.buttonsContainer.classList.add('is-visible');
+      this.isSearchActive = true;
+      this.onSomethingOpenInsideChange();
+    };
+
+    searchListenerSetter.add(this.inputSearch.input)('focus', onFocus);
+    onFocus();
+
+    attachClickEvent(this.backBtn, (e) => {
+      // Burger state classes flip back when `isSearchActive` becomes false
+      // — see the init() effect that owns toolsBtn/backBtn/state-back.
+      appNavigationController.removeByType('global-search');
+
+      transition(0);
+      this.buttonsContainer.classList.remove('is-visible');
+      this.isSearchActive = false;
+      this.onSomethingOpenInsideChange();
+
+      // Whatever held focus is on its way out: the back button itself is being
+      // hidden, and closing with Escape blurs the search field without giving
+      // the focus to anything. Someone who Tabbed in would be left on the
+      // document with no place in the sidebar, so the focus moves to the
+      // control that takes the back button's place — once that control is
+      // actually there, since the classes that reveal it are set by an effect
+      // a frame or more from now. A search that was clicked into, or summoned by
+      // Escape from nowhere, goes back to nowhere, as it always did: ringing the
+      // menu button there answers a keyboard walk nobody took.
+      const enteredWithKeyboard = this.searchEnteredWithKeyboard;
+      this.searchEnteredWithKeyboard = undefined;
+      const claimed = (): boolean => {
+        const focused = document.activeElement;
+        // * the field holds its chips and clear button too
+        return !!focused && focused !== document.body && focused !== this.backBtn &&
+          !this.inputSearch.container.contains(focused) && !searchContainer.contains(focused);
+      };
+      if(Modes.a11y && enteredWithKeyboard && !claimed()) {
+        focusWhenSettled(this.toolsBtn, () => !claimed());
+      } else if(Modes.a11y && claimed()) {
+        // * the focus the search was left for, outside it (Tab went on into the center column), stays
+        // * there: Escape closes the search through the navigation, whose pop blurs whatever holds the focus
+        const keeper = document.activeElement as HTMLElement;
+        focusWhenSettled(keeper, () => !document.activeElement || document.activeElement === document.body);
+      }
+
+      chatTypeMenu.props.selected = 'all';
+    }, {listenerSetter: searchListenerSetter});
+
+    this.searchGroups.recent.setNameRight({
+      onClick: () => {
+        const managers = bindManagersToSession(this.managers);
+        confirmationPopup({
+          descriptionLangKey: 'Search.Confirm.ClearHistory',
+          button: {
+            langKey: 'ClearButton',
+            isDanger: true
+          }
+        }).then(() => {
+          return managers.appUsersManager.clearRecentSearch().then(() => {
+            this.searchGroups.recent.clear();
+          });
+        });
+      },
+      children: i18n('ClearRecentSearch')
+    });
+
+    const focusInput = () => {
+      // summoned (Escape, Ctrl+F, the collapsed trigger), not walked into
+      this.searchEnteredWithKeyboard ??= false;
+      this.inputSearch.input.focus({preventScroll: true});
+    };
+
+    const openWithEntity = (key: PeerId | string) => {
+      // * opened from a control that goes away with the tab it was in: a keyboard user is given a place on close
+      this.searchEnteredWithKeyboard ??= !isLastInputPointer();
+      onFocus();
+      focusInput();
+
+      this.inputSearch.onChange(this.inputSearch.value = '');
+      pickEntity(renderEntity(key));
+      // * the chip is measured a frame later, but must not be painted over the placeholder before that
+      this.inputSearch.container.classList.add('is-picked');
+      fastRaf(() => {
+        updatePicked();
+      });
+    };
+
+    return this.searchInitResult = {
+      open: (focus = true) => {
+        onFocus();
+        if(focus) focusInput();
+      },
+      openWithPeerId: (peerId: PeerId) => {
+        selectedCommunityId = getCommunityByPeerId(peerId) ?
+          peerId.toChatId() :
+          undefined;
+        selectedPeerId = selectedCommunityId ?
+          ''.toPeerId() :
+          peerId;
+
+        openWithEntity(peerId);
+      },
+      openWithArchive: () => {
+        selectedArchive = true;
+        openWithEntity(ARCHIVE_SEARCH_KEY);
+      },
+      close: () => {
+        close();
+      }
+    };
+  }
+
+  private async watchChannelsTabVisibility(listenerSetter: ListenerSetter) {
+    const checkChannelsVisiblity = async() => {
+      const managers = bindManagersToSession(this.managers);
+      if(!this.searchSuper) return;
+      const dialogs = await managers.dialogsStorage.getCachedDialogs();
+
+      if(!this.searchSuper) return;
+      let hasChannels = false;
+      for(const dialog of dialogs) {
+        hasChannels = await managers.appPeersManager.isBroadcast(dialog.peerId);
+        if(hasChannels) break;
+      }
+
+      if(!this.searchSuper) return;
+      const channelsTab = this.searchSuper.mediaTabs.find((tab) => tab.type === 'channels');
+      const {communityId, folderId} = this.searchSuper.searchContext;
+      channelsTab.menuTab?.classList.toggle(
+        'hide',
+        !hasChannels || !!communityId || folderId === FOLDER_ID_ARCHIVE
+      );
+    };
+
+    checkChannelsVisiblity();
+
+    listenerSetter.add(rootScope)('channel_update', () => {
+      pause(200).then(() => checkChannelsVisiblity());
+    });
+    listenerSetter.add(rootScope)('peer_deleted', () => {
+      checkChannelsVisiblity();
+    });
+  }
+
+  public closeSearch() {
+    if(!this.isSearchActive) {
+      return;
+    }
+
+    simulateClickEvent(this.backBtn);
+  }
+
+  public createTab<T extends SliderSuperTab>(
+    ctor: SliderSuperTabConstructable<T>,
+    destroyable = true,
+    doNotAppend?: boolean
+  ) {
+    const ctorsToOpenInPopup = [AppSettingsTab, AppEditFolderTab, AppChatFoldersTab]
+    if(this.isCollapsed() && !mediaSizes.isLessThanFloatingLeftSidebar && ctorsToOpenInPopup.includes(ctor as any)) {
+      const {slider} = showSliderPopup({managers: this.managers, navigationType: 'settings-popup'});
+      return slider.createTab(ctor, destroyable, doNotAppend);
+    }
+    return super.createTab(ctor, destroyable, doNotAppend);
+  }
+
+  // Every non-main tab in the left sidebar gets `.item-secondary`. The
+  // chatlist (HTML-declared `.item-main`) keeps its identity; archive /
+  // settings / contacts / etc. (all SliderSuperTab-created) flow through
+  // `addTab` and pick up the marker here, so SCSS rules that target
+  // "secondary" tabs don't have to enumerate every subclass.
+  public addTab(tab: SliderSuperTab) {
+    super.addTab(tab);
+    if(!tab.container.classList.contains('item-main')) {
+      tab.container.classList.add('item-secondary');
+    }
+  }
+
+  public async closeTabsBefore(clb: () => void) {
+    this.closeEverythingInside() && await pause(200);
+    clb();
+  }
+
+  public openArchiveTab() {
+    this.closeTabsBefore(() => {
+      this.createTab(AppArchivedTab).open();
+    });
+  }
+
+  // * the search lives on the chat list, so the archive gives way to it. A menu that asks for it
+  // * closes only after its click, giving the focus back to its trigger, so the search opens after that
+  public async openArchiveSearch() {
+    await pause(0);
+    this.closeTabsBefore(() => {
+      this.initSearch().openWithArchive();
+    });
+  }
+
+  public addAccount = async(e?: MouseEvent | TouchEvent) => {
+    const [totalAccounts, accountNumber] = await Promise.all([
+      AccountController.getTotalAccounts(),
+      AccountController.getFreeAccountNumber()
+    ]);
+    if(totalAccounts >= MAX_ACCOUNTS || !accountNumber) return;
+
+    const hasSomeonePremium = await apiManagerProxy.hasSomeonePremium();
+
+    if(totalAccounts === MAX_ACCOUNTS_FREE && !hasSomeonePremium) {
+      showAccountsLimitPopup();
+      return;
+    }
+
+    // * the first slot is free only when Web A has signed its account out, and a tab opened on it goes to
+    // * the accounts after it (see index.ts): it is signed in to here
+    if((e?.ctrlKey || e?.metaKey) && accountNumber !== 1) {
+      // * the sign-in screen's back button returns here
+      await sessionStorage.set({previous_account: getCurrentAccount()});
+      changeAccount(accountNumber, true);
+      return;
+    }
+
+    // * the sign-in is a screen of the whole tab: the client comes back from Picture-in-Picture for it
+    if(isClientPipOpen()) {
+      closeClientPip();
+    }
+
+    addAccount(accountNumber);
+  };
+}
+
+// made once: a hot update keeps it and moves it onto the edited class (see @helpers/hotRegistry)
+const appSidebarLeft = new AppSidebarLeft();
+MOUNT_CLASS_TO.appSidebarLeft = appSidebarLeft;
+registerHotReloadGuard({appSidebarLeft});
+export default appSidebarLeft;
+
+function getVersionLink() {
+  const btnMenuFooter = document.createElement('a');
+  btnMenuFooter.href = 'https://github.com/morethanwords/tweb/blob/master/CHANGELOG.md';
+  setBlankToAnchor(btnMenuFooter);
+  btnMenuFooter.classList.add('btn-menu-footer');
+  btnMenuFooter.addEventListener(CLICK_EVENT_NAME, (e) => {
+    e.stopPropagation();
+    contextMenuController.close();
+  });
+  const t = document.createElement('span');
+  t.classList.add('btn-menu-footer-text');
+  t.textContent = getAppVersionText();
+  btnMenuFooter.append(t);
+
+  return btnMenuFooter;
+}
+
+if(import.meta.hot) import.meta.hot.accept();

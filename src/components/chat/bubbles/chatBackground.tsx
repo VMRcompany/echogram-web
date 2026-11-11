@@ -1,0 +1,950 @@
+/**
+ * Chat background — gradient + optional pattern/image, with cross-fade transitions.
+ *
+ * Two consumers:
+ *  1. `<ChatBackground>` Solid component — used inline (passcode lock, fake bubbles previews).
+ *  2. `appChatBackground` singleton — page-wide background mounted on body, driven imperatively
+ *     by `index.ts` (initial load) and `appImManager` / `Chat` (per-peer updates).
+ *
+ * The component double-buffers two DOM layers ("slots"): one is currently visible to the user,
+ * the other is built offstage. When a new background is ready we swap their roles via opacity
+ * cross-fade. Race protection is handled via `tempId`: each effect run claims a fresh id; if a
+ * newer run starts mid-flight the older one bails after disposing its half-built renderers.
+ */
+
+import {Component, createEffect, createSignal, on, onCleanup, onMount, untrack} from 'solid-js';
+import {render} from 'solid-js/web';
+
+import {Theme, WallPaper} from '@layer';
+import themeControllerSingleton, {ThemeController} from '@helpers/themeController';
+import {getColorsFromWallPaper} from '@helpers/color';
+import ChatBackgroundGradientRenderer from '@components/chat/gradientRenderer';
+import ChatBackgroundPatternRenderer, {GiftPatternArea} from '@components/chat/patternRenderer';
+import ChatBackgroundStore from '@lib/chatBackgroundStore';
+import appDownloadManager from '@lib/appDownloadManager';
+import renderImageFromUrl from '@helpers/dom/renderImageFromUrl';
+import {averageColorFromCanvas, averageColorFromImage} from '@helpers/averageColor';
+import highlightingColor from '@helpers/highlightingColor';
+import rootScope from '@lib/rootScope';
+import windowSize from '@helpers/windowSize';
+import {logger, LogTypes} from '@lib/logger';
+import {MOUNT_CLASS_TO} from '@config/debug';
+import {DEFAULT_BACKGROUND_SLUG} from '@config/app';
+import {ReadingManagers} from '@lib/managers';
+import {AppTheme} from '@config/state';
+import {getMiddleware} from '@helpers/middleware';
+import type {MyDocument} from '@appManagers/appDocsManager';
+import getUniqueGiftAttributes from '@appManagers/utils/gifts/getUniqueGiftAttributes';
+import {getChatBackgroundFromFullPeer, getGiftChatTheme} from '@components/chat/chatTheme';
+import classNames from '@helpers/string/classNames';
+import noop from '@helpers/noop';
+import liteMode from '@helpers/liteMode';
+
+import styles from '@components/chat/bubbles/chatBackground.module.scss';
+
+export type ChatBackgroundTheme = AppTheme | Theme;
+
+/**
+ * - `auto` — instant if file is already in cache, else 200ms fade.
+ * - `instant` — no transition.
+ * - `fade` — 200ms opacity fade-in over previous bg.
+ * - `crossfade-forwards` / `crossfade-backwards` — synced with the chat slide animation
+ *   (`var(--transition-standard-in)` 0.3s / `var(--transition-standard-out)` 0.25s).
+ */
+export type ChatBackgroundTransition = 'auto' | 'instant' | 'fade' | 'crossfade-forwards' | 'crossfade-backwards';
+
+/** Metadata about the active background's compositing, surfaced to mirror consumers (folders sidebar). */
+export type ActiveBackgroundMeta = {
+  /**
+   * The wallpaper is a dark pattern rendered via the black *mask* path (e.g. the `night` theme): the
+   * visible chat is heavily darkened by the mask, but the raw gradient — what mirror consumers copy —
+   * stays at full brightness. Consumers should darken their mirror to match the chat (otherwise the
+   * folders sidebar shows the full-brightness gradient, e.g. a bright purple bar in `night`).
+   */
+  isDarkMaskPattern: boolean;
+};
+
+export type ChatBackgroundProps = {
+  theme?: ChatBackgroundTheme;
+  wallPaper?: WallPaper;
+  /** When set without explicit theme/wallPaper, the wallpaper is resolved from this user's profile. */
+  peerId?: PeerId;
+  transition?: ChatBackgroundTransition;
+  class?: string;
+  /** Override the global theme controller — used by the passcode lock screen for HMR safety. */
+  themeController?: ThemeController;
+  /** Override the global managers — same reason as `themeController`. */
+  managers?: ReadingManagers;
+  /**
+   * Pattern-canvas size (CSS pixels). Defaults to the window size — correct for full-screen chat
+   * backgrounds, but wasteful for thumbnails. Picker / theme-tile previews should pass the actual
+   * rendered size of `.background-item` so we don't build a 1400×900 canvas to be CSS-scaled into
+   * a ~72×96 tile.
+   */
+  width?: number;
+  height?: number;
+  gradientRendererRef?: (value: ChatBackgroundGradientRenderer | undefined, meta?: ActiveBackgroundMeta) => void;
+  onHighlightColor?: (hsla: string) => void;
+  onCachedStatus?: (cached: boolean) => void;
+  onReady?: () => void;
+  /**
+   * A pattern that has to be downloaded shows its colours meanwhile, and fades in over them once it is drawn (a tile
+   * of a list, which is not held back by its pattern). `onReady` still waits for the pattern
+   */
+  colorsFirst?: boolean;
+  /**
+   * Hand off the staging-slot reveal to the caller. When set, the effect builds and stages the
+   * new bg offstage as usual, then calls `deferReveal(reveal)` — the caller is responsible for
+   * invoking `reveal()` synchronously at the right moment (typically alongside bubble mount, so
+   * bg flip + bubbles paint in the same frame). `onReady` still fires once staging is complete,
+   * so awaiters of `setBackground`'s returned promise don't block on the visual reveal.
+   *
+   * If the bg is unchanged (effect short-circuits), `deferReveal` is still called with a no-op
+   * `reveal` so callers can unconditionally invoke it.
+   */
+  deferReveal?: (reveal: () => void) => void;
+};
+
+type ResolvedBackground = {
+  theme: ChatBackgroundTheme;
+  wallPaper: WallPaper;
+};
+
+/** One of the two double-buffered DOM layers. Holds the renderers/canvases currently mounted into `el`. */
+type Slot = {
+  el: HTMLElement;
+  appliedTheme?: ChatBackgroundTheme;
+  appliedWallPaper?: WallPaper;
+  gradientRenderer?: ChatBackgroundGradientRenderer;
+  patternRenderer?: ChatBackgroundPatternRenderer;
+  gradientCanvas?: HTMLCanvasElement;
+  patternCanvas?: HTMLCanvasElement;
+  image?: HTMLImageElement;
+  /** a pattern's colours alone, which its pattern is still to come over (`colorsFirst`) */
+  colorsOnly?: boolean;
+  giftModel?: GiftModel;
+};
+
+/** The gift of a gift theme, standing in its slot of the pattern. */
+type GiftModel = {
+  el: HTMLElement,
+  dispose: () => void
+};
+
+/**
+ * Pre-built background not yet attached to a slot. The Solid effect builds these offstage so a
+ * stale run (superseded by a newer one) can throw it away without touching live DOM.
+ */
+type BuiltContent = {
+  resolved: ResolvedBackground;
+  isPattern: boolean;
+  isDarkPattern: boolean;
+  isTinted: boolean;
+  patternRenderer?: ChatBackgroundPatternRenderer;
+  patternCanvas?: HTMLCanvasElement;
+  gradientRenderer?: ChatBackgroundGradientRenderer;
+  gradientCanvas?: HTMLCanvasElement;
+  image?: HTMLImageElement;
+  giftModel?: GiftModel;
+  readyPromise: Promise<void>;
+};
+
+const FADE_TRANSITION_CLASSES = [
+  styles.SlotFade,
+  styles.SlotCrossfadeForwards,
+  styles.SlotCrossfadeBackwards
+];
+
+const log = logger('CHAT-BG', LogTypes.Log | LogTypes.Warn | LogTypes.Error);
+
+async function resolveFromPeer(
+  peerId: PeerId,
+  managers: ReadingManagers
+): Promise<{theme?: ChatBackgroundTheme, wallPaper?: WallPaper}> {
+  if(!peerId.isUser()) return {};
+  const full = await managers.appProfileManager.getCachedFullUser(peerId.toUserId());
+  return getChatBackgroundFromFullPeer(full, untrack(() => themeControllerSingleton.isNight()));
+}
+
+function resolveBackgroundSync(
+  options: {theme?: ChatBackgroundTheme, wallPaper?: WallPaper},
+  themeController: ThemeController
+): ResolvedBackground {
+  // `untrack`: this resolver reads the global theme/wallpaper from appSettings, but it must NOT
+  // create a reactive dependency on them. It runs synchronously inside `setBackground`, which is in
+  // turn called synchronously from Chat's reactive `update()` effect — without untrack, the effect
+  // would subscribe to `appSettings.theme` and re-render the background the instant `switchTheme`
+  // flips the setting, i.e. BEFORE the view-transition starts. That paints the new wallpaper into
+  // the *old* snapshot, so it appears before the circular reveal instead of with it. The background
+  // is driven imperatively (setProps), so dropping this tracking changes nothing else.
+  return untrack(() => {
+    const globalTheme = themeController.getTheme();
+    const theme = options.theme ?? globalTheme;
+    const wallPaper = options.wallPaper ?? themeController.getThemeWallpaper(theme);
+    return {theme, wallPaper};
+  });
+}
+
+function getWallPaperUrl(
+  wallPaper: WallPaper,
+  managers: ReadingManagers | undefined
+): {urlOrPromise: string | Promise<string> | undefined, isColorOnly: boolean} {
+  const colors = getColorsFromWallPaper(wallPaper);
+  const slug = (wallPaper as WallPaper.wallPaper)?.slug;
+  const isColorOnly = !!colors && !slug && !wallPaper.settings?.intensity;
+
+  if(isColorOnly || !slug) {
+    return {urlOrPromise: undefined, isColorOnly};
+  }
+
+  // Built-in default pattern is bundled — used on auth screens before managers exist.
+  if(slug === DEFAULT_BACKGROUND_SLUG) {
+    return {urlOrPromise: 'assets/img/pattern.svg', isColorOnly};
+  }
+
+  const settings = wallPaper.settings;
+  const urlOrPromise = ChatBackgroundStore.getBackground({
+    slug,
+    canDownload: !!managers,
+    managers,
+    appDownloadManager,
+    blur: settings && settings.pFlags.blur
+  });
+
+  return {urlOrPromise, isColorOnly};
+}
+
+/**
+ * The gift's own sticker over the slot the pattern keeps for it, played once and half-transparent
+ * as tdesktop shows it.
+ */
+function createGiftModel(
+  patternRenderer: ChatBackgroundPatternRenderer,
+  patternCanvas: HTMLCanvasElement,
+  doc: MyDocument
+): GiftModel {
+  const el = document.createElement('div');
+  el.classList.add(styles.GiftModel);
+  const middlewareHelper = getMiddleware();
+  let size: number, area: GiftPatternArea, shown: {width: number, height: number};
+  // * the canvas is drawn at the window's size and shown cover-fitted in its layer, which a preview's is smaller than:
+  // * the model goes where its slot is shown
+  const place = () => {
+    if(!area || !shown?.width) {
+      return;
+    }
+
+    const dpr = patternCanvas.dpr || 1;
+    const drawnWidth = patternCanvas.width / dpr, drawnHeight = patternCanvas.height / dpr;
+    const scale = Math.max(shown.width / drawnWidth, shown.height / drawnHeight);
+    const centerX = (shown.width - drawnWidth * scale) / 2 + (area.left + area.width / 2) * scale;
+    const centerY = (shown.height - drawnHeight * scale) / 2 + (area.top + area.height / 2) * scale;
+    el.style.transform = `translate(${centerX - size / 2}px, ${centerY - size / 2}px) rotate(${area.rotation}deg) scale(${area.width * scale / size})`;
+  };
+
+  const resizeObserver = new ResizeObserver(([entry]) => {
+    shown = {width: entry.contentRect.width, height: entry.contentRect.height};
+    place();
+  });
+  resizeObserver.observe(patternCanvas);
+
+  patternRenderer.setGiftAreaListener(patternCanvas, (newArea) => {
+    el.classList.toggle('hide', !newArea);
+    area = newArea;
+    if(!area) {
+      return;
+    }
+
+    if(size === undefined) {
+      size = Math.round(area.width);
+      el.style.width = el.style.height = size + 'px';
+      const middleware = middlewareHelper.get();
+      import('@components/wrappers/sticker').then(({default: wrapSticker}) => {
+        if(!middleware()) return;
+        return wrapSticker({
+          doc,
+          div: el,
+          middleware,
+          width: size,
+          height: size,
+          play: true,
+          loop: false,
+          group: 'none',
+          liteModeKey: 'stickers_chat'
+        });
+      });
+    }
+
+    place();
+  });
+
+  return {
+    el,
+    dispose: () => {
+      resizeObserver.disconnect();
+      middlewareHelper.destroy();
+    }
+  };
+}
+
+function buildContent(
+  layer: HTMLElement,
+  resolved: ResolvedBackground,
+  url: string | undefined,
+  width: number,
+  height: number
+): BuiltContent {
+  const {wallPaper} = resolved;
+  // * the gift's symbols belong to its theme's own pattern, not to a wallpaper set over it
+  const giftTheme = getGiftChatTheme(resolved.theme);
+  const gift = giftTheme?.theme_settings.some((themeSettings) => themeSettings.wallpaper?.id === wallPaper?.id) ?
+    giftTheme.gift :
+    undefined;
+  const giftAttributes = gift?._ === 'starGiftUnique' ? getUniqueGiftAttributes(gift) : undefined;
+  const colors = getColorsFromWallPaper(wallPaper);
+  const isPattern = !!(wallPaper as WallPaper.wallPaper)?.pFlags?.pattern;
+  const themeName = (resolved.theme as AppTheme)?.name;
+  // Two compositing strategies for dark patterns:
+  // - Default (mask): pattern canvas painted black with pattern-shape holes, covering most of the gradient.
+  //   Only the pattern shape gets the gradient color. Used by `night` (its bright peach/pink/purple gradient
+  //   would be too vivid at full opacity — the mask "darkens" the result by black-ing the gaps).
+  // - Overlay (Android-faithful): gradient at full opacity, pattern image as a soft-light overlay (with
+  //   color invert because the bundled pattern.svg is black-on-transparent and we need light doodles over
+  //   the dark gradient). Matches MotionBackgroundDrawable's positive-intensity flow. Used by `tinted` so
+  //   its dark navy gradient is actually visible (matches Android Dark Blue's appearance).
+  const useOverlayRender = themeName === 'tinted';
+  // Tinted forces its rendering parameters from the default tinted wallpaper so picker selections preserve
+  // the "Dark Blue" rendering style (overlay + intensity 38) regardless of the picked theme's intensity sign.
+  // Picker still controls gradient colors and accent — only the rendering knobs (intensity, isDarkPattern)
+  // are held to default tinted's values.
+  let intensity = wallPaper.settings?.intensity && wallPaper.settings.intensity / 100;
+  // * a pattern only: an image's intensity is its dimming, which stays its own
+  if(useOverlayRender && isPattern) intensity = -0.38;
+  const isDarkPattern = useOverlayRender || (!!intensity && intensity < 0);
+
+  let patternCanvas: HTMLCanvasElement | undefined;
+  let gradientCanvas: HTMLCanvasElement | undefined;
+  let image: HTMLImageElement | undefined;
+  let patternRenderer: ChatBackgroundPatternRenderer | undefined;
+  let gradientRenderer: ChatBackgroundGradientRenderer | undefined;
+  let giftModel: GiftModel | undefined;
+
+  if(url && isPattern) {
+    patternRenderer = ChatBackgroundPatternRenderer.getInstance({
+      element: layer,
+      url,
+      width,
+      height,
+      mask: isDarkPattern && !useOverlayRender,
+      giftSymbol: giftAttributes?.pattern?.document as MyDocument
+    });
+    patternCanvas = patternRenderer.createCanvas();
+    patternCanvas.classList.add(styles.CanvasCommon);
+    if(!isDarkPattern || useOverlayRender) patternCanvas.classList.add(styles.Blend);
+    if(useOverlayRender) patternCanvas.classList.add(styles.DarkPatternInvert);
+    if(giftAttributes?.model) {
+      giftModel = createGiftModel(patternRenderer, patternCanvas, giftAttributes.model.document as MyDocument);
+    }
+  } else if(url) {
+    image = document.createElement('img');
+    image.alt = '';
+    // * painted in the frame it goes in: decoded off the frame, a chat's picture showed its slot's bare
+    // * backdrop for a frame or more as it took the place of the background before it
+    image.decoding = 'sync';
+    image.classList.add(styles.CanvasCommon);
+  }
+
+  if(colors) {
+    const created = ChatBackgroundGradientRenderer.create(colors);
+    gradientRenderer = created.gradientRenderer;
+    gradientCanvas = created.canvas;
+    gradientCanvas.classList.add(styles.CanvasCommon, styles.GradientCanvas);
+  }
+
+  // * an image's intensity is how much it is dimmed in the dark, and only there
+  if(image && !themeControllerSingleton.isNightThemeName(themeName || untrack(() => themeControllerSingleton.getResolvedThemeName()))) {
+    intensity = 0;
+  }
+
+  if(intensity) {
+    // Mask path applies opacity to the gradient (so the small visible gradient area in pattern shape
+    // is dimmed). Overlay path applies opacity to the pattern overlay (gradient stays full).
+    const setOpacityTo = image ?? (isDarkPattern && !useOverlayRender ? gradientCanvas : patternCanvas);
+    let opacityMax = Math.abs(intensity) * (isDarkPattern && !useOverlayRender ? .5 : 1);
+    // * dimmed as far as asked, to nothing of it at 100%, as tdesktop does
+    if(image) opacityMax = 1 - intensity;
+    else if(isDarkPattern && !useOverlayRender) opacityMax = Math.max(0.3, opacityMax);
+    setOpacityTo?.style.setProperty('--opacity-max', '' + opacityMax);
+  }
+
+  const readyPromise = new Promise<void>((resolve) => {
+    if(patternRenderer && patternCanvas) {
+      patternRenderer.renderToCanvas(patternCanvas).then(() => resolve());
+    } else if(image && url) {
+      renderImageFromUrl(image, url, () => resolve(), false);
+    } else {
+      resolve();
+    }
+  });
+
+  return {
+    resolved,
+    isPattern,
+    isDarkPattern,
+    isTinted: useOverlayRender,
+    patternRenderer,
+    patternCanvas,
+    gradientRenderer,
+    gradientCanvas,
+    image,
+    giftModel,
+    readyPromise
+  };
+}
+
+/** Releases renderers attached to a built-but-not-mounted content (used when an effect run is superseded). */
+function disposeBuilt(built: BuiltContent) {
+  if(built.patternRenderer && built.patternCanvas) built.patternRenderer.cleanup(built.patternCanvas);
+  if(built.gradientRenderer) built.gradientRenderer.cleanup();
+  built.giftModel?.dispose();
+}
+
+/** Moves a built content into a slot's DOM, taking ownership of its renderers. */
+function attachBuiltToSlot(slot: Slot, built: BuiltContent) {
+  slot.el.classList.toggle(styles.IsPattern, built.isPattern);
+  slot.el.classList.toggle(styles.IsImage, !!built.image);
+  slot.el.classList.toggle(styles.IsTinted, built.isTinted);
+
+  if(built.gradientCanvas) slot.el.append(built.gradientCanvas);
+  if(built.patternCanvas) slot.el.append(built.patternCanvas);
+  if(built.image) slot.el.append(built.image);
+  if(built.giftModel) slot.el.append(built.giftModel.el);
+
+  slot.appliedTheme = built.resolved.theme;
+  slot.appliedWallPaper = built.resolved.wallPaper;
+  slot.gradientRenderer = built.gradientRenderer;
+  slot.patternRenderer = built.patternRenderer;
+  slot.gradientCanvas = built.gradientCanvas;
+  slot.patternCanvas = built.patternCanvas;
+  slot.image = built.image;
+  slot.giftModel = built.giftModel;
+}
+
+function clearSlot(slot: Slot) {
+  if(slot.patternRenderer && slot.patternCanvas) {
+    slot.patternRenderer.cleanup(slot.patternCanvas);
+  }
+  if(slot.gradientRenderer) {
+    slot.gradientRenderer.cleanup();
+  }
+  slot.giftModel?.dispose();
+  while(slot.el.firstChild) slot.el.removeChild(slot.el.firstChild);
+  slot.appliedTheme = undefined;
+  slot.appliedWallPaper = undefined;
+  slot.gradientRenderer = undefined;
+  slot.patternRenderer = undefined;
+  slot.gradientCanvas = undefined;
+  slot.patternCanvas = undefined;
+  slot.image = undefined;
+  slot.colorsOnly = undefined;
+  slot.giftModel = undefined;
+}
+
+function transitionClassFor(transition: ChatBackgroundTransition): string | undefined {
+  switch(transition) {
+    case 'crossfade-forwards': return styles.SlotCrossfadeForwards;
+    case 'crossfade-backwards': return styles.SlotCrossfadeBackwards;
+    default: return undefined;
+  }
+}
+
+function resolveTransition(
+  requested: ChatBackgroundTransition | undefined,
+  cached: boolean,
+  hadPrevious: boolean
+): ChatBackgroundTransition {
+  // First-ever bg, or caller didn't override: cache hit → instant, miss → fade.
+  if(!hadPrevious || !requested || requested === 'auto') {
+    return cached ? 'instant' : 'fade';
+  }
+  return requested;
+}
+
+function computeHighlightingHsla(built: BuiltContent): string | undefined {
+  if(!built.gradientCanvas && !built.image) return;
+  const pixel = built.image ? averageColorFromImage(built.image) : averageColorFromCanvas(built.gradientCanvas!);
+  return highlightingColor(Array.from(pixel) as any);
+}
+
+function createSlotEl(): HTMLDivElement {
+  const el = document.createElement('div');
+  el.classList.add(styles.Slot);
+  return el;
+}
+
+export const ChatBackground: Component<ChatBackgroundProps> = (props) => {
+  let layer!: HTMLDivElement;
+
+  // Two double-buffered slots: `visibleSlot` is what the user currently sees, `stagingSlot` is
+  // where the next bg is built. After the transition completes their roles swap.
+  let visibleSlot!: Slot;
+  let stagingSlot!: Slot;
+
+  // Monotonic counter — each effect run claims one. If a later run starts before this one
+  // finishes (e.g. props change during async URL load), the older run aborts at its next checkpoint.
+  let tempId = 0;
+
+  const themeController = (): ThemeController => props.themeController ?? themeControllerSingleton;
+  const managers = (): ReadingManagers | undefined => props.managers ?? rootScope.managers;
+
+  // * the background a fade comes in over, let go of once it is covered
+  let settleFade: (() => void) | undefined;
+
+  /** Promotes `stagingSlot` to visible and demotes `visibleSlot`, then swaps the references. */
+  const presentStagingSlot = (transition: ChatBackgroundTransition) => {
+    settleFade?.();
+    const incoming = stagingSlot;
+    const outgoing = visibleSlot;
+
+    incoming.el.classList.remove(...FADE_TRANSITION_CLASSES);
+    outgoing.el.classList.remove(...FADE_TRANSITION_CLASSES);
+
+    if(transition === 'fade' && !liteMode.isAvailable('animations')) {
+      transition = 'instant';
+    }
+
+    // * a fade comes in over the background it replaces, which stays whole under it till then — the two
+    // * fading at once let the page's white through the middle of it (a chat whose picture came late)
+    if(transition === 'fade') {
+      layer.append(incoming.el);
+      incoming.el.classList.add(styles.SlotFade);
+      // Force reflow so the just-added transition class kicks in cleanly.
+      void incoming.el.offsetWidth;
+      incoming.el.classList.add(styles.SlotActive);
+      [visibleSlot, stagingSlot] = [incoming, outgoing];
+
+      const settle = settleFade = () => {
+        incoming.el.removeEventListener('transitionend', onTransitionEnd);
+        if(settleFade === settle) settleFade = undefined;
+        outgoing.el.classList.remove(styles.SlotActive);
+        clearSlot(outgoing);
+      };
+      const onTransitionEnd = (e: TransitionEvent) => {
+        if(e.target === incoming.el) settle();
+      };
+      incoming.el.addEventListener('transitionend', onTransitionEnd);
+      return;
+    }
+
+    const transitionClass = transitionClassFor(transition);
+    if(transitionClass) {
+      incoming.el.classList.add(transitionClass);
+      outgoing.el.classList.add(transitionClass);
+    }
+
+    if(transition === 'instant') {
+      incoming.el.classList.add(styles.SlotActive);
+      outgoing.el.classList.remove(styles.SlotActive);
+      [visibleSlot, stagingSlot] = [incoming, outgoing];
+      clearSlot(stagingSlot);
+      return;
+    }
+
+    // Force reflow so the just-added transition class kicks in cleanly.
+    void incoming.el.offsetWidth;
+
+    incoming.el.classList.add(styles.SlotActive);
+    // For crossfades the outgoing actively fades out.
+    outgoing.el.classList.remove(styles.SlotActive);
+
+    [visibleSlot, stagingSlot] = [incoming, outgoing];
+
+    if(stagingSlot.appliedWallPaper) {
+      stagingSlot.el.addEventListener('transitionend', () => {
+        stagingSlot.el.classList.remove(styles.SlotActive);
+        clearSlot(stagingSlot);
+      }, {once: true});
+    }
+  };
+
+  onMount(() => {
+    visibleSlot = {el: createSlotEl()};
+    stagingSlot = {el: createSlotEl()};
+    layer.append(visibleSlot.el, stagingSlot.el);
+
+    const onResize = () => ChatBackgroundPatternRenderer.resizeInstancesOf(layer);
+    window.addEventListener('resize', onResize);
+    onCleanup(() => {
+      window.removeEventListener('resize', onResize);
+      clearSlot(visibleSlot);
+      clearSlot(stagingSlot);
+    });
+  });
+
+  createEffect(on(
+    () => [props.theme, props.wallPaper, props.peerId] as const,
+    async(deps) => {
+      const [propTheme, propWallPaper, propPeerId] = deps;
+      const myTempId = ++tempId;
+      const ctl = themeController();
+      const mgrs = managers();
+
+      // Resolve theme/wallPaper from peer profile if caller passed only peerId.
+      let theme = propTheme;
+      let wallPaper = propWallPaper;
+      if(propPeerId && !theme && !wallPaper && mgrs) {
+        const fromPeer = await resolveFromPeer(propPeerId, mgrs);
+        if(myTempId !== tempId) return;
+        theme = fromPeer.theme;
+        wallPaper = fromPeer.wallPaper;
+      }
+
+      const resolved = resolveBackgroundSync({theme, wallPaper}, ctl);
+
+      if(visibleSlot.appliedTheme === resolved.theme && visibleSlot.appliedWallPaper === resolved.wallPaper && !visibleSlot.colorsOnly) {
+        log('same background, skipping');
+        props.onCachedStatus?.(true);
+        // No DOM change to reveal — the caller will still try to invoke reveal in sync with
+        // bubbles mount, so hand them a no-op so they don't have to special-case.
+        props.deferReveal?.(noop);
+        props.onReady?.();
+        return;
+      }
+
+      // Load the wallpaper file (may be cached or kick off a download).
+      const {urlOrPromise} = getWallPaperUrl(resolved.wallPaper, mgrs);
+      let url: string | undefined;
+      let cached = true;
+      if(urlOrPromise !== undefined) {
+        cached = !(urlOrPromise instanceof Promise);
+        props.onCachedStatus?.(cached);
+        if(
+          !cached &&
+          props.colorsFirst &&
+          (resolved.wallPaper as WallPaper.wallPaper)?.pFlags?.pattern &&
+          getColorsFromWallPaper(resolved.wallPaper)
+        ) {
+          // its colours alone (a pattern built with no picture of it), till the pattern comes over them
+          settleFade?.();
+          clearSlot(stagingSlot);
+          attachBuiltToSlot(stagingSlot, buildContent(layer, resolved, undefined, 0, 0));
+          stagingSlot.colorsOnly = true;
+          presentStagingSlot('instant');
+        }
+
+        try {
+          url = await urlOrPromise;
+        } catch(err) {
+          log.warn('wallpaper load failed', err);
+          props.onReady?.();
+          return;
+        }
+        if(myTempId !== tempId) return;
+      } else {
+        props.onCachedStatus?.(true);
+      }
+
+      // Build canvases/renderers offstage; only mount into the slot once we know we're still current.
+      const built = buildContent(
+        layer,
+        resolved,
+        url,
+        props.width ?? windowSize.width,
+        props.height ?? windowSize.height
+      );
+      await built.readyPromise;
+      if(myTempId !== tempId) {
+        disposeBuilt(built);
+        return;
+      }
+
+      const hadPrevious = !!visibleSlot.appliedWallPaper;
+      const transition = visibleSlot.colorsOnly ? 'fade' : resolveTransition(props.transition, cached, hadPrevious);
+
+      settleFade?.();
+      clearSlot(stagingSlot);
+      attachBuiltToSlot(stagingSlot, built);
+
+      const hsla = computeHighlightingHsla(built);
+      if(hsla) props.onHighlightColor?.(hsla);
+
+      // Staging slot now holds the new bg, off-screen. Two paths:
+      //  - deferReveal: hand the reveal to the caller so they can flip the slot synchronously
+      //    in the same JS task as the bubbles mount — no intermediate paint where the new bg
+      //    sits behind the old bubbles.
+      //  - default: reveal immediately, matching pre-existing behavior for inline previews,
+      //    initial mount, theme toggle, etc.
+      // `gradientRendererRef` rides inside `reveal` so mirror consumers (folders sidebar
+      // canvas) swap their source in the same paint frame as the slot flip — otherwise the
+      // sidebar repaints to the new gradient while the chat still shows the old wallpaper.
+      const reveal = () => {
+        presentStagingSlot(transition);
+        // `isDarkMaskPattern`: dark pattern via the mask path (night) — gradient stays bright while
+        // the visible chat is darkened by the mask. Tinted (overlay) and light renders show the
+        // gradient directly, so their mirror needs no extra darkening.
+        props.gradientRendererRef?.(built.gradientRenderer, {
+          isDarkMaskPattern: built.isDarkPattern && !built.isTinted
+        });
+      };
+      if(props.deferReveal) {
+        props.deferReveal(reveal);
+      } else {
+        reveal();
+      }
+      props.onReady?.();
+    }
+  ));
+
+  return <div ref={layer} class={classNames(styles.Layer, props.class)} />;
+};
+
+/**
+ * Page-wide singleton. Lives at module scope, mounts a `<ChatBackground>` into a body-level div.
+ *
+ * Imperative API surface:
+ * - `attach(parent)` — mount the layer (idempotent; default parent is `document.body`).
+ * - `setBackground({theme, wallPaper, transition, onCachedStatus})` — drive a new bg, returns a
+ *   promise that resolves once the new layer is on screen. Calling again before resolution
+ *   resolves the previous promise as superseded.
+ * - `getActiveGradientRenderer()` — current gradient renderer (used by send-message animation).
+ * - `getReadyPromise()` — promise of the most recent `setBackground` call (or resolved if idle).
+ * - `resize()` — re-render pattern at the new layer size.
+ */
+const appChatBackground = (() => {
+  const element = document.createElement('div');
+  element.setAttribute('aria-hidden', 'true');
+
+  // Solid signal driving the embedded `<ChatBackground>` props.
+  const [props, setProps] = createSignal<ChatBackgroundProps>({});
+
+  let activeGradientRenderer: ChatBackgroundGradientRenderer | undefined;
+  let activeGradientMeta: ActiveBackgroundMeta | undefined;
+  const gradientRendererListeners = new Set<(r: ChatBackgroundGradientRenderer | undefined, meta?: ActiveBackgroundMeta) => void>();
+  let mounted = false;
+
+  // `pendingResolve` resolves the promise returned from the in-flight setBackground call.
+  // Replaced (and called) when a newer setBackground arrives.
+  let pendingResolve: (() => void) | undefined;
+  let latestReady: Promise<void> = Promise.resolve();
+  // Resolved theme/wallPaper of the render currently in flight (set just before `setProps`,
+  // cleared on its `onReady`). Lets a duplicate call for the *same* background attach to the
+  // in-flight render instead of superseding it — see the in-flight guard in `setBackground`.
+  let pendingTheme: ChatBackgroundTheme | undefined;
+  let pendingWallPaper: WallPaper | undefined;
+  // Tracks the most-recently-applied (settled) theme/wallPaper so we can short-circuit a
+  // setBackground call whose deps match — otherwise the inner `on(...)` effect wouldn't fire
+  // and the returned promise would hang. We can't read the signal here because callers run
+  // inside a reactive scope and we'd accidentally subscribe → setProps → recurse.
+  let lastAppliedTheme: ChatBackgroundTheme | undefined;
+  let lastAppliedWallPaper: WallPaper | undefined;
+  let lastHighlightHsla: string | undefined;
+  let hasSettled = false;
+  // While the displayed background belongs to an explicit per-chat theme/wallpaper (a chat that
+  // pinned its own background) rather than the global theme, `backgroundOwnedByChat` is true and
+  // `ownedTheme`/`ownedWallPaper` hold the *raw* opts that established it. The `theme_changed`
+  // re-paint below re-publishes those instead of the global theme: a per-chat theme is a stable
+  // object across day/night, so re-resolving it picks the new variant — and doing it here (rather
+  // than leaving it to the chat's async re-publish) keeps it in sync with the view-transition
+  // reveal (themeController awaits getReadyPromise before snapshotting) and beats the global push.
+  let backgroundOwnedByChat = false;
+  let ownedTheme: ChatBackgroundTheme | undefined;
+  let ownedWallPaper: WallPaper | undefined;
+
+  const attach = (parent: HTMLElement = document.body) => {
+    if(element.parentElement !== parent) {
+      parent.insertBefore(element, parent.firstChild);
+    }
+    if(mounted) return;
+    mounted = true;
+
+    render(() => (
+      <ChatBackground
+        theme={props().theme}
+        wallPaper={props().wallPaper}
+        transition={props().transition}
+        gradientRendererRef={(r, meta) => {
+          activeGradientRenderer = r;
+          activeGradientMeta = meta;
+          for(const listener of gradientRendererListeners) listener(r, meta);
+        }}
+        onHighlightColor={(hsla) => {
+          lastHighlightHsla = hsla;
+          // Always update the global root — the auth shell, sidebars, and any
+          // bubble outside an active chat container all read the highlighting
+          // color from `:root`. The singleton itself is *not* an ancestor of
+          // bubbles, so writing the var on `element` is dead.
+          themeControllerSingleton.applyHighlightingColor({hsla});
+          // Per-chat handoff: the active Chat passes its container as the
+          // target so its bubbles see *its* hsla, not whatever the next chat
+          // overwrites on root.
+          props().onHighlightColor?.(hsla);
+        }}
+        onCachedStatus={(cached) => props().onCachedStatus?.(cached)}
+        onReady={() => props().onReady?.()}
+        deferReveal={props().deferReveal}
+      />
+    ), element);
+  };
+
+  const setBackground = (opts: {
+    theme?: ChatBackgroundTheme,
+    wallPaper?: WallPaper,
+    transition?: ChatBackgroundTransition,
+    onCachedStatus?: (cached: boolean) => void,
+    onHighlightColor?: (hsla: string) => void,
+    deferReveal?: (reveal: () => void) => void
+  } = {}): Promise<void> => {
+    // Resolve undefined theme/wallPaper to the *current global* theme + wallpaper up front.
+    // Most callers (initial load, `appImManager.setBackground`, a chat with no per-peer
+    // wallpaper) pass neither and lean on the inner `<ChatBackground>` resolving from the
+    // global theme controller. But the short-circuit below keys off these references: the
+    // Chat Wallpaper tab mutates the global `themeSettings.wallpaper` and then calls us with
+    // no opts, so without resolving here `opts.wallPaper` stays `undefined`, matches the
+    // previous `undefined` lastApplied, and we wrongly skip the re-render — the picked
+    // wallpaper never shows. Resolving makes the comparison reflect the real background
+    // identity (and hands the inner effect a fresh wallPaper reference so it re-fires).
+    const {theme: resolvedTheme, wallPaper: resolvedWallPaper} =
+      resolveBackgroundSync({theme: opts.theme, wallPaper: opts.wallPaper}, themeControllerSingleton);
+
+    // Per-chat ownership: an explicit theme that differs from the global one, or an explicit
+    // wallpaper. (An undefined theme resolves to the global theme — not per-chat.) Recorded with the
+    // raw opts so the `theme_changed` listener re-publishes the chat's own background instead of the
+    // global one. Updated on every call so a switch to a non-themed chat (plain `setBackground`)
+    // clears it.
+    backgroundOwnedByChat = (!!opts.theme && opts.theme !== untrack(() => themeControllerSingleton.getTheme())) || !!opts.wallPaper;
+    ownedTheme = opts.theme;
+    ownedWallPaper = opts.wallPaper;
+
+    // A render for the *same* resolved background is already in flight. This happens on a theme
+    // switch: the `theme_changed` listener re-publishes synchronously and the chat's own
+    // useIsNightTheme effect re-publishes the same thing a tick later. Attach to the in-flight
+    // render (chain this caller's onReady) instead of superseding it — superseding would resolve
+    // the awaited `getReadyPromise()` early and let themeController's view transition snapshot the
+    // half-done state, so the background pops in before/after the circular reveal instead of with it.
+    // Skipped for `deferReveal` callers (peer changes) — they own the reveal and must run their own
+    // render rather than attach to someone else's.
+    if(pendingResolve && !opts.deferReveal && pendingTheme === resolvedTheme && pendingWallPaper === resolvedWallPaper) {
+      opts.onCachedStatus?.(true);
+      if(lastHighlightHsla !== undefined) opts.onHighlightColor?.(lastHighlightHsla);
+      // Caller just awaits the returned promise; it resolves when the in-flight render's onReady fires.
+      return latestReady;
+    }
+
+    // Resolve any (different) in-flight promise as superseded so awaiters don't hang.
+    pendingResolve?.();
+
+    let resolve!: () => void;
+    latestReady = new Promise<void>((r) => resolve = r);
+    pendingResolve = resolve;
+
+    // The component's effect runs via `on([theme, wallPaper, peerId])` (referential equality).
+    // If theme & wallPaper are unchanged the effect won't fire — onReady would never be called
+    // and awaiters (e.g. `Chat.finishPeerChange`) would hang. Short-circuit in that case.
+    if(hasSettled && lastAppliedTheme === resolvedTheme && lastAppliedWallPaper === resolvedWallPaper) {
+      opts.onCachedStatus?.(true);
+      // Replay the cached hsla so a returning chat (publishBackground hits the
+      // short-circuit) still applies its highlighting color to its container.
+      if(lastHighlightHsla !== undefined) {
+        opts.onHighlightColor?.(lastHighlightHsla);
+      }
+      // Hand caller a no-op reveal — they'll invoke it unconditionally in sync with bubbles
+      // mount; nothing to flip when bg is unchanged.
+      opts.deferReveal?.(noop);
+      resolve();
+      if(pendingResolve === resolve) pendingResolve = undefined;
+      return latestReady;
+    }
+
+    pendingTheme = resolvedTheme;
+    pendingWallPaper = resolvedWallPaper;
+    setProps({
+      theme: resolvedTheme,
+      wallPaper: resolvedWallPaper,
+      transition: opts.transition,
+      onCachedStatus: opts.onCachedStatus,
+      onHighlightColor: opts.onHighlightColor,
+      deferReveal: opts.deferReveal,
+      onReady: () => {
+        hasSettled = true;
+        lastAppliedTheme = resolvedTheme;
+        lastAppliedWallPaper = resolvedWallPaper;
+        // Clear the in-flight marker only if it still points at this render (a newer, different
+        // setProps may have replaced it).
+        if(pendingTheme === resolvedTheme && pendingWallPaper === resolvedWallPaper) {
+          pendingTheme = undefined;
+          pendingWallPaper = undefined;
+        }
+        resolve();
+        if(pendingResolve === resolve) pendingResolve = undefined;
+      }
+    });
+
+    return latestReady;
+  };
+
+  // Re-paint when the global theme switches (day ↔ night). Without this the
+  // canvas-based bg would stay frozen — the inner effect tracks [theme, wallPaper,
+  // peerId] by reference, and the dominant code path (auth flow, plus appImManager's
+  // own theme_changed handler) calls setBackground without an explicit theme, so
+  // none of the deps change. We pass the resolved theme so the wrapper's
+  // lastAppliedTheme check sees a fresh reference and lets the effect re-fire.
+  //
+  // `instant`, not `fade`: theme switches animate via themeController's view transition (a
+  // circular color reveal). It awaits this re-render (themeController.getReadyPromise) before
+  // snapshotting the new state, so the wallpaper must be fully on-screen — not mid-fade — when
+  // captured. A self-fade here would both desync from the reveal and be caught half-done.
+  rootScope.addEventListener('theme_changed', () => {
+    if(!hasSettled) return;
+    // When a per-chat-themed chat owns the background, re-publish *its* theme/wallpaper rather than
+    // the global one. The per-chat theme object is stable across day/night, so re-resolving it here
+    // picks the new variant; doing it synchronously (instead of leaving it to the chat's own async
+    // re-publish via useIsNightTheme) keeps the new background in the view-transition snapshot — so
+    // it's revealed together with the colour reveal — and beats the racing global push from
+    // appImManager. The chat's later useIsNightTheme re-publish then attaches to this in-flight
+    // render via the dedup guard above (or short-circuits if it already settled).
+    setBackground({
+      theme: backgroundOwnedByChat ? ownedTheme : themeControllerSingleton.getTheme(),
+      wallPaper: backgroundOwnedByChat ? ownedWallPaper : undefined,
+      transition: 'instant'
+    });
+  });
+
+  return {
+    element,
+    attach,
+    setBackground,
+    getActiveGradientRenderer: () => activeGradientRenderer,
+    /**
+     * Subscribe to changes of the active gradient renderer (replaced on wallpaper/theme swap).
+     * Listener is called with the current renderer immediately on subscribe. Returns an
+     * unsubscribe function.
+     */
+    onActiveGradientRendererChange: (
+      listener: (r: ChatBackgroundGradientRenderer | undefined, meta?: ActiveBackgroundMeta) => void
+    ) => {
+      gradientRendererListeners.add(listener);
+      listener(activeGradientRenderer, activeGradientMeta);
+      return () => {
+        gradientRendererListeners.delete(listener);
+      };
+    },
+    getReadyPromise: () => latestReady,
+    resize: () => ChatBackgroundPatternRenderer.resizeInstancesOf(element),
+    /**
+     * Force a full re-render of the CURRENT background, bypassing the reference-equality
+     * short-circuits. Needed after the whole client moves between documents (Document PiP): the
+     * canvas / gradient renderer does not survive the cross-window move, so the same bg has to be
+     * rebuilt fresh in the now-current document. Cloning the theme yields a new reference so BOTH the
+     * wrapper's `lastAppliedTheme` guard and the inner `on([theme, wallPaper, peerId])` effect re-fire.
+     */
+    reRender: () => setBackground({
+      theme: backgroundOwnedByChat ? (ownedTheme && {...ownedTheme}) : {...themeControllerSingleton.getTheme()},
+      wallPaper: backgroundOwnedByChat ? ownedWallPaper : undefined,
+      transition: 'instant'
+    })
+  };
+})();
+
+export type AppChatBackground = typeof appChatBackground;
+MOUNT_CLASS_TO && (MOUNT_CLASS_TO.appChatBackground = appChatBackground);
+export default appChatBackground;

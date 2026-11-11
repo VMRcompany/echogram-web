@@ -1,0 +1,1242 @@
+import type {MyDocument} from '@appManagers/appDocsManager';
+import type {DownloadOptions} from '@appManagers/apiFileManager';
+import {Document, InputFileLocation, InputStickerSet, MessageEntity, MessagesAllStickers, MessagesFavedStickers, MessagesFeaturedStickers, MessagesFoundStickerSets, MessagesRecentStickers, MessagesStickers, MessagesStickerSet, PhotoSize, StickerPack, StickerSet, StickerSetCovered, Update, VideoSize} from '@layer';
+import {Modify} from '@types';
+import AppStorage from '@lib/storage';
+import {AccountDatabase, getDatabaseState} from '@config/databases/state';
+import assumeType from '@helpers/assumeType';
+import fixBase64String from '@helpers/fixBase64String';
+import forEachReverse from '@helpers/array/forEachReverse';
+import findAndSplice from '@helpers/array/findAndSplice';
+import {AppManager} from '@appManagers/manager';
+import fixEmoji, {cleanEmoji} from '@lib/richTextProcessor/fixEmoji';
+import ctx from '@environment/ctx';
+import {getEnvironment} from '@environment/utils';
+import getDocumentInput from '@appManagers/utils/docs/getDocumentInput';
+import getPhotoInput from '@appManagers/utils/photos/getPhotoInput';
+import getStickerEffectThumb from '@appManagers/utils/stickers/getStickerEffectThumb';
+import tsNow from '@helpers/tsNow';
+import SearchIndex from '@lib/searchIndex';
+import parseEntities from '@lib/richTextProcessor/parseEntities';
+import toArray from '@helpers/array/toArray';
+import base64ToBytes from '@helpers/string/base64ToBytes';
+import StickerType from '@config/stickerType';
+import {ReferenceContext} from '@lib/storages/references';
+import {STICKERS_LOCAL_IDS, STICKERS_LOCAL_IDS_SET, STICKER_LOCAL_SET_ID, MyMessagesStickerSet, MyStickerSetInput} from '@lib/appManagers/utils/stickers/constants';
+import {getStickerSetInputByDice, getStickerSetInputById, getStickerSetInputByLocalId, getStickerSetInputByShortName, getStickerSetInputByStickerSet} from '@lib/appManagers/utils/stickers/getStickerSetInput';
+import isStickerSetAdded from '@lib/appManagers/utils/stickers/isStickerSetAdded';
+import filterUnique from '@helpers/array/filterUnique';
+import noop from '@helpers/noop';
+import App from '@config/app';
+import forgetFailedRequest from '@helpers/forgetFailedRequest';
+import forgetSettledRequest from '@helpers/forgetSettledRequest';
+import OptimisticListChanges from '@appManagers/utils/optimisticListChanges';
+
+const CACHE_TIME = 3600e3;
+// * a page of messages.searchStickers, as tdesktop asks for it (stickers_list_widget.cpp)
+const SEARCH_STICKERS_LIMIT = 50;
+// * a page of messages.getOldFeaturedStickers: kOfficialLoadLimit in tdesktop, 40 in Android as well
+const OLD_FEATURED_STICKERS_LIMIT = 40;
+// * a page of messages.getArchivedStickers, as Android's ArchivedStickersActivity asks for it
+const ARCHIVED_STICKERS_LIMIT = 15;
+// * kReadFeaturedSetsTimeout in tdesktop's apiwrap.cpp: the trending sets seen meanwhile are read together
+const READ_FEATURED_STICKERS_DELAY = 1000;
+
+// * the keys of the changes of a sticker in either list (apiFileManager.invokeApiWithReference), by the sticker's id
+const FAVED_STICKERS_KEY = 'favedStickers:';
+const RECENT_STICKERS_KEY = 'recentStickers:';
+
+export type FoundStickersPage = {
+  stickers: MyDocument[],
+  // * undefined once the server has nothing more
+  nextOffset?: number
+};
+
+export class AppStickersManager extends AppManager {
+  private storage: AppStorage<Record<Long, MyMessagesStickerSet>, AccountDatabase>;
+
+  private getStickerSetPromises: Map<string, Promise<MyMessagesStickerSet>>;
+  private getStickersByEmoticonsPromises: {[emoticon: string]: Promise<MyDocument[]>};
+
+  private greetingStickers: MyDocument[];
+  private getGreetingStickersTimeout: number;
+  private getGreetingStickersPromise: Promise<void>;
+
+  private sounds: Record<string, MyDocument>;
+  private getAnimatedEmojiSoundsPromise: Promise<void>;
+
+  private favedStickers: MyDocument[];
+  // * the changes faveSticker made to the list that the server has yet to answer
+  private favedStickersChanges = new OptimisticListChanges<MyDocument>();
+  private recentStickers: MyDocument[];
+
+  private names: Record<string, InputStickerSet.inputStickerSetID>;
+
+  private attachedStickers: Map<string, Promise<StickerSet.stickerSet[]>>;
+
+  // * the server's sticker search, page by page, per query and languages: kept for the session
+  private foundStickers: Map<string, Promise<FoundStickersPage>>;
+
+  // * the trending sets the server counts as unseen, and those seen since that go to it together
+  private featuredUnread: Set<string>;
+  private featuredRead: Set<string>;
+  private readFeaturedTimeout: number;
+
+  private indexes: Partial<{
+    stickers: SearchIndex<DocId>,
+    emojis: SearchIndex<DocId>
+  }>;
+
+  protected after() {
+    this.storage = new AppStorage(getDatabaseState(this.getAccountNumber()), 'stickerSets');
+    this.clear(true);
+
+    this.rootScope.addEventListener('user_auth', () => {
+      setTimeout(() => {
+        this.getAnimatedEmojiStickerSet();
+
+        Promise.resolve(this.getLocalStickerSet(STICKERS_LOCAL_IDS.GENERIC_ANIMATIONS)).then(async(messagesStickerSet) => {
+          for(const doc of messagesStickerSet?.documents || []) {
+            await this.apiFileManager.downloadMedia({media: doc as Document.document});
+          }
+        });
+        // this.getFavedStickersStickers();
+      }, 1000);
+
+      if(!this.getGreetingStickersPromise) {
+        this.getGreetingStickersTimeout ??= ctx.setTimeout(() => {
+          this.getGreetingStickersTimeout = undefined;
+          this.getGreetingSticker(true).catch(noop);
+        }, 5000);
+      }
+
+      this.rootScope.addEventListener('app_config', () => this.onStickersUpdated('faved', true));
+    });
+
+    this.apiUpdatesManager.addMultipleEventsListeners({
+      updateNewStickerSet: (update) => {
+        const stickerSet = update.stickerset as MyMessagesStickerSet;
+        this.saveStickerSet(stickerSet, this.getCacheKey(getStickerSetInputById(stickerSet.set)));
+        this.rootScope.dispatchEvent('stickers_installed', stickerSet.set);
+      },
+
+      updateRecentStickers: () => this.onStickersUpdated('recent', true),
+
+      // * some trending sets were seen on another device, which ones it does not say: their read marks are
+      // asked for again, as tdesktop's api_updates.cpp does — with none unread here, none can change
+      updateReadFeaturedStickers: () => {
+        if(this.featuredUnread.size) {
+          this.getFeaturedStickers().catch(noop);
+        }
+      },
+
+      updateFavedStickers: () => this.onStickersUpdated('faved', true),
+
+      updateMoveStickerSetToTop: (update) => {
+        this.rootScope.dispatchEvent('stickers_top', update.stickerset);
+      },
+
+      updateStickerSetsOrder: (update) => {
+        this.rootScope.dispatchEvent('stickers_order', {
+          type: update.pFlags.emojis ? 'emojis' : (update.pFlags.masks ? 'masks' : 'stickers'),
+          order: update.order
+        });
+      }
+
+      // updateStickerSets: (update) => {
+      //   if(update.pFlags.masks) {
+      //     return;
+      //   }
+
+      //   this.storage.clear(false);
+
+      //   if(update.pFlags.emojis) {
+
+      //   } else {
+      //     this.favedStickers = undefined;
+      //     this.recentStickers = undefined;
+      //     this.onStickersUpdated('recent', true);
+      //     this.onStickersUpdated('faved', true);
+      //   }
+      // }
+    });
+  }
+
+  public clear = (init?: boolean) => {
+    this.getStickerSetPromises = new Map();
+    this.getStickersByEmoticonsPromises = {};
+    this.sounds = {};
+    this.names = {};
+    this.indexes = {};
+    this.attachedStickers = new Map();
+    this.foundStickers = new Map();
+    this.featuredUnread = new Set();
+    this.featuredRead = new Set();
+    if(this.readFeaturedTimeout) {
+      ctx.clearTimeout(this.readFeaturedTimeout);
+      this.readFeaturedTimeout = undefined;
+    }
+  };
+
+  private async onStickersUpdated(type: 'faved' | 'recent', overwrite: boolean) {
+    const stickers = await (type === 'faved' ? this.getFavedStickersStickers(overwrite) : this.getRecentStickersStickers(overwrite));
+    this.rootScope.dispatchEvent('stickers_updated', {
+      type,
+      stickers
+    });
+  }
+
+  public getGreetingSticker(justPreload = false) {
+    if(this.getGreetingStickersTimeout) {
+      clearTimeout(this.getGreetingStickersTimeout);
+      this.getGreetingStickersTimeout = undefined;
+    }
+
+    // * searched anew: nothing greets yet, so the search kept by the emoji, if any, found nothing. One that fails or
+    // finds nothing is not kept: the next greeting searches again
+    this.getGreetingStickersPromise ??= forgetFailedRequest(this.getStickersByEmoticon({
+      emoticon: '👋⭐️',
+      includeServerStickers: true,
+      overwrite: true
+    }).then((docs) => {
+      if(!docs.length) throw 'NO_STICKERS';
+      this.greetingStickers = docs.slice() as Document.document[];
+      this.greetingStickers.sort((a, b) => Math.random() - Math.random());
+    }), () => this.getGreetingStickersPromise, () => this.getGreetingStickersPromise = undefined);
+
+    return this.getGreetingStickersPromise.then(() => {
+      let doc: Document.document;
+      if(!justPreload) {
+        doc = this.greetingStickers.shift();
+        this.greetingStickers.push(doc);
+      }
+
+      this.apiFileManager.downloadMedia({media: this.greetingStickers[0]}); // preload next sticker
+
+      return doc;
+    });
+  }
+
+  private saveStickers(docs: Document[], context?: ReferenceContext) {
+    if(!docs || (docs as any).saved) return docs as MyDocument[];
+    (docs as any).saved = true;
+    forEachReverse(docs, (doc, idx) => {
+      doc = this.appDocsManager.saveDoc(doc, context);
+
+      if(!doc) docs.splice(idx, 1);
+      else docs[idx] = doc;
+    });
+
+    return docs as MyDocument[];
+  }
+
+  private canUseStickerSetCache(set: MyMessagesStickerSet, useCache?: boolean) {
+    return set && set.documents?.length && ((Date.now() - set.refreshTime) < CACHE_TIME || useCache);
+  }
+
+  public getStickerSet(set: MyStickerSetInput | string, params: Partial<{
+    overwrite: boolean,
+    useCache: boolean
+  }> = {}): MaybePromise<MyMessagesStickerSet> {
+    if(typeof(set) === 'string') {
+      set = this.names[set] || getStickerSetInputByShortName(set);
+    }
+
+    const cacheKey = this.getCacheKey(set);
+    const loading = this.getStickerSetPromises.get(cacheKey);
+    if(loading) {
+      return loading;
+    }
+
+    if(!params.overwrite) {
+      const cachedSet = this.storage.getFromCache(cacheKey);
+      if(this.canUseStickerSetCache(cachedSet, params.useCache)) {
+        return cachedSet;
+      }
+    }
+
+    // * settles whatever happens: a promise left pending would be kept for the set until a reload
+    const promise = (async(): Promise<MyMessagesStickerSet> => {
+      if(!params.overwrite) {
+        try {
+          const cachedSet = await this.storage.get(cacheKey);
+          if(this.canUseStickerSetCache(cachedSet, params.useCache)) {
+            delete (cachedSet.documents as any).saved;
+            this.saveStickerSetLocal(cachedSet);
+            return cachedSet;
+          }
+        } catch(err) {
+          // * the copy kept here could not be read: the server is asked
+          this.log.error('getStickerSet: cached set', cacheKey, err);
+        }
+      }
+
+      const stickerSet = await this.apiManager.invokeApi('messages.getStickerSet', {
+        stickerset: set,
+        hash: 0
+      }) as MyMessagesStickerSet;
+
+      this.saveStickerSet(stickerSet, cacheKey);
+      return stickerSet;
+    })().catch((): MyMessagesStickerSet => null);
+
+    this.getStickerSetPromises.set(cacheKey, promise);
+    return forgetSettledRequest(this.getStickerSetPromises, cacheKey, promise);
+  }
+
+  public getLocalStickerSet(id: STICKER_LOCAL_SET_ID) {
+    return this.getStickerSet(getStickerSetInputByLocalId(id));
+  }
+
+  public getAnimatedEmojiStickerSet() {
+    return Promise.all([
+      this.getLocalStickerSet(STICKERS_LOCAL_IDS.EMOJI),
+      this.getLocalStickerSet(STICKERS_LOCAL_IDS.EMOJI_ANIMATIONS),
+      this.getAnimatedEmojiSounds(),
+      this.getLocalStickerSet(STICKERS_LOCAL_IDS.GENERIC_ANIMATIONS)
+    ]).then(([emoji, animations]) => {
+      return {emoji, animations};
+    });
+  }
+
+  public getAnimatedEmojiSounds(overwrite?: boolean) {
+    if(this.getAnimatedEmojiSoundsPromise && !overwrite) return this.getAnimatedEmojiSoundsPromise;
+    // * one that failed is not kept: the next ask goes to the server again
+    const promise = this.getAnimatedEmojiSoundsPromise = forgetFailedRequest(Promise.all([
+      this.apiManager.getAppConfig(overwrite),
+      this.apiManager.getConfig()
+    ]).then(([appConfig, config]) => {
+      if(this.getAnimatedEmojiSoundsPromise !== promise) {
+        return;
+      }
+
+      for(const emoji in appConfig.emojies_sounds) {
+        const sound = appConfig.emojies_sounds[emoji];
+        const bytes = base64ToBytes(sound.file_reference_base64);
+
+        // if(TEST_FILE_REFERENCE_REFRESH) {
+        //   bytes[0] = bytes[1] = bytes[2] = bytes[3] = bytes[4] = 0;
+        //   sound.access_hash += '999';
+        // }
+
+        const doc = this.appDocsManager.saveDoc({
+          _: 'document',
+          pFlags: {},
+          id: sound.id,
+          access_hash: sound.access_hash,
+          attributes: [{
+            _: 'documentAttributeAudio',
+            duration: 1,
+            pFlags: {
+              voice: true
+            }
+          }],
+          date: 0,
+          dc_id: config.this_dc,
+          file_reference: bytes,
+          mime_type: 'audio/ogg'
+          // size: 101010 // test loading everytime
+        }, {
+          type: 'emojiesSounds'
+        });
+
+        this.sounds[emoji] = doc;
+      }
+
+      // if(TEST_FILE_REFERENCE_REFRESH) {
+      //   TEST_FILE_REFERENCE_REFRESH = false;
+      // }
+    }), () => this.getAnimatedEmojiSoundsPromise, () => this.getAnimatedEmojiSoundsPromise = undefined);
+
+    return promise;
+  }
+
+  public async getRecentStickers(overwrite?: boolean): Promise<Modify<MessagesRecentStickers.messagesRecentStickers, {
+    stickers: Document[]
+  }>> {
+    const res = await this.apiManager.invokeApiHashable({
+      method: 'messages.getRecentStickers',
+      processResult: (res) => {
+        assumeType<MessagesRecentStickers.messagesRecentStickers>(res);
+
+        this.recentStickers = res.stickers as MyDocument[];
+        this.saveStickers(res.stickers, {type: 'recentStickers'});
+        return res;
+      },
+      overwrite
+    });
+
+    return res;
+  }
+
+  public getRecentStickersStickers(overwrite?: boolean) {
+    if(overwrite) this.recentStickers = undefined;
+    else if(this.recentStickers) return this.recentStickers;
+    return this.getRecentStickers(overwrite).then(() => this.recentStickers);
+  }
+
+  public async saveRecentSticker(docId: DocId, unsave?: boolean, attached?: boolean) {
+    await this.getRecentStickersStickers();
+
+    const doc = this.appDocsManager.getDoc(docId);
+
+    findAndSplice(this.recentStickers, (_doc) => _doc.id === docId);
+    if(!unsave) {
+      this.recentStickers.unshift(doc);
+
+      const docEmoticon = fixEmoji(doc.stickerEmojiRaw);
+      for(const emoticon in this.getStickersByEmoticonsPromises) {
+        const promise = this.getStickersByEmoticonsPromises[emoticon];
+        // * a search still on its way may fail: that is for whoever asked for it, with nothing to reorder here
+        promise.then((stickers) => {
+          const _doc = findAndSplice(stickers, (_doc) => _doc.id === doc.id);
+          if(_doc) {
+            stickers.unshift(_doc);
+          } else if(emoticon.includes(docEmoticon)) {
+            stickers.unshift(doc);
+          }
+        }, noop);
+      }
+    }
+
+    this.rootScope.dispatchEvent('sticker_updated', {type: 'recent', faved: !unsave, document: doc});
+
+    if(unsave) {
+      this.onStickersUpdated('recent', false);
+    }
+
+    return this.apiFileManager.invokeApiWithReference({
+      context: doc,
+      change: true,
+      key: RECENT_STICKERS_KEY + doc.id,
+      callback: () => this.apiManager.invokeApi('messages.saveRecentSticker', {
+        id: getDocumentInput(doc),
+        unsave,
+        attached
+      })
+    });
+  }
+
+  public getAnimatedEmojiSticker(emoji: string, isAnimation?: boolean) {
+    const id = isAnimation ? STICKERS_LOCAL_IDS.EMOJI_ANIMATIONS : STICKERS_LOCAL_IDS.EMOJI;
+    const cacheKey = this.getCacheKey(getStickerSetInputByLocalId(id));
+    const stickerSet = this.storage.getFromCache(cacheKey);
+    // const stickerSet = await this.getStickerSet({id});
+    if(!stickerSet?.documents) return;
+
+    if(isAnimation) {
+      if(['🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎'].includes(emoji)) {
+        emoji = '❤️';
+      }
+    }
+
+    emoji = cleanEmoji(emoji);
+    const pack = stickerSet.packs.find((p) => p.emoticon === emoji);
+    return pack ? this.appDocsManager.getDoc(pack.documents[0]) : undefined;
+  }
+
+  public getAnimatedEmojiSoundDocument(emoji: string) {
+    return this.sounds[cleanEmoji(emoji)];
+  }
+
+  public preloadAnimatedEmojiSticker(emoji: string) {
+    const preloadEmojiPromise = this.getAnimatedEmojiStickerSet().then(() => {
+      return this.getAnimatedEmojiSticker(emoji);
+    });
+
+    return Promise.all([
+      preloadEmojiPromise,
+      this.preloadAnimatedEmojiStickerAnimation(emoji)
+    ]).then(([doc, a]) => {
+      return {
+        doc: doc,
+        animation: a?.doc,
+        sound: a?.sound
+      };
+    });
+  }
+
+  public preloadAnimatedEmojiStickerAnimation(emoji: string) {
+    return this.getAnimatedEmojiStickerSet().then(() => {
+      return this.getAnimatedEmojiSticker(emoji, true);
+    }).then((doc) => {
+      if(!doc) {
+        return;
+      }
+
+      const sound = this.getAnimatedEmojiSoundDocument(emoji);
+      return Promise.all([
+        this.preloadSticker(doc.id),
+        sound ? this.preloadSticker(sound.id) : undefined
+      ]).then(() => {
+        return {doc, sound};
+      });
+    });
+  }
+
+  public preloadSticker(docId: DocId, isPremiumEffect?: boolean) {
+    const doc = this.appDocsManager.getDoc(docId);
+    return this.apiFileManager.downloadMedia({media: doc, thumb: isPremiumEffect ? doc.video_thumbs?.[0] as Extract<VideoSize, VideoSize.videoSize> : undefined});
+  }
+
+  public getEmojisSearchIndex() {
+    return this.indexes.emojis;
+  }
+
+  private indexStickerSet(stickerSet: MessagesStickerSet.messagesStickerSet) {
+    const isEmojis = stickerSet.set.pFlags.emojis;
+    const index = this.indexes[isEmojis ? 'emojis' : 'stickers'] ??= new SearchIndex({minChars: 2, fullWords: true});
+
+    const map: Map<DocId, string[]> = new Map();
+    stickerSet.keywords.forEach((keyword) => {
+      map.set(keyword.document_id, keyword.keyword.slice());
+    });
+
+    stickerSet.packs.forEach((pack) => {
+      const emoticon = fixEmoji(pack.emoticon);
+      pack.documents.forEach((docId) => {
+        let array = map.get(docId);
+        if(!array) {
+          map.set(docId, array = []);
+        }
+
+        array.push(emoticon);
+      });
+    });
+
+    const shouldRemove = !isStickerSetAdded(stickerSet.set);
+    map.forEach((keywords, docId) => {
+      index.indexObjectArray(docId as DocId, shouldRemove ? [] : keywords);
+    });
+  }
+
+  private getCacheKey(input: MyStickerSetInput) {
+    return JSON.stringify(input);
+  }
+
+  private saveStickerSetLocal(stickerSet: MessagesStickerSet.messagesStickerSet) {
+    const inputStickerSet = getStickerSetInputByStickerSet(stickerSet.set);
+    if(stickerSet.set.short_name) {
+      this.names[stickerSet.set.short_name] = inputStickerSet as any;
+    }
+
+    this.saveStickers(stickerSet.documents, {
+      type: 'stickerSet',
+      input: inputStickerSet
+    });
+    this.indexStickerSet(stickerSet);
+  }
+
+  private saveStickerSet(res: Omit<MessagesStickerSet.messagesStickerSet, '_'>, cacheKey: string) {
+    const newSet: MessagesStickerSet = {
+      _: 'messages.stickerSet',
+      set: res.set,
+      packs: res.packs,
+      documents: res.documents as Document[],
+      keywords: res.keywords
+    };
+
+    let stickerSet = this.storage.getFromCache(cacheKey);
+    if(stickerSet) {
+      Object.assign(stickerSet, newSet);
+    } else {
+      stickerSet = this.storage.setToCache(cacheKey, newSet);
+    }
+
+    this.saveStickerSetLocal(newSet);
+
+    // console.log('stickers wrote', this.stickerSets);
+    const needSave = isStickerSetAdded(stickerSet.set) || STICKERS_LOCAL_IDS_SET.has(newSet.set.id as any);
+    stickerSet.refreshTime = Date.now();
+    this.storage.set({[cacheKey]: stickerSet}, !needSave);
+  }
+
+  public getStickerSetThumbDownloadOptions(stickerSet: StickerSet.stickerSet): DownloadOptions {
+    const thumb = stickerSet.thumbs.find((thumb) => thumb._ === 'photoSize') as PhotoSize.photoSize;
+    const dcId = stickerSet.thumb_dc_id;
+
+    const isLottie = thumb.type === 'a';
+    const isVideo = thumb.type === 'v';
+
+    const input: InputFileLocation.inputStickerSetThumb = {
+      _: 'inputStickerSetThumb',
+      stickerset: getStickerSetInputByStickerSet(stickerSet),
+      thumb_version: stickerSet.thumb_version
+    };
+
+    return {
+      dcId,
+      location: input,
+      size: thumb.size,
+      mimeType: isLottie ? 'application/x-tgsticker' : (isVideo && getEnvironment().IS_WEBM_SUPPORTED ? 'video/webm' : 'image/webp')
+    };
+  }
+
+  /* public getStickerSetThumbURL(stickerSet: MTStickerSet) {
+    const thumb = stickerSet.thumb;
+    const dcId = stickerSet.thumb_dc_id;
+
+    const isAnimated = stickerSet.pFlags?.animated;
+
+    const input: inputStickerSetThumb = {
+      _: 'inputStickerSetThumb',
+      stickerset: this.getStickerSetInput(stickerSet),
+      volume_id: thumb.location.volume_id,
+      local_id: thumb.location.local_id
+    };
+
+    const url = getFileURL('document', this.getStickerSetThumbDownloadOptions(stickerSet));
+    return url;
+
+    //return promise;
+  } */
+
+  /**
+   * Covered sets — trending, found — carry the set and some of its stickers: kept, so that opening one
+   * starts from what is already here
+   */
+  private saveCoveredStickerSets(sets: StickerSetCovered[]) {
+    sets.forEach((covered) => {
+      this.saveStickerSet({
+        set: covered.set,
+        documents: [],
+        packs: [],
+        keywords: [],
+        ...(covered as StickerSetCovered.stickerSetFullCovered)
+      }, this.getCacheKey(getStickerSetInputById(covered.set)));
+    });
+  }
+
+  public async getFeaturedStickers() {
+    const res = await this.apiManager.invokeApiHashable({
+      method: 'messages.getFeaturedStickers',
+      processResult: (res) => {
+        assumeType<MessagesFeaturedStickers.messagesFeaturedStickers>(res);
+
+        // forEachReverse(res.sets, (covered, idx, arr) => {
+        //   if(covered.set.pFlags.videos && !getEnvironment().IS_WEBM_SUPPORTED) {
+        //     arr.splice(idx, 1);
+        //   }
+        // });
+
+        this.saveCoveredStickerSets(res.sets);
+        // * the current sets' read marks are the server's, the older sets' stay as their pages said
+        // (tdesktop's featuredSetsReceived), and a set seen here that is yet to be sent stays read
+        res.sets.forEach((covered) => this.featuredUnread.delete('' + covered.set.id));
+        res.unread.forEach((id) => {
+          const key = '' + id;
+          if(!this.featuredRead.has(key)) {
+            this.featuredUnread.add(key);
+          }
+        });
+
+        return res;
+      }
+    });
+
+    return res.sets;
+  }
+
+  /**
+   * The trending sets that are no longer among the current ones (`messages.getOldFeaturedStickers`), page by
+   * page as the trending list is scrolled on, the way tdesktop and Android load them. `offset` counts the
+   * old sets loaded so far; `nextOffset` is undefined once there are no more.
+   */
+  public getOldFeaturedStickers(offset: number) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'messages.getOldFeaturedStickers',
+      params: {
+        offset,
+        limit: OLD_FEATURED_STICKERS_LIMIT,
+        hash: 0
+      },
+      processResult: (res) => {
+        if(res._ !== 'messages.featuredStickers') {
+          return {sets: [] as StickerSetCovered[], nextOffset: undefined as number};
+        }
+
+        this.saveCoveredStickerSets(res.sets);
+        res.unread.forEach((id) => this.featuredUnread.add('' + id));
+
+        return {
+          sets: res.sets,
+          // * a short page is the last one (Android's endReached)
+          nextOffset: res.sets.length < OLD_FEATURED_STICKERS_LIMIT ? undefined : offset + res.sets.length
+        };
+      }
+    });
+  }
+
+  /**
+   * Trending sets the user has seen: those the server still counts as unread are marked read
+   * (`messages.readFeaturedStickers`), together with the others seen within a second, as tdesktop's
+   * readFeaturedSetDelayed does. Any other set is left alone, so a list can report all it shows.
+   */
+  public readFeaturedStickerSets(ids: StickerSet.stickerSet['id'][]) {
+    for(const id of ids) {
+      const key = '' + id;
+      if(this.featuredUnread.delete(key)) {
+        this.featuredRead.add(key);
+      }
+    }
+
+    if(!this.featuredRead.size || this.readFeaturedTimeout) {
+      return;
+    }
+
+    this.readFeaturedTimeout = ctx.setTimeout(() => {
+      this.readFeaturedTimeout = undefined;
+      const id = [...this.featuredRead];
+      this.featuredRead.clear();
+      this.apiManager.invokeApi('messages.readFeaturedStickers', {id});
+    }, READ_FEATURED_STICKERS_DELAY);
+  }
+
+  /**
+   * One page of the user's archived sets, newest first: `offsetId` is the last set of the page before
+   * (0 for the first), and `count` how many there are in all — a `limit` of 0 asks for just that.
+   */
+  public getArchivedStickers(offsetId: StickerSet.stickerSet['id'] = 0, limit = ARCHIVED_STICKERS_LIMIT) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'messages.getArchivedStickers',
+      params: {
+        offset_id: offsetId,
+        limit
+      },
+      processResult: (archived) => {
+        const sets = archived.sets.map((covered) => covered.set as StickerSet.stickerSet);
+        // * a set kept here as the user's own that the server lists archived was archived on another
+        // device: so it is here too, documents kept — or Add, which toggles, would remove it instead
+        sets.forEach((set) => {
+          if(this.getCachedStickerSets(set).some(({stickerSet}) => isStickerSetAdded(stickerSet.set))) {
+            this.onStickerSetArchived(set);
+          }
+        });
+
+        return {
+          count: archived.count,
+          sets
+        };
+      }
+    });
+  }
+
+  public getPromoPremiumStickers() {
+    return this.getStickersByEmoticon({
+      emoticon: '⭐️⭐️',
+      includeServerStickers: true
+    });
+  }
+
+  public getPremiumStickers() {
+    return this.getStickersByEmoticon({
+      emoticon: '📂⭐️',
+      includeServerStickers: true
+    });
+  }
+
+  public getFavedStickers(overwrite?: boolean) {
+    return this.apiManager.invokeApiHashable({
+      method: 'messages.getFavedStickers',
+      processResult: (favedStickers) => {
+        assumeType<MessagesFavedStickers.messagesFavedStickers>(favedStickers);
+        this.saveStickers(favedStickers.stickers, {type: 'favedStickers'});
+        this.favedStickers = favedStickers.stickers as MyDocument[];
+        return favedStickers;
+      },
+      overwrite
+    });
+  }
+
+  public getFavedStickersStickers(overwrite?: boolean) {
+    if(overwrite) this.favedStickers = undefined;
+    else if(this.favedStickers) return this.favedStickers;
+    return this.getFavedStickers(overwrite).then(() => this.favedStickers);
+  }
+
+  /**
+   * The faved or the recent stickers read from the server for the fresh file references of their documents alone (the
+   * references storage's refresh): the list kept here stays as it is. It may hold a change the server has yet to take -
+   * one gone back for a fresh reference among them - which the server's list put in its place would drop.
+   */
+  public refreshStickersReferences(type: 'faved' | 'recent') {
+    const request = type === 'faved' ?
+      this.apiManager.invokeApiSingle('messages.getFavedStickers', {hash: 0}) :
+      this.apiManager.invokeApiSingle('messages.getRecentStickers', {hash: 0});
+    return request.then((res) => {
+      assumeType<MessagesFavedStickers.messagesFavedStickers | MessagesRecentStickers.messagesRecentStickers>(res);
+      this.saveStickers(res.stickers, {type: type === 'faved' ? 'favedStickers' : 'recentStickers'});
+    });
+  }
+
+  public getFavedStickersLimit() {
+    return this.apiManager.getLimit('favedStickers');
+  }
+
+  public async faveSticker(docId: DocId, unfave?: boolean) {
+    if(!this.favedStickers) {
+      await this.getFavedStickersStickers();
+    }
+
+    const limit = await this.getFavedStickersLimit();
+
+    const doc = this.appDocsManager.getDoc(docId);
+    const {change, limitReached} = this.favedStickersChanges.make(this.favedStickers, doc, unfave, limit);
+
+    this.rootScope.dispatchEvent('sticker_updated', {type: 'faved', faved: !unfave, document: doc, limitReached});
+
+    return this.apiFileManager.invokeApiWithReference({
+      context: doc,
+      change: true,
+      key: FAVED_STICKERS_KEY + doc.id,
+      callback: () => this.apiManager.invokeApi('messages.faveSticker', {
+        id: getDocumentInput(doc),
+        unfave
+      })
+    }).then(() => {
+      this.favedStickersChanges.answer(change);
+      if(unfave) {
+        this.onStickersUpdated('faved', true);
+      }
+    }, (err) => {
+      // * taken out, the list put back in place, where the list's hash keeps it too, and the panel is told so with no
+      // toast
+      const faved = this.favedStickersChanges.revert(change, this.favedStickers);
+      if(faved) {
+        this.rootScope.dispatchEvent('stickers_updated', {type: 'faved', stickers: faved, reverted: true});
+      }
+
+      throw err;
+    });
+  }
+
+  /**
+   * A set is cached under its id and, once opened by its link (`t.me/addstickers/...`), under its short name
+   * as well — two separate copies, both of which have to follow the set's state.
+   */
+  private getCachedStickerSets(set: StickerSet.stickerSet) {
+    const inputs: MyStickerSetInput[] = [getStickerSetInputByStickerSet(set)];
+    if(set.short_name) {
+      inputs.push(getStickerSetInputByShortName(set.short_name));
+    }
+
+    return inputs.map((input) => {
+      const cacheKey = this.getCacheKey(input);
+      return {stickerSet: this.storage.getFromCache(cacheKey), cacheKey};
+    }).filter(({stickerSet}) => stickerSet);
+  }
+
+  /**
+   * Applies a local state change to every cached copy of the set and returns the copy to dispatch.
+   * `forget` keeps a set that is no longer among the user's own in memory only.
+   */
+  private updateStickerSet(set: StickerSet.stickerSet, update: (set: StickerSet.stickerSet) => void, forget?: boolean) {
+    const cached = this.getCachedStickerSets(set);
+    if(!cached.length) {
+      update(set);
+      return set;
+    }
+
+    cached.forEach(({stickerSet, cacheKey}) => {
+      update(stickerSet.set);
+      this.saveStickerSetLocal(stickerSet);
+      if(forget) {
+        this.storage.delete(cacheKey, true);
+      }
+    });
+
+    return cached[0].stickerSet.set;
+  }
+
+  public async toggleStickerSet(set: StickerSet.stickerSet) {
+    set = this.getCachedStickerSets(set)[0]?.stickerSet.set ?? set;
+    if(!isStickerSetAdded(set)) {
+      return this.installStickerSet(set, false);
+    }
+
+    const res = await this.apiManager.invokeApi('messages.uninstallStickerSet', {
+      stickerset: getStickerSetInputByStickerSet(set)
+    });
+
+    if(res) {
+      set = this.updateStickerSet(set, (set) => {
+        delete set.installed_date;
+      }, true);
+      this.rootScope.dispatchEvent('stickers_deleted', set);
+      return true;
+    }
+
+    return false;
+  }
+
+  public archiveStickerSet(set: StickerSet.stickerSet) {
+    return this.installStickerSet(set, true);
+  }
+
+  private async installStickerSet(set: StickerSet.stickerSet, archived: boolean) {
+    const result = await this.apiManager.invokeApi('messages.installStickerSet', {
+      stickerset: getStickerSetInputByStickerSet(set),
+      archived
+    });
+
+    if(archived) {
+      this.onStickerSetArchived(set);
+    } else {
+      set = this.updateStickerSet(set, (set) => {
+        delete set.pFlags.archived;
+        set.installed_date = tsNow(true);
+      });
+      this.rootScope.dispatchEvent('stickers_installed', set);
+    }
+
+    // the server made room for this set by archiving the least used ones
+    if(result._ === 'messages.stickerSetInstallResultArchive') {
+      result.sets.forEach((covered) => this.onStickerSetArchived(covered.set));
+    }
+
+    return true;
+  }
+
+  private onStickerSetArchived(set: StickerSet.stickerSet) {
+    set = this.updateStickerSet(set, (set) => {
+      set.pFlags.archived = true;
+      set.installed_date ||= tsNow(true);
+    }, true);
+    this.rootScope.dispatchEvent('stickers_deleted', set);
+  }
+
+  public toggleStickerSets(sets: StickerSet.stickerSet[]) {
+    return Promise.all(sets.map((set) => this.toggleStickerSet(set)));
+  }
+
+  public async searchStickerSets(query: string, excludeFeatured = true) {
+    const flags = excludeFeatured ? 1 : 0;
+    const res = await this.apiManager.invokeApiHashable({
+      method: 'messages.searchStickerSets',
+      params: {
+        flags,
+        exclude_featured: excludeFeatured || undefined,
+        q: query
+      },
+      processResult: (res) => {
+        assumeType<MessagesFoundStickerSets.messagesFoundStickerSets>(res);
+
+        // forEachReverse(res.sets, (covered, idx, arr) => {
+        //   if(covered.set.pFlags.videos && !getEnvironment().IS_WEBM_SUPPORTED) {
+        //     arr.splice(idx, 1);
+        //   }
+        // });
+
+        this.saveCoveredStickerSets(res.sets);
+
+        return res;
+      }
+    });
+
+    const foundSaved: StickerSetCovered[] = [];
+    const cache = this.storage.getCache();
+    for(const id in cache) {
+      const {set} = cache[id];
+
+      if(set.title.toLowerCase().includes(query.toLowerCase()) && !res.sets.find((c) => c.set.id === set.id)) {
+        foundSaved.push({_: 'stickerSetCovered', set, cover: null});
+      }
+    }
+
+    return res.sets.concat(foundSaved);
+  }
+
+  private processAllStickersResult = (allStickers: MessagesAllStickers) => {
+    assumeType<MessagesAllStickers.messagesAllStickers>(allStickers);
+
+    // forEachReverse(allStickers.sets, (stickerSet, idx, arr) => {
+    //   if(stickerSet.pFlags.videos && !getEnvironment().IS_WEBM_SUPPORTED) {
+    //     arr.splice(idx, 1);
+    //   }
+    // });
+
+    return allStickers;
+  };
+
+  public getAllStickers() {
+    return this.apiManager.invokeApiHashable({
+      method: 'messages.getAllStickers',
+      processResult: this.processAllStickersResult
+    });
+  }
+
+  public getEmojiStickers() {
+    return this.apiManager.invokeApiHashable({
+      method: 'messages.getEmojiStickers',
+      processResult: this.processAllStickersResult
+    });
+  }
+
+  private onPreloadStickerSetsResult = (allStickers: MessagesAllStickers) => {
+    const sets = (allStickers as MessagesAllStickers.messagesAllStickers).sets;
+    const promises = sets.map((set) => this.getStickerSet(getStickerSetInputByStickerSet(set), {useCache: true}));
+    return Promise.all(promises);
+  };
+
+  public preloadStickerSets() {
+    return this.getAllStickers().then(this.onPreloadStickerSetsResult);
+  }
+
+  public preloadEmojiSets() {
+    return this.getEmojiStickers().then(this.onPreloadStickerSetsResult);
+  }
+
+  // TODO: detect "🤷" by "🤷‍♂️"
+  public getStickersByEmoticon({
+    emoticon,
+    includeOurStickers,
+    includeServerStickers,
+    excludePremiumEffectStickers,
+    overwrite
+  }: {
+    emoticon: string | string[],
+    includeOurStickers?: boolean,
+    includeServerStickers?: boolean,
+    excludePremiumEffectStickers?: boolean,
+    overwrite?: boolean
+  }) {
+    const emoticonArray = toArray(emoticon).map((emoji) => fixEmoji(emoji));
+    emoticon = emoticonArray.join('');
+    const cacheKey = emoticon + (includeOurStickers ? '1' : '0') + (includeServerStickers ? '1' : '0');
+    if(this.getStickersByEmoticonsPromises[cacheKey] && !overwrite) {
+      return this.getStickersByEmoticonsPromises[cacheKey];
+    }
+
+    const promise = Promise.all([
+      includeServerStickers ? this.apiManager.invokeApiHashable({
+        method: 'messages.getStickers',
+        params: {
+          emoticon
+        },
+        processResult: (stickers) => stickers,
+        // * asked anew, the answer is not the one kept by its hash: a refreshed reference comes with it
+        overwrite
+      }) : undefined,
+      includeOurStickers ? this.preloadStickerSets() : [],
+      includeOurStickers ? this.getRecentStickers() : undefined
+    ]).then(([messagesStickers, installedSets, recentStickers]) => {
+      const foundStickers = messagesStickers ?
+        this.saveStickers(
+          (messagesStickers as MessagesStickers.messagesStickers).stickers,
+          {type: 'stickerSearch', emoticon}
+        ) :
+        [];
+      const cachedStickersAnimated: Document.document[] = [], cachedStickersStatic: Document.document[] = [];
+
+      // console.log('getStickersByEmoticon', messagesStickers, installedSets, recentStickers);
+
+      const iteratePacks = (packs: StickerPack.stickerPack[]) => {
+        for(const emoticon of emoticonArray) {
+          for(const pack of packs) {
+            const packEmoticon = fixEmoji(pack.emoticon);
+            if(packEmoticon.includes(emoticon)) {
+              for(const docId of pack.documents) {
+                const doc = this.appDocsManager.getDoc(docId);
+                (doc.animated ? cachedStickersAnimated : cachedStickersStatic).push(doc);
+              }
+            }
+          }
+        }
+      };
+
+      if(recentStickers) {
+        iteratePacks(recentStickers.packs);
+        const stickers = recentStickers.stickers;
+        [cachedStickersAnimated, cachedStickersStatic].forEach((s) => {
+          s.sort((a, b) => stickers.indexOf(a) - stickers.indexOf(b));
+        });
+      }
+
+      for(const set of installedSets) {
+        iteratePacks(set.packs);
+      }
+
+      /* const entities = parseEntities(emoticon);
+      if(entities.length === 1) {
+        [cachedStickersAnimated, cachedStickersStatic].forEach((s) => {
+          forEachReverse(s, (doc, idx) => {
+            const docEmoticon = fixEmoji(doc.stickerEmojiRaw);
+            if(docEmoticon !== emoticon) {
+              s.splice(idx, 1);
+            }
+          });
+        });
+      } */
+
+      const stickers = [...new Set(cachedStickersAnimated.concat(cachedStickersStatic, foundStickers))]/* .filter((doc) => !doc.animated) */;
+      return this.filterShowableStickers(stickers, excludePremiumEffectStickers);
+    });
+
+    // * a search that failed is not kept: the next one for these emoji asks again
+    return this.getStickersByEmoticonsPromises[cacheKey] = forgetFailedRequest(
+      promise,
+      () => this.getStickersByEmoticonsPromises[cacheKey],
+      () => delete this.getStickersByEmoticonsPromises[cacheKey]
+    );
+  }
+
+  /** Leaves out (in place) what this browser cannot play, and premium effects when asked to */
+  private filterShowableStickers(stickers: MyDocument[], excludePremiumEffectStickers?: boolean) {
+    forEachReverse(stickers, (sticker, idx, arr) => {
+      if((sticker.sticker === StickerType.WebM && !getEnvironment().IS_WEBM_SUPPORTED) ||
+        (excludePremiumEffectStickers && !this.rootScope.premium && getStickerEffectThumb(sticker))) {
+        arr.splice(idx, 1);
+      }
+    });
+
+    return stickers;
+  }
+
+  private async splitSearchQuery(query: string): Promise<string[]> {
+    query = query.trim();
+    if(!query) {
+      return [];
+    }
+
+    const entities = parseEntities(query);
+    const emojiEntities = entities
+    .filter((entity) => entity._ === 'messageEntityEmoji' || entity._ === 'messageEntityCustomEmoji')
+    .map((entity) => query.slice(entity.offset, entity.offset + entity.length));
+
+    let emojis: string[] = emojiEntities;
+    if(!emojis.length) {
+      emojis = (await this.appEmojiManager.prepareAndSearchEmojis({q: query, limit: 200, minChars: 1})).map(({emoji}) => emoji);
+    }
+
+    return emojis;
+  }
+
+  /**
+   * The user's own stickers — installed and recent — for the emoji the query stands for. The server's
+   * search for the same query is `searchStickersOnServer`; the official clients show these first.
+   */
+  public async searchStickers(query: string): Promise<MyDocument[]> {
+    return this.getStickersByEmoticon({
+      emoticon: await this.splitSearchQuery(query),
+      includeOurStickers: true
+    });
+  }
+
+  /**
+   * The languages a sticker query is taken to be in: the interface's and English — those the local search
+   * reads emoji keywords in (AppEmojiManager.getBothEmojiKeywords). tdesktop sends the input method's,
+   * which a browser does not tell.
+   */
+  private getStickersSearchLangCodes() {
+    return filterUnique([this.networkerFactory.language, App.langPackCode]);
+  }
+
+  /**
+   * One page of the server's sticker search (`messages.searchStickers`) for the query as typed, like
+   * tdesktop's StickersListWidget: `offset` 0 is the first page, and the page's `nextOffset` the one after
+   * it — undefined once there is nothing more. Pages are kept for the session per query and languages;
+   * `langCodes` are the interface's unless a page is asked for again as it was (a file reference's refresh).
+   */
+  public searchStickersOnServer(
+    query: string,
+    offset = 0,
+    overwrite?: boolean,
+    langCodes = this.getStickersSearchLangCodes()
+  ): Promise<FoundStickersPage> {
+    query = query.trim();
+    if(!query) {
+      return Promise.resolve({stickers: []});
+    }
+
+    const key = [langCodes.join(','), offset, query].join('\n');
+    const cached = this.foundStickers.get(key);
+    if(cached && !overwrite) {
+      return cached;
+    }
+
+    const promise = forgetFailedRequest(this.apiManager.invokeApi('messages.searchStickers', {
+      q: query,
+      emoticon: '',
+      lang_code: langCodes,
+      offset,
+      limit: SEARCH_STICKERS_LIMIT,
+      hash: 0
+    }).then((found): FoundStickersPage => {
+      const stickers = found._ === 'messages.foundStickers' ?
+        // * the languages too: a page asked for in others may not hold the same stickers
+        this.saveStickers(found.stickers, {type: 'stickerSearchQuery', q: query, offset, langCodes}) :
+        [];
+
+      return {
+        stickers: this.filterShowableStickers(stickers.slice()),
+        // * only an offset past this one goes on, as tdesktop's searchStickersResultsDone reads it
+        nextOffset: found.next_offset > offset ? found.next_offset : undefined
+      };
+    }), () => this.foundStickers.get(key), () => this.foundStickers.delete(key));
+
+    this.foundStickers.set(key, promise);
+    return promise;
+  }
+
+  public clearRecentStickers() {
+    // * a change on its way, sent once more for a fresh reference after the clear, would fill the list again
+    this.apiFileManager.supersedeReferenceRequests(RECENT_STICKERS_KEY);
+    if(this.recentStickers) {
+      this.recentStickers.length = 0;
+      this.onStickersUpdated('recent', false);
+    }
+
+    return this.apiManager.invokeApi('messages.clearRecentStickers');
+  }
+
+  public reorderStickerSets(order: StickerSet.stickerSet['id'][], emojis?: boolean, masks?: boolean) {
+    return this.apiManager.invokeApi('messages.reorderStickerSets', {
+      emojis,
+      masks,
+      order
+    }).then(() => {
+      this.apiUpdatesManager.processLocalUpdate({
+        _: 'updateStickerSetsOrder',
+        order,
+        pFlags: {
+          emojis: emojis || undefined,
+          masks: masks || undefined
+        }
+      });
+    });
+  }
+
+  /**
+   * The packs of the stickers put on a photo or a video (one with `has_stickers`, or a document with
+   * `documentAttributeHasStickers`), as a story says where its stickers come from
+   */
+  public getAttachedStickers(type: 'photo' | 'document', id: Long) {
+    const key = type + '_' + id;
+    let promise = this.attachedStickers.get(key);
+    if(promise) {
+      return promise;
+    }
+
+    promise = this.apiManager.invokeApi('messages.getAttachedStickers', {
+      media: type === 'photo' ? {
+        _: 'inputStickeredMediaPhoto',
+        id: getPhotoInput(this.appPhotosManager.getPhoto(id))
+      } : {
+        _: 'inputStickeredMediaDocument',
+        id: getDocumentInput(this.appDocsManager.getDoc(id))
+      }
+    }).then((coveredSets) => {
+      return coveredSets.map((covered) => covered.set as StickerSet.stickerSet);
+    }, (err) => {
+      this.attachedStickers.delete(key);
+      throw err;
+    });
+
+    this.attachedStickers.set(key, promise);
+    return promise;
+  }
+
+  public getStickerSetByDice(emoticon: string) {
+    return this.getStickerSet(getStickerSetInputByDice(emoticon));
+  }
+}

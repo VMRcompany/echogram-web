@@ -1,0 +1,57 @@
+@use "../shared" as *;
+
+// * sweeps along the line, from the inline start
+@keyframes wave {
+  0% {
+    transform: translateX(calc(-100% * var(--reflect)));
+  }
+
+  50% {
+    transform: translateX(calc(100% * var(--reflect)));
+  }
+
+  100% {
+    transform: translateX(calc(100% * var(--reflect)));
+  }
+}
+
+.shimmer {
+  --opacity: .2;
+
+  // the wave is decoration, it runs with full animations only
+  @include animation-level-below(2) {
+    &:before {
+      content: unset;
+    }
+  }
+
+  &:before {
+    content: "";
+    position: absolute;
+    top: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    // * white lights up a filled button; the surface's colour fades text that lies on it
+    background: linear-gradient(to right, transparent 0%, rgba(var(--shimmer-rgb, 255, 255, 255), var(--opacity)) 50%, transparent 100%);
+    animation: wave 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    pointer-events: none;
+  }
+
+  &-once {
+    &:before {
+      animation-iteration-count: 1;
+      animation-fill-mode: forwards;
+    }
+  }
+
+  &-bright {
+    --opacity: .4;
+  }
+
+  // &-canvas {
+  //   position: absolute;
+  //   width: 100%;
+  //   height: 100%;
+  // }
+}

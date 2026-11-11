@@ -1,0 +1,345 @@
+import type {ButtonMenuDirection} from '@components/buttonMenuToggle';
+import mediaSizes from '@helpers/mediaSizes';
+import I18n from '@lib/langPack';
+import clamp from './number/clamp';
+import {getAppWindow} from '@helpers/appWindow';
+
+export type MenuPositionPadding = {
+  top?: number,
+  right?: number,
+  bottom?: number,
+  left?: number
+};
+
+const PADDING_TOP = 8;
+const PADDING_BOTTOM = PADDING_TOP;
+const PADDING_LEFT = 8;
+const PADDING_RIGHT = PADDING_LEFT;
+
+export const DEFAULT_MENU_WINDOW_MARGIN = 16;
+
+export type FloatingMenuSide = 'top' | 'left' | 'right' | 'bottom';
+export type FloatingMenuAlignment = 'start' | 'center' | 'end';
+export type FloatingMenuDirection = `${FloatingMenuSide}-${FloatingMenuAlignment}`;
+export type FloatingMenuPositionOptions = {
+  flip?: boolean
+};
+
+const OPPOSITE_SIDE: Record<FloatingMenuSide, FloatingMenuSide> = {
+  top: 'bottom',
+  bottom: 'top',
+  left: 'right',
+  right: 'left'
+};
+
+function canFitSide(
+  triggerBcr: DOMRect,
+  menu: HTMLElement,
+  side: FloatingMenuSide,
+  mainOffset: number
+) {
+  const margin = DEFAULT_MENU_WINDOW_MARGIN;
+  switch(side) {
+    case 'right':
+      return triggerBcr.right + mainOffset + menu.clientWidth + margin <= getAppWindow().innerWidth;
+    case 'left':
+      return triggerBcr.left - mainOffset - menu.clientWidth - margin >= 0;
+    case 'bottom':
+      return triggerBcr.bottom + mainOffset + menu.clientHeight + margin <= getAppWindow().innerHeight;
+    case 'top':
+      return triggerBcr.top - mainOffset - menu.clientHeight - margin >= 0;
+  }
+}
+
+/**
+ * Positions a floating menu next to a trigger element.
+ * - `side` is the side of the trigger the menu opens on.
+ * - `alignment` aligns the menu along the perpendicular axis.
+ * - `offset` is `[x, y]`. The component along the main axis acts as a gap from the trigger,
+ *   the perpendicular component nudges along the alignment axis.
+ *
+ * `left`/`right` and a horizontal `start`/`end` follow the line: they swap in a right-to-left
+ * layout, so a submenu opens at the inline end and a menu aligned to a bubble's start stays there.
+ *
+ * Sets `left`, `top`, and `transformOrigin` on `menu`. Returns the actually used direction, in
+ * the same terms as `direction` (the side may flip to the opposite if the menu doesn't fit).
+ */
+export function positionFloatingMenu(
+  triggerBcr: DOMRect,
+  menu: HTMLElement,
+  direction: FloatingMenuDirection,
+  offset: [number, number] = [0, 0],
+  options: FloatingMenuPositionOptions = {}
+): FloatingMenuDirection {
+  const isRTL = I18n.getIsRTL();
+  const [requestedSide, alignment] = mirrorFloatingDirection(direction, isRTL).split('-') as [FloatingMenuSide, FloatingMenuAlignment];
+
+  const isHorizontalSide = requestedSide === 'left' || requestedSide === 'right';
+  const mainOffset = isHorizontalSide ? offset[0] : offset[1];
+  const crossOffset = isHorizontalSide ? offset[1] : offset[0];
+
+  // Flip side if it doesn't fit and the opposite does (mirrors the original right/left logic).
+  const opposite = OPPOSITE_SIDE[requestedSide];
+  const side: FloatingMenuSide = options.flip === false ||
+      canFitSide(triggerBcr, menu, requestedSide, mainOffset) ||
+      !canFitSide(triggerBcr, menu, opposite, mainOffset) ?
+    requestedSide :
+    opposite;
+
+  const margin = DEFAULT_MENU_WINDOW_MARGIN;
+  const menuW = menu.clientWidth;
+  const menuH = menu.clientHeight;
+
+  // Main-axis position.
+  let left: number;
+  let top: number;
+
+  if(side === 'right' || side === 'left') {
+    if(side === 'right') {
+      left = triggerBcr.right + mainOffset;
+    } else {
+      left = triggerBcr.left - mainOffset - menuW;
+    }
+    left = clamp(left, margin, getAppWindow().innerWidth - menuW - margin);
+
+    // Cross axis: vertical.
+    if(alignment === 'start') {
+      top = triggerBcr.top + crossOffset;
+    } else if(alignment === 'center') {
+      top = triggerBcr.top + triggerBcr.height / 2 - menuH / 2 + crossOffset;
+    } else {
+      top = triggerBcr.bottom - menuH - crossOffset;
+    }
+    top = clamp(top, margin, getAppWindow().innerHeight - menuH - margin);
+  } else {
+    if(side === 'bottom') {
+      top = triggerBcr.bottom + mainOffset;
+    } else {
+      top = triggerBcr.top - mainOffset - menuH;
+    }
+    top = clamp(top, margin, getAppWindow().innerHeight - menuH - margin);
+
+    // Cross axis: horizontal.
+    if(alignment === 'start') {
+      left = triggerBcr.left + crossOffset;
+    } else if(alignment === 'center') {
+      left = triggerBcr.left + triggerBcr.width / 2 - menuW / 2 + crossOffset;
+    } else {
+      left = triggerBcr.right - menuW - crossOffset;
+    }
+    left = clamp(left, margin, getAppWindow().innerWidth - menuW - margin);
+  }
+
+  // Transform origin: corner/edge closest to the trigger.
+  let originX: string;
+  let originY: string;
+  const alignmentToPercent = alignment === 'start' ? '0' : alignment === 'center' ? '50%' : '100%';
+
+  if(side === 'right' || side === 'left') {
+    originX = side === 'right' ? '0' : '100%';
+    originY = alignmentToPercent;
+  } else {
+    originY = side === 'bottom' ? '0' : '100%';
+    originX = alignmentToPercent;
+  }
+
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+  menu.style.transformOrigin = `${originX} ${originY}`;
+
+  return mirrorFloatingDirection(`${side}-${alignment}` as FloatingMenuDirection, isRTL);
+}
+
+// * between the line's terms and the screen's: in RTL `left`/`right` swap, and so do `start`/`end`
+// * along a horizontal edge (top/bottom); the vertical alignment of a side menu stays top-to-bottom
+function mirrorFloatingDirection(direction: FloatingMenuDirection, isRTL: boolean): FloatingMenuDirection {
+  if(!isRTL) {
+    return direction;
+  }
+
+  const [side, alignment] = direction.split('-') as [FloatingMenuSide, FloatingMenuAlignment];
+  if(side === 'left' || side === 'right') {
+    return `${OPPOSITE_SIDE[side]}-${alignment}`;
+  }
+
+  const mirroredAlignment: FloatingMenuAlignment = alignment === 'start' ? 'end' : alignment === 'end' ? 'start' : alignment;
+  return `${side}-${mirroredAlignment}`;
+}
+
+export default function positionMenu(e: MouseEvent | Touch | TouchEvent, elem: HTMLElement, side?: 'left' | 'right' | 'center', additionalPadding?: MenuPositionPadding) {
+  if((e as TouchEvent).touches) {
+    e = (e as TouchEvent).touches[0];
+  }
+
+  const {pageX, pageY} = e as Touch;
+  // let {clientX, clientY} = e;
+
+  // * side mean the OPEN side
+
+  const getScrollWidthFromElement = (Array.from(elem.children) as HTMLElement[]).find((element) => element.classList.contains('btn-menu-items') || (element.classList.contains('btn-menu-item') && !element.classList.contains('hide'))) || elem;
+
+  let {scrollWidth: menuWidth} = getScrollWidthFromElement;
+  const {scrollHeight: menuHeight} = elem;
+  // let {innerWidth: windowWidth, innerHeight: windowHeight} = window;
+  const rect = getAppWindow().document.body.getBoundingClientRect();
+  const windowWidth = rect.width;
+  const windowHeight = rect.height;
+
+  menuWidth += getScrollWidthFromElement.offsetLeft * 2;
+
+  let paddingTop = PADDING_TOP, paddingRight = PADDING_RIGHT, paddingBottom = PADDING_BOTTOM, paddingLeft = PADDING_LEFT;
+  if(additionalPadding) {
+    if(additionalPadding.top) paddingTop += additionalPadding.top;
+    if(additionalPadding.right) paddingRight += additionalPadding.right;
+    if(additionalPadding.bottom) paddingBottom += additionalPadding.bottom;
+    if(additionalPadding.left) paddingLeft += additionalPadding.left;
+  }
+
+  if(I18n.getIsRTL()) side = mediaSizes.isMobile ? 'left' : 'right';
+  else side = mediaSizes.isMobile ? 'right' : 'left';
+  let verticalSide: 'top' /* | 'bottom' */ | 'center' = 'top';
+
+  const maxTop = windowHeight - menuHeight - paddingBottom;
+  const maxLeft = windowWidth - menuWidth - paddingRight;
+  const minLeft = paddingLeft;
+
+  const getSides = () => {
+    return {
+      x: {
+        left: pageX,
+        right: Math.min(maxLeft, pageX - menuWidth)
+      },
+      intermediateX: side === 'right' ? minLeft : maxLeft,
+      // intermediateX: clientX < windowWidth / 2 ? PADDING_LEFT : windowWidth - menuWidth - PADDING_LEFT,
+      y: {
+        top: pageY,
+        bottom: pageY - menuHeight
+      },
+      // intermediateY: verticalSide === 'top' ? paddingTop : windowHeight - menuHeight - paddingTop,
+      // intermediateY: pageY < (windowHeight / 2) ? paddingTop : windowHeight - menuHeight - paddingBottom,
+      intermediateY: maxTop
+    };
+  };
+
+  const sides = getSides();
+
+  const possibleSides = {
+    x: {
+      left: (sides.x.left + menuWidth + paddingRight) <= windowWidth,
+      right: sides.x.right >= paddingLeft
+    },
+    y: {
+      top: (sides.y.top + menuHeight + paddingBottom) <= windowHeight,
+      bottom: (sides.y.bottom - paddingBottom) >= paddingBottom
+    }
+  };
+
+  /* if(side === undefined) {
+    if((clientX + menuWidth + PADDING_LEFT) > windowWidth) {
+      side = 'right';
+    }
+  } */
+
+  {
+    /* const x = sides.x;
+
+    const s = Object.keys(x) as (keyof typeof possibleSides.x)[];
+    if(side) {
+      s.findAndSplice((s) => s === side);
+      s.unshift(side);
+    }
+
+    const possibleSide = s.find((s) => possibleSides.x[s]); */
+    // let left: number;
+    /* if(possibleSide) {
+      left = x[possibleSide];
+      side = possibleSide;
+    } else {
+      left = sides.intermediateX;
+      side = undefined;
+    } */
+    const left = possibleSides.x[side] ? sides.x[side] : (side = 'center', sides.intermediateX);
+
+    elem.style.left = left + 'px';
+  }
+
+  /* if((clientY + menuHeight + PADDING_TOP) > windowHeight) {
+    elem.style.top = clamp(clientY - menuHeight, PADDING_TOP, windowHeight - menuHeight - PADDING_TOP) + 'px';
+    // elem.style.top = (innerHeight - scrollHeight - PADDING_TOP) + 'px';
+    verticalSide = 'bottom';
+  } else {
+    elem.style.top = Math.max(PADDING_TOP, clientY) + 'px';
+    verticalSide = 'top';
+  } */
+
+  {
+    const top = possibleSides.y[verticalSide] ? sides.y[verticalSide] : (verticalSide = 'center', sides.intermediateY);
+
+    elem.style.top = top + 'px';
+  }
+
+  elem.className = elem.className.replace(/(top|center|bottom)-(left|center|right)/g, '');
+  elem.classList.add(
+    // (verticalSide === 'center' ? verticalSide : (verticalSide === 'bottom' ? 'top' : 'bottom')) +
+    (verticalSide === 'center' ? verticalSide : 'bottom') +
+    '-' +
+    (side === 'center' ? side : ((I18n.getIsRTL() ? side === 'right' : side === 'left') ? 'right' : 'left')));
+
+  return {
+    width: menuWidth,
+    height: menuHeight
+  };
+}
+
+export function positionMenuTrigger(trigger: HTMLElement, menu: HTMLElement, direction: ButtonMenuDirection, additionalPadding?: MenuPositionPadding) {
+  const triggerRect = trigger.getBoundingClientRect();
+
+  const [directionX, directionY] = direction.split('-');
+
+  if(directionX === 'bottom') {
+    const top = triggerRect.top + triggerRect.height + (additionalPadding?.top ?? 0);
+    menu.style.top = `${Math.max(top, additionalPadding?.top ?? 0)}px`
+  } else {
+    const bottom = getAppWindow().innerHeight - triggerRect.top + (additionalPadding?.bottom ?? 0)
+    menu.style.bottom = `${Math.max(bottom, additionalPadding?.bottom ?? 0)}px`
+  }
+
+  // * `left`/`right` name the inline sides, as the `.btn-menu` classes do, in the trigger's own
+  // * direction: from a left-to-right island (the video player's controls) a menu opens as in LTR.
+  // * In RTL one opening to the right grows to the left from the trigger's right edge, and the
+  // * paddings swap with the sides; placed by `left` there, as a `.contextmenu` forces `right: auto`.
+  // * The side left over is cleared, or a class's inset would pin it in a document of the other direction
+  const documentRTL = I18n.getIsRTL();
+  const rtl = documentRTL && !trigger.closest('[dir="ltr"]');
+  if(rtl) {
+    if(directionY === 'right' || directionY === 'center') {
+      const paddingRight = additionalPadding?.right ?? 0;
+      const right = Math.max(getAppWindow().innerWidth - triggerRect.right + paddingRight, paddingRight);
+      menu.style.left = `${getAppWindow().innerWidth - right - menu.offsetWidth}px`;
+      menu.style.right = 'auto';
+    } else {
+      const paddingLeft = additionalPadding?.left ?? 0;
+      menu.style.left = `${Math.max(triggerRect.left - paddingLeft, paddingLeft)}px`;
+    }
+  } else if(directionY === 'right' || directionY === 'center') {
+    const left = triggerRect.left + (additionalPadding?.left ?? 0);
+    menu.style.left = `${Math.max(left, additionalPadding?.left ?? 0)}px`
+    if(documentRTL) menu.style.right = 'auto';
+  } else {
+    const right = getAppWindow().innerWidth - triggerRect.left - triggerRect.width - (additionalPadding?.right ?? 0)
+    menu.style.right = `${Math.max(right, additionalPadding?.right ?? 0)}px`
+    if(documentRTL) menu.style.left = 'auto';
+  }
+
+  // * a menu mounted outside the island lays out in the document's direction: where it grows from
+  // * and how it is centred follow the trigger's
+  if(rtl !== (documentRTL && !menu.closest('[dir="ltr"]'))) {
+    menu.style.setProperty('--reflect', rtl ? '-1' : '1');
+    menu.style.setProperty('--transform-origin-inline-start', rtl ? 'right' : 'left');
+    menu.style.setProperty('--transform-origin-inline-end', rtl ? 'left' : 'right');
+  }
+
+  if(directionY === 'center') {
+    menu.style.setProperty('--parent-half-width', (trigger.clientWidth / 2) + 'px');
+  }
+}

@@ -1,0 +1,497 @@
+import {createMemo, createSignal, For, Match, onMount, Show, Switch, untrack} from 'solid-js';
+import rootScope from '@lib/rootScope';
+import {PreloaderTsx} from '@components/putPreloader';
+import showStarGiftInfoPopup from '@components/popups/starGiftInfo';
+import {StarGiftsGrid} from '@components/stargifts/stargiftsGrid';
+import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
+import createButtonMenuCheckboxFilters from '@components/buttonMenuCheckboxFilters';
+import {AnimationList} from '@helpers/solid/animationList';
+import Animated from '@helpers/solid/animations';
+import {ChipTab, ChipTabs} from '@components/chipTabs';
+import {I18nTsx} from '@helpers/solid/i18n';
+import I18n, {i18n} from '@lib/langPack';
+import classNames from '@helpers/string/classNames';
+import {StickerTsx} from '@components/wrappers/sticker';
+import {MyDocument} from '@appManagers/appDocsManager';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import {IconTsx} from '@components/iconTsx';
+import InputField from '@components/inputField';
+import confirmationPopup, {PopupConfirmationOptions} from '@components/confirmationPopup';
+import Button from '@components/buttonTsx';
+import Row from '@components/rowTsx';
+import CheckboxFieldTsx from '@components/checkboxFieldTsx';
+import {attachReorder, createReorderMode, REORDERABLE_CLASS_NAME, ReorderBarContent, SelectionPlate} from '@components/reorderMode';
+
+import styles from '@components/stargifts/profileList.module.scss';
+import {ALL_COLLECTIONS_ID, createProfileGiftsStore, StarGiftsProfileActions, StarGiftsProfileStore} from '@components/stargifts/profileStore';
+import {Chat, StarGiftCollection, User} from '@layer';
+import {unwrap} from 'solid-js/store';
+import showChooseGiftPopup from '@components/popups/chooseGiftPopup';
+import {MyStarGift} from '@appManagers/appGiftsManager';
+import {copyTextToClipboard} from '@helpers/clipboard';
+import {toastNew} from '@components/toast';
+import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
+
+async function openCreateCollectionPopup({actions, peerId}: {
+  actions: StarGiftsProfileActions
+  peerId: PeerId
+}): Promise<void> {
+  const managers = bindManagersToSession(rootScope.managers);
+  const buttonOptions: PopupConfirmationOptions['button'] = {
+    langKey: 'Create'
+  };
+
+  const inputField = new InputField({
+    maxLength: 12,
+    placeholder: 'StarGiftCollectionsAddPlaceholder',
+    required: true
+  });
+
+  try {
+    await confirmationPopup({
+      titleLangKey: 'StarGiftCollectionsAddTitle',
+      descriptionLangKey: 'StarGiftCollectionsAddText',
+      inputField,
+      button: buttonOptions
+    })
+  } catch(err) {
+    return
+  }
+
+  const collection = await managers.appGiftsManager.createCollection(peerId, inputField.value)
+
+  actions.updateCollection(collection)
+}
+
+async function openRenameCollectionPopup({actions, collection, peerId}: {
+  actions: StarGiftsProfileActions
+  collection: StarGiftCollection
+  peerId: PeerId
+}): Promise<void> {
+  const managers = bindManagersToSession(rootScope.managers);
+  const buttonOptions: PopupConfirmationOptions['button'] = {
+    langKey: 'Edit'
+  };
+
+  const inputField = new InputField({
+    maxLength: 12,
+    placeholder: 'StarGiftCollectionsAddPlaceholder',
+    required: true
+  });
+  inputField.value = collection.title
+
+  try {
+    await confirmationPopup({
+      titleLangKey: 'StarGiftCollectionsRename',
+      inputField,
+      button: buttonOptions
+    })
+  } catch(err) {
+    return
+  }
+
+  if(inputField.value === collection.title) return
+
+  const newCollection = await managers.appGiftsManager.updateCollection({
+    peerId,
+    collectionId: collection.collection_id,
+    title: inputField.value
+  })
+
+  actions.updateCollection(newCollection, {switch: false, reload: false})
+}
+
+async function openAddGiftsPopup({actions, collectionId, peerId}: {
+  actions: StarGiftsProfileActions
+  collectionId: number
+  peerId: PeerId
+}): Promise<void> {
+  const managers = bindManagersToSession(rootScope.managers);
+  const result = await new Promise<{selected: MyStarGift[], deselected: MyStarGift[]} | null>((resolve) => {
+    showChooseGiftPopup({
+      peerId,
+      selectedCollectionId: collectionId,
+      onFinish: resolve
+    });
+  })
+
+  if(!result) return
+
+  const collection = await managers.appGiftsManager.updateCollection({
+    peerId,
+    collectionId,
+    add: result.selected.map((it) => it.input),
+    delete: result.deselected.map((it) => it.input)
+  })
+
+  actions.updateCollection(collection)
+}
+
+export function profileStarGiftsButtonMenu(props: {
+  store?: StarGiftsProfileStore
+  actions?: StarGiftsProfileActions
+  verify: () => boolean
+  peerId: PeerId
+}): ButtonMenuItemOptionsVerifiable[] {
+  const FILTER_GROUPS = [['unlimited', 'limited', 'upgradable', 'unique'], ['displayed', 'hidden']] as const
+  type ToggleableFilter = typeof FILTER_GROUPS[number][number]
+  const {checkboxFields, toggleFilter} = createButtonMenuCheckboxFilters<ToggleableFilter>({
+    filterGroups: FILTER_GROUPS,
+    getState: () => props.store,
+    onChange: (changes) => props.actions.setFilters(changes)
+  });
+  return [
+    {
+      icon: 'sort_date',
+      text: 'StarGiftSortByDate',
+      onClick: () => props.actions.setFilters({sort: 'date'}),
+      verify: () => props.verify() && props.store?.sort === 'value'
+    },
+    {
+      icon: 'sort_price',
+      text: 'StarGiftSortByValue',
+      onClick: () => props.actions.setFilters({sort: 'value'}),
+      verify: () => props.verify() && props.store?.sort === 'date'
+    },
+    {
+      icon: 'folder',
+      text: 'StarGiftCollectionsAdd',
+      onClick: () => openCreateCollectionPopup({actions: props.actions, peerId: props.peerId}),
+      verify: () => props.verify() && props.store != null && props.store.canManageGifts
+    },
+    {
+      checkboxField: checkboxFields.unlimited,
+      text: 'StarGiftShowUnlimited',
+      separator: true,
+      onClick: () => toggleFilter('unlimited'),
+      verify: () => props.verify() && props.store != null
+    },
+    {
+      checkboxField: checkboxFields.limited,
+      text: 'StarGiftShowLimited',
+      onClick: () => toggleFilter('limited'),
+      verify: () => props.verify() && props.store != null
+    },
+    {
+      checkboxField: checkboxFields.upgradable,
+      text: 'StarGiftShowUpgradable',
+      onClick: () => toggleFilter('upgradable'),
+      verify: () => props.verify() && props.store != null
+    },
+    {
+      checkboxField: checkboxFields.unique,
+      text: 'StarGiftShowUnique',
+      onClick: () => toggleFilter('unique'),
+      verify: () => props.verify() && props.store != null
+    },
+    {
+      checkboxField: checkboxFields.displayed,
+      text: 'StarGiftShowDisplayed',
+      separator: true,
+      onClick: () => toggleFilter('displayed'),
+      verify: () => props.verify() && props.store != null && props.store.canManageGifts
+    },
+    {
+      checkboxField: checkboxFields.hidden,
+      text: 'StarGiftShowHidden',
+      onClick: () => toggleFilter('hidden'),
+      verify: () => props.verify() && props.store != null && props.store.canManageGifts
+    }
+  ]
+}
+
+const ADD_COLLECTION_ID = -2
+
+export function StarGiftsProfileTab(props: {
+  peerId: PeerId
+  scrollParent?: HTMLElement
+  /** the profile's tab row, which the bar of the collections' reorder takes while it is on */
+  selectionMount?: HTMLElement
+  /** the reorder starts: a selection of another list that holds the tab row ends */
+  onReorderStart?: () => void
+  onCountChange?: (count: number) => void
+}) {
+  const [store, actions] = createProfileGiftsStore({
+    peerId: props.peerId,
+    onCountChange: props.onCountChange,
+    onSaveFailed: () => toastNew({langPackKey: 'Error.AnError'})
+  });
+
+  // * as the albums of the stories: each drop is saved as it lands, so leaving the mode has nothing left to save
+  const reorder = createReorderMode({onStart: props.onReorderStart});
+  const moveCollections = (ids: number[]) => actions.reorderCollections(ids)
+
+  const onNotifyChange = (enabled: boolean) => {
+    toastNew({langPackKey: enabled ? 'Gift2ChannelNotifyChecked' : 'Gift2ChannelNotifyNotChecked'})
+    actions.toggleChatNotifications(enabled)
+  }
+
+  onMount(() => actions.loadNext())
+
+  const [direction, setDirection] = createSignal(0)
+  let scrollDiff = 0
+  let wrapperRef!: HTMLDivElement
+
+  const scrollPositions = new Map<number, number>()
+
+  const getScrollBase = () => {
+    const searchSuper = wrapperRef?.closest('.search-super') as HTMLElement
+    if(!searchSuper) return 0
+    return searchSuper.offsetTop === 0 ? 0 : searchSuper.offsetTop - 56
+  }
+
+  const slideKeyframes = (_element: Element, removed: boolean): Keyframe[] => {
+    // * the next collection's chip is toward the inline end — to the left in a right-to-left layout
+    const dir = direction() * (I18n.getIsRTL() ? -1 : 1)
+    const yOffset = scrollDiff ? ` translateY(${scrollDiff}px)` : ''
+    if(removed) {
+      // AnimationList reverses these for exit; Y offset compensates scroll change
+      return [
+        {transform: `translateX(${-dir * 100}%)${yOffset}`},
+        {transform: `translateX(0)${yOffset}`}
+      ]
+    }
+    return [{transform: `translateX(${dir * 100}%)`}, {transform: 'translateX(0)'}]
+  }
+
+  const setCollection = (newId: number) => {
+    if(newId === store.chosenCollection) return
+
+    const collections = store.collections
+    const oldIndex = store.chosenCollection === ALL_COLLECTIONS_ID ? -1 :
+      (collections?.findIndex((c) => c.collection_id === store.chosenCollection) ?? -1)
+    const newIndex = newId === ALL_COLLECTIONS_ID ? -1 :
+      (collections?.findIndex((c) => c.collection_id === newId) ?? -1)
+    const dir = newIndex > oldIndex ? 1 : newIndex < oldIndex ? -1 : 0
+
+    const scrollable = props.scrollParent
+    const scrollBase = getScrollBase()
+    const oldScrollTop = scrollable?.scrollTop ?? 0
+    const oldScroll = oldScrollTop - scrollBase
+    if(scrollable && oldScroll >= 0) {
+      scrollPositions.set(store.chosenCollection, Math.max(0, oldScroll))
+    }
+
+    if(dir) setDirection(dir)
+    actions.setFilters({chosenCollection: newId})
+
+    const newScroll = scrollPositions.get(newId) ?? 0
+    const targetScrollTop = scrollBase + newScroll
+    if(scrollable && oldScroll >= 0) {
+      scrollDiff = targetScrollTop - oldScrollTop
+      scrollable.scrollTop = targetScrollTop
+    } else {
+      scrollDiff = 0
+    }
+  }
+
+  const collectionContent = createMemo(() => {
+    store.chosenCollection
+    // * the preloader, the gifts and a notice of none take one another's place with a crossfade
+    return untrack(() => (
+      <div class={classNames(styles.collectionContent, 'crossfade-block')}>
+        <Animated type="cross-fade" noItemClass itemClass="crossfade-block-item">
+          <Switch>
+            <Match when={store.loading && store.items.length === 0}>
+              <PreloaderTsx />
+            </Match>
+            <Match when={store.items.length === 0 && store.chosenCollection !== ALL_COLLECTIONS_ID && store.canManageGifts}>
+              <div class={/* @once */ styles.empty}>
+                <I18nTsx class={/* @once */ styles.emptyTitle} key="StarGiftCollectionsEmptyTitle" />
+                <I18nTsx class={/* @once */ styles.emptySubtitle} key="StarGiftCollectionsEmptySubtitle" />
+                <Button
+                  class="btn-primary btn-color-primary btn-control"
+                  text="StarGiftCollectionsAddGifts"
+                  onClick={() => openAddGiftsPopup({
+                    actions,
+                    collectionId: store.chosenCollection,
+                    peerId: props.peerId
+                  })}
+                />
+              </div>
+            </Match>
+            <Match when={store.items.length === 0}>
+              <div class={/* @once */ styles.empty}>
+                <I18nTsx class={/* @once */ styles.emptySubtitle} key="StarGiftCollectionsEmptyOther" />
+              </div>
+            </Match>
+            <Match when={true}>
+              <StarGiftsGrid
+                class={/* @once */ styles.grid}
+                items={unwrap(store.items)}
+                view='profile'
+                profilePeerId={props.peerId}
+                canManageGifts={store.canManageGifts}
+                profileCollections={store.collections ? unwrap(store.collections) : undefined}
+                scrollParent={props.scrollParent}
+                autoplay={false}
+                onClick={(item) => {
+                  showStarGiftInfoPopup({gift: item});
+                }}
+              />
+            </Match>
+          </Switch>
+        </Animated>
+      </div>
+    ))
+  })
+
+  const render = (
+    <div class={classNames(styles.tab, store.hasCollections && styles.hasCollections)}>
+      <Show when={store.hasCollections}>
+        <ChipTabs
+          class={/* @once */ styles.collections}
+          value={store.chosenCollection.toString()}
+          needIntersectionObserver
+          onChange={(id) => {
+            if(id === ADD_COLLECTION_ID.toString()) {
+              openCreateCollectionPopup({actions, peerId: props.peerId})
+              return false
+            }
+            setCollection(Number(id))
+          }}
+          scrollableRef={(list) => attachReorder({
+            list,
+            axis: 'x',
+            scrollable: {container: list},
+            active: reorder.active,
+            key: 'value',
+            onMove: moveCollections
+          })}
+          contextMenuButtons={(id_) => {
+            const id = Number(id_)
+            // * a long press is what picks a chip up while they are being rearranged
+            if(id === ALL_COLLECTIONS_ID || id === ADD_COLLECTION_ID || reorder.active()) return []
+
+
+            const buttons: ButtonMenuItemOptionsVerifiable[] = [
+              {
+                icon: 'link',
+                text: 'CopyLink',
+                onClick: async() => {
+                  const username = await rootScope.managers.appPeersManager.getPeerUsername(props.peerId)
+                  copyTextToClipboard(`https://t.me/${username}/c/${id}`)
+                  toastNew({langPackKey: 'LinkCopied'})
+                },
+                verify: async() => {
+                  const username = await rootScope.managers.appPeersManager.getPeerUsername(props.peerId)
+                  return !!username
+                }
+              }
+            ]
+
+            if(store.canManageGifts) {
+              buttons.push(
+                {
+                  icon: 'add',
+                  text: 'StarGiftCollectionsAddGifts',
+                  onClick: () => openAddGiftsPopup({actions, collectionId: id, peerId: props.peerId})
+                },
+                {
+                  icon: 'edit',
+                  text: 'StarGiftCollectionsRename',
+                  onClick: () => {
+                    const collection = store.collections.find((it) => it.collection_id === id)
+                    if(!collection) return
+                    openRenameCollectionPopup({actions, collection, peerId: props.peerId})
+                  }
+                },
+                {
+                  icon: 'menu',
+                  text: 'Gift2Reorder',
+                  verify: () => store.collections.length > 1,
+                  onClick: () => reorder.start()
+                },
+                {
+                  icon: 'delete',
+                  text: 'Delete',
+                  danger: true,
+                  onClick: async() => {
+                    const managers = bindManagersToSession(rootScope.managers);
+                    const collection = store.collections.find((it) => it.collection_id === id)
+                    if(!collection) return
+                    await confirmationPopup({
+                      titleLangKey: 'StarGiftCollectionsDeleteTitle',
+                      descriptionLangKey: 'StarGiftCollectionsDeleteAreYouSure',
+                      descriptionLangArgs: [wrapEmojiText(collection.title)],
+                      button: {
+                        langKey: 'Delete',
+                        isDanger: true
+                      }
+                    })
+                    managers.appGiftsManager.deleteCollection(props.peerId, id)
+                    actions.deleteCollection(id)
+                  }
+                }
+              )
+            }
+
+            return buttons
+          }}
+          view="surface"
+          center
+        >
+          <ChipTab value={ALL_COLLECTIONS_ID.toString()}>
+            <I18nTsx key="StarGiftCollectionsAll" />
+          </ChipTab>
+          <For each={store.collections}>
+            {(collection) => (
+              <ChipTab
+                class={classNames('gift-collection-chip', reorder.active() && REORDERABLE_CLASS_NAME)}
+                value={collection.collection_id.toString()}
+              >
+                {collection.icon && (
+                  <StickerTsx
+                    sticker={unwrap(collection.icon) as MyDocument}
+                    width={24}
+                    height={24}
+                    autoStyle
+                  />
+                )}
+                {wrapEmojiText(collection.title)}
+              </ChipTab>
+            )}
+          </For>
+          <Show when={store.canManageGifts}>
+            <ChipTab value={ADD_COLLECTION_ID.toString()} class={/* @once */ styles.addCollection}>
+              <IconTsx icon="add" />
+              <I18nTsx key="StarGiftCollectionsAdd" />
+            </ChipTab>
+          </Show>
+        </ChipTabs>
+      </Show>
+
+      <div ref={wrapperRef} class={styles.contentWrapper}>
+        <AnimationList
+          animationOptions={{duration: 250, easing: 'cubic-bezier(.4, 0, .2, 1)'}}
+          keyframes={slideKeyframes}
+          mode="replacement"
+        >
+          {collectionContent()}
+        </AnimationList>
+      </div>
+
+      {/* the server says it only to who can manage a channel's gifts; pinned to the bottom, as the other apps keep it */}
+      <Show when={store.chatNotificationsEnabled !== undefined}>
+        <div class={/* @once */ styles.notify}>
+          <Row>
+            <Row.CheckboxField>
+              <CheckboxFieldTsx checked={store.chatNotificationsEnabled} onChange={onNotifyChange} />
+            </Row.CheckboxField>
+            <Row.Title>{i18n('Gift2ChannelNotify')}</Row.Title>
+          </Row>
+        </div>
+      </Show>
+
+      {/* only while it is on: the tab row it takes is shared with the other lists' bars */}
+      <Show when={reorder.active()}>
+        <SelectionPlate shown={reorder.active} mount={props.selectionMount} giveWay={reorder.stop}>
+          <ReorderBarContent titleKey="Gift2Reorder" onDone={reorder.stop} />
+        </SelectionPlate>
+      </Show>
+    </div>
+  );
+
+  // * `stopReorder`: the reorder is of this list, it ends as another is shown
+  return {render, store, actions, setCollection, stopReorder: reorder.stop};
+}

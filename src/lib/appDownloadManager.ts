@@ -1,0 +1,601 @@
+import type {DownloadMediaOptions, DownloadOptions} from '@appManagers/apiFileManager';
+import type {AppMessagesManager} from '@appManagers/appMessagesManager';
+import type {MyDocument} from '@appManagers/appDocsManager';
+import deferredPromise, {bindPromiseToDeferred, CancellablePromise} from '@helpers/cancellablePromise';
+import {InputFile, InputFileLocation, Photo, PhotoSize} from '@layer';
+import getFileNameForUpload from '@helpers/getFileNameForUpload';
+import {TabManagers} from '@lib/managers';
+import rootScope from '@lib/rootScope';
+import {MOUNT_CLASS_TO} from '@config/debug';
+import noop from '@helpers/noop';
+import getDownloadMediaDetails from '@appManagers/utils/download/getDownloadMediaDetails';
+import getDownloadFileNameFromOptions from '@appManagers/utils/download/getDownloadFileNameFromOptions';
+import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
+import makeError from '@helpers/makeError';
+import createDownloadAnchor from '@helpers/dom/createDownloadAnchor';
+import {getFileNameByLocation} from '@helpers/fileName';
+import getDocumentDownloadOptions from '@appManagers/utils/docs/getDocumentDownloadOptions';
+import getPhotoDownloadOptions from '@appManagers/utils/photos/getPhotoDownloadOptions';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import {IS_MOBILE_SAFARI} from '@environment/userAgent';
+import isWebFileLocation from '@appManagers/utils/webFiles/isWebFileLocation';
+import {MIME_TYPE_EXTENSION_MAP} from '@environment/mimeTypeMap';
+import {isObjectURL} from '@helpers/objectUrlUtils';
+import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
+
+export type ResponseMethodBlob = 'blob';
+export type ResponseMethodJson = 'json';
+export type ResponseMethod = ResponseMethodBlob | ResponseMethodJson;
+
+/* export type DownloadBlob = {promise: Promise<Blob>, controller: AbortController};
+export type DownloadJson = {promise: Promise<any>, controller: AbortController}; */
+export type DownloadBlob = CancellablePromise<Blob>;
+export type DownloadUrl = CancellablePromise<string>;
+export type DownloadJson = CancellablePromise<any>;
+// export type Download = DownloadBlob/*  | DownloadJson */;
+export type Download = DownloadBlob | DownloadUrl/*  | DownloadJson */;
+type CachedDownloadUrl = DownloadUrl & {resolvedObjectURL?: string};
+
+export type Progress = {done: number, fileName: string, total: number, offset: number};
+export type ProgressCallback = (details: Progress) => void;
+
+type DownloadType = 'url' | 'blob' | 'void' | 'disc';
+
+// * Resolved downloads are kept only to dedup a repeat request for the same media (the media viewer
+// * paging back and forth, a bubble re-rendering). Without a bound they never left `downloads` at
+// * all - only a REJECTED download was cleared - so a day-old tab held every Blob it had ever
+// * downloaded. Sized like the worker-side object-URL caches next door.
+const RESOLVED_DOWNLOAD_LIMIT = 64;
+const RESOLVED_DOWNLOAD_BYTES_LIMIT = 32 * 1024 * 1024;
+
+export class AppDownloadManager {
+  private downloads: {[fileName: string]: {main: Download} & {[type in DownloadType]?: Download}} = {};
+  // * Insertion-ordered = LRU order; re-inserting on read moves an entry to the end
+  private resolved: Map<string, {fileName: string, type: DownloadType, size: number}> = new Map();
+  private resolvedBytes = 0;
+  // private downloadsToDisc: {[fileName: string]: Download} = {};
+  private progress: {[fileName: string]: Progress} = {};
+  // * A download to disc whose service worker handshake fails goes on as a plain download, under the
+  // * file name without '_download': its progress is for the deferred kept under the streamed name
+  private progressAliases: {[fileName: string]: string} = {};
+  // private progressCallbacks: {[fileName: string]: Array<ProgressCallback>} = {};
+  private managers: TabManagers;
+
+  // To be assigned elsewhere in the app, importing confirmationPopup here will result in an importing error
+  public showPollCancelConfirmation: (randomId: string) => void;
+
+  public construct(managers: TabManagers) {
+    this.managers = managers;
+    // * a download still on its way when the tab switches accounts is the previous account's, and what it
+    // * brings is dropped: the next account asks for the same file anew rather than wait on it
+    rootScope.addEventListener('account_switched', () => {
+      for(const fileName in this.downloads) {
+        const download = this.downloads[fileName];
+        const isPending = Object.values(download).some((deferred) => !deferred.isFulfilled && !deferred.isRejected);
+        if(isPending) {
+          delete this.downloads[fileName];
+          delete this.progress[fileName];
+        }
+      }
+    });
+
+    rootScope.addEventListener('download_progress', (details) => {
+      // const callbacks = this.progressCallbacks[details.fileName];
+      // if(callbacks) {
+      //   callbacks.forEach((callback) => callback(details));
+      // }
+
+      for(const fileName of [details.fileName, this.progressAliases[details.fileName]]) {
+        const download = fileName && this.downloads[fileName];
+        if(download?.main?.notifyAll) {
+          this.progress[fileName] = details;
+          download.main.notifyAll(details);
+        }
+      }
+    });
+  }
+
+  private getNewDeferred<T>(fileName: string, type?: DownloadType) {
+    const deferred = deferredPromise<T>();
+
+    let download = this.downloads[fileName];
+    if(!download) {
+      download = this.downloads[fileName] = {
+        main: deferred as any
+      };
+
+      const runCancel = async() => {
+        const managers = bindManagersToSession(this.managers);
+        if(await this.confirmBeforeCancelingPollUpload(fileName)) return;
+
+        const error = makeError('DOWNLOAD_CANCELED');
+
+        managers.apiFileManager.cancelDownload(fileName);
+
+        deferred.reject(error);
+        deferred.cancel = noop;
+      };
+
+      deferred.cancel = () => {
+        runCancel();
+      };
+
+      // * unless the entry has been let go meanwhile (an account switch) and the file asked for anew
+      const isOwnEntry = () => this.downloads[fileName] === download;
+      deferred.catch(() => {
+        if(isOwnEntry()) this.clearDownload(fileName, type);
+      }).finally(() => {
+        if(isOwnEntry()) delete this.progress[fileName];
+        // delete this.progressCallbacks[fileName];
+      });
+    } else {
+      const main = download.main;
+      (['cancel', 'addNotifyListener', 'notify', 'notifyAll'] as (keyof CancellablePromise<void>)[]).forEach((key) => {
+        if(!main[key]) {
+          return;
+        }
+
+        // @ts-ignore
+        deferred[key] = main[key].bind(main);
+      });
+    }
+
+    const haveToClear = type === 'disc';
+    if(haveToClear) {
+      deferred.catch(noop).finally(() => {
+        if(this.downloads[fileName] === download) this.clearDownload(fileName, type);
+      });
+    }
+
+    return download[type] = deferred as any;
+  }
+
+  private async confirmBeforeCancelingPollUpload(fileName: string) {
+    const randomId = await this.managers.appPollsManager.getRandomIdByUploadingFileName(fileName);
+    if(!randomId || !this.showPollCancelConfirmation) return false;
+
+    this.showPollCancelConfirmation(randomId);
+
+    return true;
+  }
+
+  public getNewDeferredForUpload<T extends Promise<any>>(fileName: string, promise: T) {
+    const deferred: CancellablePromise<Awaited<T>> = this.getNewDeferred<InputFile>(fileName);
+    const download = this.downloads[fileName];
+    promise.then(deferred.resolve.bind(deferred), deferred.reject.bind(deferred));
+
+    // * a failed upload is the caller's to handle - a bare finally() would report it again as unhandled
+    deferred.catch(noop).finally(() => {
+      if(this.downloads[fileName] === download) this.clearDownload(fileName);
+    });
+
+    return deferred;
+  }
+
+  private resolvedKey(fileName: string, type: DownloadType) {
+    return type + ':' + fileName;
+  }
+
+  // * Called once a download settles; evicts the coldest resolved entries past the budget.
+  private trackResolved(fileName: string, type: DownloadType, deferred: Download, value: any) {
+    // * already cleared while settling (the 'disc' path does that), or let go with an account switch
+    if(this.downloads[fileName]?.[type] !== deferred) {
+      return;
+    }
+
+    const key = this.resolvedKey(fileName, type);
+    const size = value instanceof Blob ? value.size : 0;
+    this.forgetResolved(key);
+    this.resolved.set(key, {fileName, type, size});
+    this.resolvedBytes += size;
+
+    while(this.resolved.size > RESOLVED_DOWNLOAD_LIMIT || this.resolvedBytes > RESOLVED_DOWNLOAD_BYTES_LIMIT) {
+      const oldest = this.resolved.keys().next();
+      if(oldest.done || oldest.value === key) { // never evict the entry that just arrived
+        break;
+      }
+
+      const entry = this.resolved.get(oldest.value);
+      this.forgetResolved(oldest.value);
+      this.clearDownload(entry.fileName, entry.type);
+    }
+  }
+
+  private forgetResolved(key: string) {
+    const entry = this.resolved.get(key);
+    if(!entry) {
+      return;
+    }
+
+    this.resolvedBytes -= entry.size;
+    this.resolved.delete(key);
+  }
+
+  private clearDownload(fileName: string, type?: DownloadType) {
+    const downloads = this.downloads[fileName];
+    if(!downloads) {
+      return;
+    }
+
+    if(type) {
+      this.forgetResolved(this.resolvedKey(fileName, type));
+    }
+
+    delete downloads[type];
+
+    const length = Object.keys(downloads).length;
+    if(!length || (downloads.main && length === 1)) {
+      delete this.downloads[fileName];
+      // * The record goes as a whole (an upload finalizing clears it without a type), so every
+      // * type still tracked for this file must go with it - otherwise the budget counts ghosts
+      for(const key in downloads) {
+        this.forgetResolved(this.resolvedKey(fileName, key as DownloadType));
+      }
+    }
+  }
+
+  public getUpload(fileName: string): Awaited<ReturnType<AppMessagesManager['sendFile']>>['promise'] {
+    let deferred: CancellablePromise<any> = this.getDownload(fileName);
+    if(deferred) {
+      return deferred;
+    }
+
+    deferred = this.getNewDeferred(fileName);
+    this.managers.appMessagesManager.getUploadPromise(fileName)
+    .then(deferred.resolve.bind(deferred), deferred.reject.bind(deferred));
+    return deferred;
+  }
+
+  /* public fakeDownload(fileName: string, value: Blob | string) {
+    const deferred = this.getNewDeferred<Blob>(fileName);
+    if(typeof(value) === 'string') {
+      fetch(value)
+      .then((response) => response.blob())
+      .then((blob) => deferred.resolve(blob));
+    } else {
+      deferred.resolve(value);
+    }
+
+    return deferred;
+  } */
+
+  private d(fileName: string, getPromise: () => Promise<any>, type?: DownloadType) {
+    let deferred = this.getDownload(fileName, type);
+    if(deferred) return deferred;
+
+    deferred = this.getNewDeferred<Blob>(fileName, type);
+    getPromise().then(deferred.resolve.bind(deferred), deferred.reject.bind(deferred));
+    deferred.then((value) => this.trackResolved(fileName, type, deferred, value), noop);
+    if(type === 'url') {
+      const urlDeferred = deferred as CachedDownloadUrl;
+      urlDeferred.then((url) => {
+        urlDeferred.resolvedObjectURL = url;
+      }, noop);
+    }
+    return deferred;
+  }
+
+  public download(options: DownloadOptions): DownloadBlob {
+    if((options.location as InputFileLocation.inputDocumentFileLocation).file_reference) {
+      throw new Error('download document with file_reference is not supported, use downloadMedia instead');
+    }
+
+    const fileName = getDownloadFileNameFromOptions(options);
+    return this.d(fileName, () => this.managers.apiFileManager.download(options), 'blob') as any;
+  }
+
+  public downloadMedia(options: DownloadMediaOptions, type: DownloadType = 'blob', promiseBefore?: Promise<any>): DownloadBlob {
+    const {fileName} = getDownloadMediaDetails(options);
+
+    if(type === 'url') {
+      const cached = this.getDownload(fileName, type) as CachedDownloadUrl;
+      const resolvedObjectURL = cached?.resolvedObjectURL;
+      if(
+        isObjectURL(resolvedObjectURL) &&
+        apiManagerProxy.getCacheContext(options.media as any, options.thumb?.type).url !== resolvedObjectURL
+      ) {
+        // The worker evicted this URL and already invalidated the tab mirror.
+        // Do not hand a newly rendered element the fulfilled promise's revoked
+        // value; let the worker recreate/re-adopt a URL from its Blob cache.
+        this.clearDownload(fileName, type);
+      }
+    }
+
+    return this.d(fileName, () => {
+      // * the account session the file is asked in: a save that waits for the service worker first goes
+      // * nowhere once the tab is on another account
+      const {apiFileManager} = bindManagersToSession(this.managers);
+      let cb: any;
+      if(type === 'url') {
+        cb = apiFileManager.downloadMediaURL;
+      } else if(type === 'void'/*  || type === 'disc' */) {
+        cb = apiFileManager.downloadMediaVoid;
+      } else /* if(type === 'blob') */ {
+        cb = apiFileManager.downloadMedia;
+      }
+
+      if(promiseBefore) {
+        return promiseBefore.then(() => {
+          return cb(options);
+        }, () => {
+          delete options.downloadId;
+          const {fileName: plainFileName} = getDownloadMediaDetails(options);
+          this.progressAliases[plainFileName] = fileName;
+          const promise = cb(options);
+          promise.catch(noop).finally(() => {
+            if(this.progressAliases[plainFileName] === fileName) {
+              delete this.progressAliases[plainFileName];
+            }
+          });
+          return promise;
+        });
+      }
+
+      return cb(options);
+    }, type) as any;
+  }
+
+  public downloadMediaURL(options: DownloadMediaOptions): DownloadUrl {
+    return this.downloadMedia(options, 'url') as any;
+  }
+
+  public downloadMediaVoid(options: DownloadMediaOptions): DownloadBlob {
+    return this.downloadMedia(options, 'void');
+  }
+
+  public upload(file: File | Blob, fileName?: string, promise?: Promise<any>) {
+    if(!fileName) {
+      fileName = getFileNameForUpload(file);
+    }
+
+    if(!promise) {
+      promise = this.managers.apiFileManager.upload({file, fileName});
+    }
+
+    const deferred = this.getNewDeferredForUpload(fileName, promise);
+    return deferred as any as CancellablePromise<InputFile>;
+  }
+
+  public getDownload(fileName: string, type?: DownloadType) {
+    const d = this.downloads[fileName];
+    const download = d && d[type];
+    if(download) { // a hit is a use: move it back to the warm end of the LRU
+      const key = this.resolvedKey(fileName, type);
+      const entry = this.resolved.get(key);
+      if(entry) {
+        this.resolved.delete(key);
+        this.resolved.set(key, entry);
+      }
+    }
+
+    return download;
+  }
+
+  // public addProgressCallback(fileName: string, callback: ProgressCallback) {
+  //   const progress = this.progress[fileName];
+  //   (this.progressCallbacks[fileName] ?? (this.progressCallbacks[fileName] = [])).push(callback);
+
+  //   if(progress) {
+  //     callback(progress);
+  //   }
+  // }
+
+  // * a save streamed to the disk by the service worker, named '<file>_download' (else a plain download of the file)
+  private canSaveViaServiceWorker() {
+    return !IS_MOBILE_SAFARI && !!apiManagerProxy.serviceMessagePort;
+  }
+
+  /**
+   * The download of this document on its way - from this tab or another one - for a place that only shows it, such
+   * as another row of the same file: its save streamed to the disk, else a plain download of it (a save without the
+   * service worker, or one that fell back to that, a file opened rather than saved). It never starts one and rejects
+   * with `NO_ENTRY_FOUND` when there is none: a save over already would be downloaded anew, unasked, and that
+   * download's own `document_downloading` would set off the next one. Kept out of `downloads`, so that no request
+   * that would start the file ever waits on one that may find nothing
+   */
+  public attachToDownloadToDisc(doc: MyDocument): DownloadBlob {
+    const downloadIds = this.canSaveViaServiceWorker() ? ['1', undefined] : [undefined];
+    const fileNames = downloadIds.map((downloadId) => getDownloadMediaDetails({media: doc, downloadId}).fileName);
+    const started = this.getDownload(fileNames[0], 'disc') as DownloadBlob;
+    if(started) {
+      return started;
+    }
+
+    const {apiFileManager} = bindManagersToSession(this.managers);
+    const deferred = deferredPromise<Blob>();
+    let fileName: string; // * of the transfer asked to join
+    deferred.cancel = () => {
+      apiFileManager.cancelDownload(fileName);
+      deferred.reject(makeError('DOWNLOAD_CANCELED'));
+    };
+
+    const onProgress = (details: Progress) => {
+      if(details.fileName === fileName) {
+        deferred.notifyAll?.(details);
+      }
+    };
+    rootScope.addEventListener('download_progress', onProgress);
+    deferred.catch(noop).finally(() => rootScope.removeEventListener('download_progress', onProgress));
+
+    const join = (index: number): Promise<Blob> => {
+      fileName = fileNames[index];
+      return apiFileManager.downloadMedia({media: doc, downloadId: downloadIds[index], onlyAttach: true}).catch((err: ApiError) => {
+        if(err?.type !== 'NO_ENTRY_FOUND' || index === fileNames.length - 1 || deferred.isRejected) {
+          throw err;
+        }
+
+        return join(index + 1);
+      });
+    };
+
+    bindPromiseToDeferred(join(0), deferred);
+    return deferred;
+  }
+
+  public downloadToDisc(options: DownloadMediaOptions, justAttach?: boolean) {
+    const media = options.media;
+    const isDocument = media._ === 'document';
+    const isWebFile = isWebFileLocation(media);
+    if(!isDocument && !isWebFile && !options.thumb) {
+      options.thumb = (media as Photo.photo).sizes.slice().pop() as PhotoSize.photoSize;
+    }
+
+    const USE_SW = this.canSaveViaServiceWorker();
+    // const USE_SW = true;
+
+    const getOutFileName = () => {
+      if(options.fileName) return options.fileName;
+      const downloadOptions = isDocument ?
+        getDocumentDownloadOptions(media) :
+        getPhotoDownloadOptions(media as any, options.thumb as PhotoSize.photoSize);
+      const docFileName = (options.media as MyDocument).file_name;
+      if(docFileName) return docFileName;
+      let name = getFileNameByLocation(downloadOptions.location);
+      const ext = MIME_TYPE_EXTENSION_MAP[downloadOptions.mimeType];
+      if(ext) name += '.' + ext;
+      return name;
+    };
+
+    // const {fileName: cacheFileName} = getDownloadMediaDetails(options);
+    // if(justAttach) {
+    //   const promise = this.downloadsToDisc[cacheFileName];
+    //   if(promise) {
+    //     return promise;
+    //   }
+    // }
+
+    // const {downloadOptions, fileName} = getDownloadMediaDetails(options);
+    // if(downloadOptions.size && downloadOptions.size > MAX_FILE_SAVE_SIZE) {
+    let url: string, pingPromise: Promise<any>, iframe: HTMLIFrameElement;
+    if(USE_SW) {
+      const id = '' + (Math.random() * 0x7FFFFFFF | 0);
+      // const id = 'test';
+      url = `d/${id}`;
+      options.downloadId = id;
+
+      pingPromise = apiManagerProxy.pingServiceWorkerWithIframe();
+
+      if(!justAttach) {
+        const {iframe: _iframe, onSuccess, onError} = this.createDownloadIframe(url);
+        iframe = _iframe;
+
+        // * 1. make sure that SW is alive with a ping
+        // * 2. send download request and wait for a pong (downloadRequestReceived)
+        // * 3. if pong is missing (something with request and can't handle it with iframe events),
+        // *    fallback to regular download
+        pingPromise = pingPromise.then(() => {
+          const deferred = deferredPromise<void>();
+
+          const onFinish = (good: boolean) => {
+            clearTimeout(timeout);
+            apiManagerProxy.serviceMessagePort.removeEventListener('downloadRequestReceived', onDownloadRequestReceived);
+            if(good) deferred.resolve();
+            else deferred.reject();
+          };
+
+          const onDownloadRequestReceived = (downloadId: string) => {
+            if(downloadId === id) {
+              onFinish(true);
+            }
+          };
+
+          apiManagerProxy.serviceMessagePort.addEventListener('downloadRequestReceived', onDownloadRequestReceived);
+
+          const timeout = window.setTimeout(() => {
+            onFinish(false);
+          }, 1500);
+
+          onSuccess();
+
+          return deferred;
+        }, (err) => {
+          onError();
+          throw err;
+        });
+      }
+    }
+
+    const promise = this.downloadMedia(options, 'disc', pingPromise);
+    // this.downloadsToDisc[cacheFileName] = promise;
+
+    if(justAttach) {
+      return promise;
+    }
+
+    let element: HTMLElement, hadProgress = false;
+    const onProgress = () => {
+      if(hadProgress) {
+        return;
+      }
+
+      hadProgress = true;
+      element = iframe;
+
+      indexOfAndSplice(promise.listeners, onProgress);
+    };
+
+    promise.addNotifyListener(onProgress);
+    promise.then((blob) => {
+      if(!blob) {
+        return;
+      }
+
+      const url = URL.createObjectURL(blob);
+      createDownloadAnchor(url, getOutFileName(), () => {
+        URL.revokeObjectURL(url);
+      });
+    }).catch(noop).finally(() => {
+      if(!hadProgress) {
+        onProgress();
+      }
+
+      setTimeout(() => {
+        element?.remove();
+      }, 1000);
+
+      // if(this.downloadsToDisc[cacheFileName] === promise) {
+      //   delete this.downloadsToDisc[cacheFileName];
+      // }
+    });
+
+    return promise;
+  }
+
+  private createDownloadIframe(url: string) {
+    const iframe = document.createElement('iframe');
+    iframe.hidden = true;
+
+    return {
+      iframe,
+      onSuccess: () => {
+        // const removeListeners = () => {
+        //   iframe.removeEventListener('load', onLoad);
+        //   iframe.removeEventListener('error', onError);
+        //   console.error('event', window.event);
+        // };
+
+        // const onLoad = () => {
+        //   removeListeners();
+        // };
+
+        // const onError = () => {
+        //   removeListeners();
+        // };
+
+        // iframe.addEventListener('load', onLoad);
+        // iframe.addEventListener('error', onError);
+
+        iframe.src = url;
+        document.body.append(iframe);
+      },
+      onError: () => {
+        console.error('falling back to normal download');
+      }
+    };
+  }
+}
+
+const appDownloadManager = new AppDownloadManager();
+if(import.meta.hot) import.meta.hot.accept();
+MOUNT_CLASS_TO && (MOUNT_CLASS_TO.appDownloadManager = appDownloadManager);
+export default appDownloadManager;

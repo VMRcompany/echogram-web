@@ -1,0 +1,1348 @@
+import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
+import {AccountPasskeys, AccountPassword, Authorization, ChannelParticipant, Chat, ChatAdminRights, ChatParticipant, ConnectedBot, DialogFilter, ExportedChatlistInvite, GlobalPrivacySettings, MediaArea, Passkey, WebAuthorization} from '@layer';
+import type SidebarSlider from '@components/slider';
+import type {SliderSuperTab} from '@components/slider';
+import getParticipantPeerId from '@appManagers/utils/chats/getParticipantPeerId';
+import type {MyDialogFilter} from '@lib/storages/filters';
+import {FormatterArgument, LangPackKey} from '@lib/langPack';
+import type {PasscodeActions} from '@lib/passcode/actions';
+import {InstanceOf} from '@types';
+import {SetStoreFunction} from 'solid-js/store';
+import {scaffoldSolidJSTab, scaffoldSolidJSTabEventable} from '@components/solidJsTabs/scaffoldSolidJSTab';
+import rootScope from '@lib/rootScope';
+import {appSettings} from '@stores/appSettings';
+import type {EditProfileTabPayload} from '@components/sidebarLeft/tabs/editProfile';
+import type {BusinessHoursTabPayload} from '@components/sidebarLeft/tabs/businessHours';
+import type {BusinessLocationTabPayload} from '@components/sidebarLeft/tabs/businessLocation';
+import type {BusinessChatLinksTabPayload} from '@components/sidebarLeft/tabs/businessChatLinks';
+import type {BusinessIntroTabPayload} from '@components/sidebarLeft/tabs/businessIntro';
+import type {TimezoneTabPayload} from '@components/sidebarLeft/tabs/timezone';
+import type {BusinessPeriod} from '@components/sidebarLeft/tabs/businessHoursShared';
+import type {StoriesSearch} from '@components/stories/store';
+import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
+import {ChatInvite, ChatInviteActions, getChatInviteLinksInitArgs} from '@components/sidebarRight/tabs/chatInviteLinkShared';
+import lottieLoader, {type PreloadedLottieAsset} from '@lib/lottie/lottieLoader';
+import {deleteFolder as deleteEditFolder, getEditFolderInitArgs} from '@components/sidebarLeft/tabs/editFolderShared';
+import type {
+  FilterPeerTypeByFunc,
+  SelectSearchPeerType
+} from '@components/appSelectPeers';
+import type {IsPeerType} from '@appManagers/appPeersManager';
+import type {NotifyException} from '@appManagers/appNotificationsManager';
+import type {AppChatFull} from '@appManagers/appProfileManager';
+
+
+/**
+ * The passcode's screen turns the passcode off and sets a new one without asking for it again, so
+ * every way there — the Privacy and Security row, the settings search, a `tg://settings/privacy/passcode`
+ * link — goes through here, and is asked for the current passcode first while one is set. Resolves with
+ * the passcode's screen once it is open, so a search result or a link can point at its control there, or
+ * with nothing when the check is given up.
+ */
+async function openPasscodeLockTabChecked(slider: SidebarSlider): Promise<SliderSuperTab> {
+  if(!appSettings.passcode?.enabled) {
+    const tab = slider.createTab(AppPasscodeLockTab);
+    await tab.open();
+    return tab;
+  }
+
+  const opened = deferredPromise<SliderSuperTab>();
+  const checkTab = slider.createTab(AppPasscodeEnterPasswordTab);
+  checkTab.middlewareHelper.onDestroy(() => opened.resolve(undefined));
+  await checkTab.open({
+    buttonText: 'PasscodeLock.Next',
+    inputLabel: 'PasscodeLock.EnterYourPasscode',
+    onSubmit: async(passcode, _, {isMyPasscode}) => {
+      const isCorrect = await isMyPasscode(passcode);
+      passcode = '';
+      if(!isCorrect) throw {};
+      // the check was left while the passcode was being verified (Back, an account switch): it opens
+      // nothing after all
+      if(!slider.getHistory().includes(checkTab)) return;
+
+      const tab = slider.createTab(AppPasscodeLockTab);
+      await tab.open();
+      opened.resolve(tab);
+    }
+  });
+  return opened;
+}
+
+export const AppPasscodeLockTab = Object.assign(
+  scaffoldSolidJSTab({
+    title: 'PasscodeLock.Title',
+    getComponentModule: () => import('../sidebarLeft/tabs/passcodeLock/mainTab'),
+    onOpenAfterTimeout: async function() {
+      // the check that let us in is no step to go back to: Back lands where the passcode was opened
+      // from — Privacy and Security, or the settings search
+      const history = this.slider.getHistory();
+      const below = history[history.indexOf(this) - 1];
+      if(below instanceof AppPasscodeEnterPasswordTab) {
+        this.slider.removeTabFromHistory(below);
+      }
+    }
+  }),
+  {openChecked: openPasscodeLockTabChecked}
+);
+
+
+type AppPasscodeEnterPasswordTabPayload = {
+  onSubmit: (passcode: string, tab: InstanceOf<typeof AppPasscodeEnterPasswordTab>, passcodeActions: PasscodeActions) => MaybePromise<void>;
+
+  inputLabel: LangPackKey;
+  buttonText: LangPackKey;
+};
+
+export const AppPasscodeEnterPasswordTab =
+  scaffoldSolidJSTab<AppPasscodeEnterPasswordTabPayload>({
+    title: 'PasscodeLock.Title',
+    getComponentModule: () => import('../sidebarLeft/tabs/passcodeLock/enterPasswordTab')
+  });
+
+
+type AppPrivacyMessagesTabPayload = {
+  onSaved: (globalPrivacy: CancellablePromise<GlobalPrivacySettings.globalPrivacySettings>) => void;
+};
+
+export const AppPrivacyMessagesTab =
+  scaffoldSolidJSTab<AppPrivacyMessagesTabPayload>({
+    title: 'PrivacyMessages',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacy/messages/tab')
+  });
+
+
+type AppDirectMessagesTabPayload = {
+  chat: Chat.channel;
+};
+
+export const AppDirectMessagesTab =
+  scaffoldSolidJSTab<AppDirectMessagesTabPayload>({
+    title: 'ChannelDirectMessages.Settings.Title',
+    getComponentModule: () => import('../sidebarRight/tabs/channelDirectMessages')
+  });
+
+
+export const AppNotificationsTab =
+  scaffoldSolidJSTab({
+    title: 'Telegram.NotificationSettingsViewController',
+    getComponentModule: () => import('../sidebarLeft/tabs/notifications')
+  });
+
+
+export type AppNotificationExceptionsTabPayload = {
+  inputKey: 'inputNotifyUsers' | 'inputNotifyChats' | 'inputNotifyBroadcasts',
+  /** the type's exceptions, kept up to date by the Notifications tab under this one */
+  exceptions: () => NotifyException[] | undefined
+};
+
+export const AppNotificationExceptionsTab =
+  scaffoldSolidJSTab<AppNotificationExceptionsTabPayload>({
+    title: 'NotificationsExceptions',
+    getComponentModule: () => import('../sidebarLeft/tabs/notificationExceptions')
+  });
+
+
+export function getEditProfileInitArgs(overwriteConnectedBot?: boolean): EditProfileTabPayload {
+  return {
+    bioMaxLength: rootScope.managers.apiManager.getLimit('bio'),
+    user: rootScope.managers.appUsersManager.getSelf(),
+    userFull: rootScope.managers.appProfileManager.getProfile(rootScope.myId.toUserId()),
+    connectedBot: rootScope.managers.appBusinessManager.getConnectedBot(overwriteConnectedBot)
+  };
+}
+
+export const AppEditProfileTab =
+  scaffoldSolidJSTab<EditProfileTabPayload>({
+    title: 'EditAccount.Title',
+    getComponentModule: () => import('../sidebarLeft/tabs/editProfile')
+  });
+(AppEditProfileTab as any).noSame = true;
+
+
+export function getBusinessHoursInitArgs(): BusinessHoursTabPayload {
+  return {
+    animationData: lottieLoader.loadAnimationFromURLManually('BusinessHours'),
+    userFull: rootScope.managers.appProfileManager.getProfile(rootScope.myId.toUserId()),
+    timezones: rootScope.managers.apiManager.getTimezonesList().then((list) => (
+      list._ === 'help.timezonesList' ? list.timezones : []
+    ))
+  };
+}
+
+export const AppBusinessHoursTab = Object.assign(
+  scaffoldSolidJSTab<BusinessHoursTabPayload>({
+    title: 'BusinessHours',
+    getComponentModule: () => import('../sidebarLeft/tabs/businessHours')
+  }),
+  {getInitArgs: getBusinessHoursInitArgs}
+);
+(AppBusinessHoursTab as any).noSame = true;
+
+
+type AppBusinessHoursDayTabPayload = {
+  /** Already-formatted weekday name — the header text, not a lang key. */
+  dayName: string,
+  periods: BusinessPeriod[],
+  /** Earliest minute this day may open at, given how far the previous day runs. */
+  min: number,
+  /** Latest minute this day may close at, given when the next day opens. */
+  max: number,
+  maxPeriodsCount: number,
+  /** Called once, with the day as saved; an unsaved tab reports nothing. */
+  onSave: (periods: BusinessPeriod[]) => void
+};
+
+export const AppBusinessHoursDayTab =
+  scaffoldSolidJSTab<AppBusinessHoursDayTabPayload>({
+    title: 'BusinessHours',
+    getComponentModule: () => import('../sidebarLeft/tabs/businessHoursDay')
+  });
+(AppBusinessHoursDayTab as any).noSame = true;
+
+
+export const AppTimezoneTab =
+  scaffoldSolidJSTab<TimezoneTabPayload>({
+    title: 'TimezoneTitle',
+    getComponentModule: () => import('../sidebarLeft/tabs/timezone')
+  });
+(AppTimezoneTab as any).noSame = true;
+
+
+export function getBusinessLocationInitArgs(): BusinessLocationTabPayload {
+  return {
+    animationData: lottieLoader.loadAnimationFromURLManually('BusinessLocation'),
+    userFull: rootScope.managers.appProfileManager.getProfile(rootScope.myId.toUserId())
+  };
+}
+
+export const AppBusinessLocationTab = Object.assign(
+  scaffoldSolidJSTab<BusinessLocationTabPayload>({
+    title: 'BusinessLocation',
+    getComponentModule: () => import('../sidebarLeft/tabs/businessLocation')
+  }),
+  {getInitArgs: getBusinessLocationInitArgs}
+);
+(AppBusinessLocationTab as any).noSame = true;
+
+
+export function getBusinessChatLinksInitArgs(): BusinessChatLinksTabPayload {
+  return {
+    animationData: lottieLoader.loadAnimationFromURLManually('BusinessLinks'),
+    links: rootScope.managers.appBusinessManager.getBusinessChatLinks()
+  };
+}
+
+export const AppBusinessChatLinksTab = Object.assign(
+  scaffoldSolidJSTab<BusinessChatLinksTabPayload>({
+    title: 'PremiumBusinessChatLinks',
+    getComponentModule: () => import('../sidebarLeft/tabs/businessChatLinks')
+  }),
+  {getInitArgs: getBusinessChatLinksInitArgs}
+);
+(AppBusinessChatLinksTab as any).noSame = true;
+
+
+export function getBusinessIntroInitArgs(): BusinessIntroTabPayload {
+  return {
+    userFull: rootScope.managers.appProfileManager.getProfile(rootScope.myId.toUserId())
+  };
+}
+
+export const AppBusinessIntroTab = Object.assign(
+  scaffoldSolidJSTab<BusinessIntroTabPayload>({
+    title: 'PremiumBusinessIntro',
+    getComponentModule: () => import('../sidebarLeft/tabs/businessIntro')
+  }),
+  {getInitArgs: getBusinessIntroInitArgs}
+);
+(AppBusinessIntroTab as any).noSame = true;
+
+type BusinessEditorTab =
+  | typeof AppBusinessHoursTab
+  | typeof AppBusinessLocationTab
+  | typeof AppBusinessChatLinksTab
+  | typeof AppBusinessIntroTab;
+
+/** The Business promo feature a free account is shown instead of each editor. */
+function getBusinessEditorFeature(Tab: BusinessEditorTab): PremiumPromoFeatureType {
+  if(Tab === AppBusinessHoursTab) return 'business_hours';
+  if(Tab === AppBusinessLocationTab) return 'business_location';
+  if(Tab === AppBusinessChatLinksTab) return 'business_links';
+  return 'business_intro';
+}
+
+/**
+ * Opens one of the Business editors. They save through `account.*Business*`, which a free
+ * account is refused, so one gets the Business promo instead of a form that could only fail
+ * on save — the way Android gates them.
+ */
+export async function openBusinessEditorTab(
+  slider: SidebarSlider,
+  Tab: BusinessEditorTab
+) {
+  if(!rootScope.premium) {
+    const {showBusinessPopup} = await import('@components/popups/premium');
+    showBusinessPopup({feature: getBusinessEditorFeature(Tab)});
+    return;
+  }
+
+  // * the editors differ in their payload alone, which each one's own `getInitArgs` makes
+  const tab = slider.createTab(Tab as typeof AppBusinessHoursTab);
+  await tab.open(Tab.getInitArgs() as BusinessHoursTabPayload);
+  return tab;
+}
+
+
+type AppChatAutomationTabPayload = {
+  connectedBot?: ConnectedBot.connectedBot
+};
+
+export const AppChatAutomationTab =
+  scaffoldSolidJSTab<AppChatAutomationTabPayload>({
+    title: 'ChatAutomation.Title',
+    getComponentModule: () => import('../sidebarLeft/tabs/chatAutomation')
+  });
+(AppChatAutomationTab as any).noSame = true;
+
+
+export const AppKeyboardShortcutsTab =
+  scaffoldSolidJSTab({
+    title: 'KeyboardShortcuts.Title',
+    getComponentModule: () => import('../sidebarLeft/tabs/keyboardShortcuts')
+  });
+
+
+type AppAdminRecentActionsTabPayload = {
+  channelId: ChatId;
+  isBroadcast: boolean;
+};
+
+export const AppAdminRecentActionsTab =
+  scaffoldSolidJSTab<AppAdminRecentActionsTabPayload>({
+    title: 'RecentActions',
+    getComponentModule: () => import('../sidebarRight/tabs/adminRecentActions')
+  });
+
+
+type AppPasskeysTabPayload = {
+  passkeys: Passkey[],
+  setPasskeys: SetStoreFunction<Passkey[]>
+};
+
+export const AppPasskeysTab =
+  scaffoldSolidJSTab<AppPasskeysTabPayload>({
+    title: 'Privacy.Passkeys',
+    getComponentModule: () => import('../sidebarLeft/tabs/passkeys')
+  });
+
+type AppMessagesAutoDeleteTabPayload = {
+  period: number;
+  onSaved: (period: number) => void;
+};
+
+export const AppMessagesAutoDeleteTab =
+  scaffoldSolidJSTab<AppMessagesAutoDeleteTabPayload>({
+    title: 'AutoDeleteMessages',
+    getComponentModule: () => import('../sidebarLeft/tabs/autoDeleteMessages')
+  });
+
+export const AppArchiveSettingsTab =
+  scaffoldSolidJSTab({
+    title: 'ArchiveSettings',
+    getComponentModule: () => import('../sidebarLeft/tabs/archiveSettingsTab')
+  });
+
+export const AppGeneralSettingsTab =
+  scaffoldSolidJSTab({
+    title: 'Telegram.GeneralSettingsViewController',
+    getComponentModule: () => import('../sidebarLeft/tabs/generalSettings')
+  });
+
+
+export const AppChatBackgroundTab =
+  scaffoldSolidJSTab({
+    title: 'ChatBackground',
+    getComponentModule: () => import('../sidebarLeft/tabs/background')
+  });
+
+
+export const AppLanguageTab =
+  scaffoldSolidJSTab({
+    title: 'Telegram.LanguageViewController',
+    getComponentModule: () => import('../sidebarLeft/tabs/language')
+  });
+
+
+export const AppSpeakersAndCameraTab =
+  scaffoldSolidJSTab({
+    title: 'AccountSettings.SpeakersAndCamera',
+    getComponentModule: () => import('../sidebarLeft/tabs/speakersAndCamera')
+  });
+
+
+export const AppSettingsTab =
+  scaffoldSolidJSTab({
+    title: 'Settings',
+    getComponentModule: () => import('../sidebarLeft/tabs/settings')
+  });
+
+
+export type ExperimentalTabPayload = {
+  animationData: PreloadedLottieAsset
+};
+
+export function getExperimentalInitArgs(): ExperimentalTabPayload {
+  return {
+    animationData: lottieLoader.loadAnimationFromURLManually('Experimental')
+  };
+}
+
+// * opened by the version under Settings, the way the other clients keep their debug menus out of the way;
+// * eventable, so Settings hears when it closes
+export const AppExperimentalTab = Object.assign(
+  scaffoldSolidJSTabEventable<ExperimentalTabPayload>({
+    title: 'Experimental.Title',
+    getComponentModule: () => import('../sidebarLeft/tabs/experimental')
+  }),
+  {getInitArgs: getExperimentalInitArgs}
+);
+(AppExperimentalTab as any).noSame = true;
+
+
+export const AppQuickReactionTab =
+  scaffoldSolidJSTab({
+    title: 'DoubleTapSetting',
+    getComponentModule: () => import('../sidebarLeft/tabs/quickReaction')
+  });
+
+
+export const AppStickersAndEmojiTab =
+  scaffoldSolidJSTab({
+    title: 'StickersName',
+    getComponentModule: () => import('../sidebarLeft/tabs/stickersAndEmoji')
+  });
+
+export const AppArchivedStickersTab =
+  scaffoldSolidJSTab({
+    title: 'ArchivedStickers',
+    getComponentModule: () => import('../sidebarLeft/tabs/archivedStickers'),
+    // * a first page that does not fill the tab asks for the next one
+    onOpenAfterTimeout: function() {
+      this.scrollable.onScroll();
+    }
+  });
+
+
+export type AppContactsTabOptions = {
+  /** the control the tab points at once it is open - `tg://contacts/sort` names the sort button */
+  highlight?: 'sort'
+};
+
+// the tab is mostly opened with nothing to point at
+type AppContactsTabPayload = AppContactsTabOptions | void;
+
+export const AppContactsTab =
+  scaffoldSolidJSTab<AppContactsTabPayload>({
+    title: 'Contacts',
+    getComponentModule: () => import('../sidebarLeft/tabs/contacts')
+  });
+(AppContactsTab as any).noSame = true;
+
+
+export const AppCallsTab =
+  scaffoldSolidJSTab({
+    title: 'Calls',
+    getComponentModule: () => import('../sidebarLeft/tabs/calls')
+  });
+(AppCallsTab as any).noSame = true;
+
+
+export const AppNewCallTab =
+  scaffoldSolidJSTab({
+    title: 'ConferenceCall.NewCall.Title',
+    getComponentModule: () => import('../sidebarLeft/tabs/newCall')
+  });
+(AppNewCallTab as any).noSame = true;
+
+
+export const AppPowerSavingTab =
+  scaffoldSolidJSTab({
+    title: 'LiteMode.Title',
+    getComponentModule: () => import('../sidebarLeft/tabs/powerSaving')
+  });
+
+
+type AppBlockedUsersTabPayload = {
+  peerIds: PeerId[];
+};
+
+export const AppBlockedUsersTab =
+  scaffoldSolidJSTab<AppBlockedUsersTabPayload>({
+    title: 'BlockedUsers',
+    getComponentModule: () => import('../sidebarLeft/tabs/blockedUsers'),
+    onOpenAfterTimeout: function() {
+      this.scrollable.onScroll();
+    }
+  });
+
+
+type AppNewChannelTabPayload = {
+  onCreate?: (chatId: ChatId) => MaybePromise<void>,
+  openAfter?: boolean
+};
+
+export const AppNewChannelTab =
+  scaffoldSolidJSTab<AppNewChannelTabPayload>({
+    title: 'NewChannel',
+    getComponentModule: () => import('../sidebarLeft/tabs/newChannel')
+  });
+(AppNewChannelTab as any).noSame = true;
+
+
+export const AppBackgroundColorTab =
+  scaffoldSolidJSTab({
+    title: 'SetColor',
+    getComponentModule: () => import('../sidebarLeft/tabs/backgroundColor')
+  });
+
+
+type AppNewGroupTabPayload = {
+  peerIds: PeerId[],
+  isGeoChat?: boolean,
+  onCreate?: (chatId: ChatId) => MaybePromise<void>,
+  openAfter?: boolean,
+  title?: string,
+  asChannel?: boolean
+};
+
+export const AppNewGroupTab =
+  scaffoldSolidJSTab<AppNewGroupTabPayload>({
+    title: 'NewGroup',
+    getComponentModule: () => import('../sidebarLeft/tabs/newGroup')
+  });
+(AppNewGroupTab as any).noSame = true;
+
+
+// ─── Privacy sub-tabs (eventable: PrivacySection saves on the tab's destroy event) ───
+
+export const AppPrivacyAboutTab =
+  scaffoldSolidJSTabEventable({
+    title: 'UserBio',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacy/about')
+  });
+
+export const AppPrivacyCallsTab =
+  scaffoldSolidJSTabEventable({
+    title: 'PrivacySettings.VoiceCalls',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacy/calls')
+  });
+
+export const AppPrivacyVoicesTab =
+  scaffoldSolidJSTabEventable({
+    title: 'PrivacyVoiceMessages',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacy/voices')
+  });
+
+export const AppPrivacyAddToGroupsTab =
+  scaffoldSolidJSTabEventable({
+    title: 'PrivacySettings.Groups',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacy/addToGroups')
+  });
+
+export const AppPrivacyBirthdayTab =
+  scaffoldSolidJSTabEventable({
+    title: 'Birthday',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacy/birthday')
+  });
+
+export const AppPrivacyForwardMessagesTab =
+  scaffoldSolidJSTabEventable({
+    title: 'PrivacySettings.Forwards',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacy/forwardMessages')
+  });
+
+export const AppPrivacyProfilePhotoTab =
+  scaffoldSolidJSTabEventable({
+    title: 'PrivacyProfilePhoto',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacy/profilePhoto')
+  });
+
+export const AppPrivacySavedMusicTab =
+  scaffoldSolidJSTabEventable({
+    title: 'PrivacySavedMusic',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacy/savedMusic')
+  });
+
+export const AppPrivacyPhoneNumberTab =
+  scaffoldSolidJSTabEventable({
+    title: 'PrivacyPhone',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacy/phoneNumber')
+  });
+
+type AppPrivacyGlobalTabEvents = {
+  privacy: (globalPrivacy: Promise<GlobalPrivacySettings>) => void
+};
+
+export const AppPrivacyLastSeenTab =
+  scaffoldSolidJSTabEventable<GlobalPrivacySettings, AppPrivacyGlobalTabEvents>({
+    title: 'PrivacyLastSeen',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacy/lastSeen')
+  });
+
+export const AppPrivacyGiftsTab =
+  scaffoldSolidJSTabEventable<GlobalPrivacySettings, AppPrivacyGlobalTabEvents>({
+    title: 'PrivacyGifts',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacy/gifts')
+  });
+
+
+type AppActiveSessionsTabPayload = {
+  authorizations: Authorization.authorization[];
+  connectedBot?: ConnectedBot.connectedBot;
+  /** `account.authorizations.authorization_ttl_days` — 0 while unknown. */
+  ttlDays?: number;
+};
+
+export const AppActiveSessionsTab =
+  scaffoldSolidJSTabEventable<AppActiveSessionsTabPayload>({
+    title: 'SessionsTitle',
+    getComponentModule: () => import('../sidebarLeft/tabs/activeSessions')
+  });
+
+type AppSessionTabPayload = {
+  authorization: Authorization.authorization;
+  /**
+   * Confirms + terminates the session; resolves to whether it was terminated.
+   * Absent for the current session, which cannot terminate itself.
+   */
+  onTerminate?: () => Promise<boolean>;
+  /** Reports a flag flipped through account.changeAuthorizationSettings back to the list. */
+  onSettingsChanged?: (authorization: Authorization.authorization) => void;
+};
+
+export const AppSessionTab =
+  scaffoldSolidJSTabEventable<AppSessionTabPayload>({
+    title: 'AuthSessions.View.Device',
+    getComponentModule: () => import('../sidebarLeft/tabs/session')
+  });
+
+type AppConnectedBotSessionTabPayload = {
+  connectedBot: ConnectedBot.connectedBot;
+};
+
+export const AppConnectedBotSessionTab =
+  scaffoldSolidJSTabEventable<AppConnectedBotSessionTabPayload>({
+    title: 'ChatAutomation.Session',
+    getComponentModule: () => import('../sidebarLeft/tabs/connectedBotSession')
+  });
+
+export const AppActiveWebSessionsTab =
+  scaffoldSolidJSTabEventable<WebAuthorization[]>({
+    title: 'WebSessionsTitle',
+    getComponentModule: () => import('../sidebarLeft/tabs/activeWebSessions')
+  });
+
+
+// ─── Data and storage + its auto-download sub-tabs (all eventable) ───
+
+export const AppAutoDownloadPhotoTab =
+  scaffoldSolidJSTabEventable({
+    title: 'AutoDownloadPhotos',
+    getComponentModule: () => import('../sidebarLeft/tabs/autoDownload/photo')
+  });
+
+export const AppAutoDownloadVideoTab =
+  scaffoldSolidJSTabEventable({
+    title: 'AutoDownloadVideos',
+    getComponentModule: () => import('../sidebarLeft/tabs/autoDownload/video')
+  });
+
+export const AppAutoDownloadFileTab =
+  scaffoldSolidJSTabEventable({
+    title: 'AutoDownloadFiles',
+    getComponentModule: () => import('../sidebarLeft/tabs/autoDownload/file')
+  });
+
+export const AppDataAndStorageTab =
+  scaffoldSolidJSTabEventable({
+    title: 'DataSettings',
+    getComponentModule: () => import('../sidebarLeft/tabs/dataAndStorage')
+  });
+
+
+// ─── Right sidebar ───
+
+type AppRemovedUsersTabPayload =
+  | {chatId: ChatId}
+  | {communityId: ChatId};
+
+export const AppRemovedUsersTab =
+  scaffoldSolidJSTabEventable<AppRemovedUsersTabPayload>({
+    title: 'ChannelBlacklist',
+    getComponentModule: () => import('../sidebarRight/tabs/removedUsers')
+  });
+
+export const AppGifsTab =
+  scaffoldSolidJSTab({
+    title: 'SearchGifsTitle',
+    getComponentModule: () => import('../sidebarRight/tabs/gifs')
+  });
+
+export const AppChatRequestsTab =
+  scaffoldSolidJSTabEventable<ChatId, {finish: (changedLength: number) => void}>({
+    title: 'MemberRequests',
+    getComponentModule: () => import('../sidebarRight/tabs/chatRequests')
+  });
+
+export const AppChatReactionsTab =
+  scaffoldSolidJSTabEventable<{chatId: ChatId}>({
+    title: 'Reactions',
+    getComponentModule: () => import('../sidebarRight/tabs/chatReactions')
+  });
+
+export const AppChatMembersTab =
+  scaffoldSolidJSTabEventable<ChatId>({
+    title: 'GroupMembers',
+    getComponentModule: () => import('../sidebarRight/tabs/chatMembers')
+  });
+
+type AppGroupStickersTabPayload = {
+  chatId: ChatId,
+  isEmoji?: boolean
+};
+
+export const AppGroupStickersTab =
+  scaffoldSolidJSTab<AppGroupStickersTabPayload>({
+    title: ({isEmoji}) => isEmoji ? 'GroupEmojiPack' : 'GroupStickers',
+    getComponentModule: () => import('../sidebarRight/tabs/groupStickers')
+  });
+
+type AppChatAdministratorsTabPayload =
+  | {chatId: ChatId}
+  | {communityId: ChatId};
+
+export const AppChatAdministratorsTab =
+  scaffoldSolidJSTabEventable<AppChatAdministratorsTabPayload>({
+    title: 'PeerInfo.Administrators',
+    getComponentModule: () => import('../sidebarRight/tabs/chatAdministrators')
+  });
+
+export const AppEditBotTab =
+  scaffoldSolidJSTab<PeerId>({
+    title: 'EditBot.Title',
+    getComponentModule: () => import('../sidebarRight/tabs/editBot')
+  });
+
+export const AppEditContactTab =
+  scaffoldSolidJSTab<PeerId>({
+    title: 'Edit',
+    getComponentModule: () => import('../sidebarRight/tabs/editContact')
+  });
+
+export const AppEditTopicTab =
+  scaffoldSolidJSTab<{peerId: PeerId, threadId?: number}>({
+    title: (p) => p.threadId ? 'ForumTopic.Title.Edit' : 'NewTopic',
+    getComponentModule: () => import('../sidebarRight/tabs/editTopic')
+  });
+
+export const AppStickersTab =
+  scaffoldSolidJSTab({
+    title: 'StickersName',
+    getComponentModule: () => import('../sidebarRight/tabs/stickers')
+  });
+
+export const AppChatDiscussionTab =
+  scaffoldSolidJSTabEventable<{chatId: ChatId, linkedChatId: ChatId}>({
+    title: 'DiscussionController.Channel.Title',
+    getComponentModule: () => import('../sidebarRight/tabs/chatDiscussion')
+  });
+
+export const AppChatTypeTab =
+  scaffoldSolidJSTabEventable<{chatId: ChatId, chatFull: AppChatFull}>({
+    title: 'ChannelType',
+    getComponentModule: () => import('../sidebarRight/tabs/chatType')
+  });
+
+type AppUserPermissionsChatPayload = {
+  participant: ChannelParticipant | ChatParticipant,
+  chatId: ChatId,
+  userId: UserId,
+  editingAdmin?: boolean,
+  initialAdminRights?: ChatAdminRights,
+  existingAdminRights?: ChatAdminRights,
+  addingBot?: {
+    startParam?: string,
+    sendStartAfterAdmin?: boolean,
+    existingAdmin?: boolean
+  }
+};
+
+type AppUserPermissionsCommunityPayload = {
+  communityId: ChatId,
+  participantId: PeerId,
+  participant?: ChannelParticipant,
+  editingAdmin: true,
+  onUpdated?: (participant?: ChannelParticipant) => MaybePromise<void>
+};
+
+type AppUserPermissionsTabPayload =
+  AppUserPermissionsChatPayload |
+  AppUserPermissionsCommunityPayload;
+
+export const AppUserPermissionsTab =
+  scaffoldSolidJSTabEventable<AppUserPermissionsTabPayload>({
+    title: (p) => 'communityId' in p ?
+      'EditAdmin' :
+      (p.addingBot && !p.addingBot.existingAdmin ?
+        'AddBot' :
+        (p.editingAdmin ? 'EditAdmin' : 'UserRestrictions')),
+    getComponentModule: () => import('../sidebarRight/tabs/userPermissions')
+  });
+
+// Replaces the legacy AppUserPermissionsTab.openTab static.
+export function openUserPermissionsTab(
+  slider: SidebarSlider,
+  chatId: ChatId,
+  participant: ChatParticipant | ChannelParticipant,
+  isAdmin?: boolean,
+  options?: Pick<AppUserPermissionsChatPayload, 'initialAdminRights' | 'existingAdminRights' | 'addingBot'>
+) {
+  slider.createTab(AppUserPermissionsTab).open({
+    participant,
+    chatId,
+    userId: getParticipantPeerId(participant).toUserId(),
+    editingAdmin: isAdmin,
+    ...options
+  });
+}
+
+export function openCommunityUserPermissionsTab(
+  slider: SidebarSlider,
+  communityId: ChatId,
+  participantId: PeerId,
+  participant?: ChannelParticipant,
+  onUpdated?: (participant?: ChannelParticipant) => MaybePromise<void>
+) {
+  slider.createTab(AppUserPermissionsTab).open({
+    communityId,
+    participantId,
+    participant,
+    editingAdmin: true,
+    onUpdated
+  });
+}
+
+
+type AppIncludedChatsTabPayload = {
+  filter: MyDialogFilter,
+  type: 'included' | 'excluded',
+  onSetFilter: (filter: MyDialogFilter) => void
+};
+
+export const AppIncludedChatsTab =
+  scaffoldSolidJSTab<AppIncludedChatsTabPayload>({
+    title: (p) => p.type === 'included' ? 'FilterAlwaysShow' : 'FilterNeverShow',
+    getComponentModule: () => import('../sidebarLeft/tabs/includedChats')
+  });
+
+type AppSharedFolderTabPayload = {
+  filter: DialogFilter.dialogFilterChatlist,
+  chatlistInvite: ExportedChatlistInvite
+};
+
+export const AppSharedFolderTab =
+  scaffoldSolidJSTabEventable<AppSharedFolderTabPayload, {
+    delete: () => void,
+    edit: (chatlistInvite: ExportedChatlistInvite) => void
+      }>({
+        title: 'SharedFolder.Edit.Title',
+        getComponentModule: () => import('../sidebarLeft/tabs/sharedFolder'),
+        onOpenAfterTimeout: function() {
+          (this as any)._onOpenAfterTimeout?.();
+        }
+      });
+
+type AppGroupPermissionsTabPayload = {
+  chatId: ChatId
+};
+
+export const AppGroupPermissionsTab =
+  scaffoldSolidJSTab<AppGroupPermissionsTabPayload>({
+    title: 'ChannelPermissions',
+    getComponentModule: () => import('../sidebarRight/tabs/groupPermissions/groupPermissions'),
+    onOpenAfterTimeout: function() {
+      this.scrollable.onScroll();
+    }
+  });
+
+const getPrivacyAndSecurityInitArgs = (fromTab: SliderSuperTab) => ({
+  appConfig: fromTab.managers.apiManager.getAppConfig(),
+  globalPrivacy: fromTab.managers.appPrivacyManager.getGlobalPrivacySettings(),
+  webAuthorizations: fromTab.managers.appSeamlessLoginManager.getWebAuthorizations()
+});
+
+type AppPrivacyAndSecurityTabPayload = ReturnType<typeof getPrivacyAndSecurityInitArgs>;
+
+export const AppPrivacyAndSecurityTab =
+  scaffoldSolidJSTabEventable<AppPrivacyAndSecurityTabPayload>({
+    title: 'PrivacySettings',
+    getComponentModule: () => import('../sidebarLeft/tabs/privacyAndSecurity')
+  });
+
+// Preload (appConfig / globalPrivacy / webAuthorizations) read off the constructor
+// by settings.tsx's makeSubTabConfig, matching the old static getInitArgs.
+(AppPrivacyAndSecurityTab as any).getInitArgs = getPrivacyAndSecurityInitArgs;
+
+
+type AppEditChatInviteLinkTabPayload = {
+  chatId: ChatId,
+  invite?: ChatInvite
+};
+
+export const AppEditChatInviteLinkTab =
+  scaffoldSolidJSTabEventable<AppEditChatInviteLinkTabPayload, {
+    finish: (chatInvite: ChatInvite) => void
+      }>({
+        title: (p) => p.invite ? 'InviteLinks.Edit' : 'NewLink',
+        getComponentModule: () => import('../sidebarRight/tabs/editChatInviteLink')
+      });
+
+
+type AppChatInviteLinkTabPayload = {
+  chatId: ChatId,
+  chatInvite: ChatInvite,
+  menuButtons: ButtonMenuItemOptionsVerifiable[],
+  actions: ChatInviteActions,
+  onUpdate?: (chatInvite: ChatInvite) => void
+};
+
+export const AppChatInviteLinkTab =
+  scaffoldSolidJSTabEventable<AppChatInviteLinkTabPayload>({
+    title: 'InviteLink',
+    getComponentModule: () => import('../sidebarRight/tabs/chatInviteLink')
+  });
+
+
+type AppChatInviteLinksTabPayload = {
+  chatId: ChatId,
+  adminId?: UserId,
+  p?: ReturnType<typeof getChatInviteLinksInitArgs>
+};
+
+// getInitArgs is read directly (typed) by editChat's navigationTab, so expose it
+// on the constructor via Object.assign rather than an untyped property poke.
+export const AppChatInviteLinksTab = Object.assign(
+  scaffoldSolidJSTabEventable<AppChatInviteLinksTabPayload>({
+    title: 'InviteLinks',
+    getComponentModule: () => import('../sidebarRight/tabs/chatInviteLinks')
+  }),
+  {getInitArgs: getChatInviteLinksInitArgs}
+);
+
+
+type AppEditChatTabPayload = {
+  chatId: ChatId
+};
+
+export const AppEditChatTab =
+  scaffoldSolidJSTab<AppEditChatTabPayload>({
+    title: 'Edit',
+    getComponentModule: () => import('../sidebarRight/tabs/editChat')
+  });
+
+
+type AppAddGroupToCommunityTabPayload = {
+  peerId: PeerId
+};
+
+export const AppAddGroupToCommunityTab =
+  scaffoldSolidJSTab<AppAddGroupToCommunityTabPayload>({
+    title: 'Community.AddGroup',
+    getComponentModule: () => import('../communities/addGroupToCommunity')
+  });
+
+
+type AppCreateCommunityTabPayload = {
+  peerId: PeerId
+};
+
+export const AppCreateCommunityTab =
+  scaffoldSolidJSTab<AppCreateCommunityTabPayload>({
+    title: 'Community.Create',
+    getComponentModule: () => import('../communities/createCommunity')
+  });
+
+
+export type CommunityChatVisibility = 'visible' | 'hidden';
+export type CommunityChatSettingsMode = 'settings' | 'add';
+
+type AppCommunityChatSettingsTabPayload = {
+  communityId?: ChatId,
+  peerId: PeerId,
+  mode?: CommunityChatSettingsMode,
+  initialVisibility?: CommunityChatVisibility,
+  onSave?: (visibility: CommunityChatVisibility) => MaybePromise<void>,
+  returnToEditChat?: boolean,
+  returnToEditCommunity?: boolean
+};
+
+export const AppCommunityChatSettingsTab =
+  scaffoldSolidJSTab<AppCommunityChatSettingsTabPayload>({
+    title: (payload) => payload.mode === 'add' ?
+      'Community.AddChat' :
+      'Community.ChatSettings',
+    getComponentModule: () => import('../communities/communityChatSettings')
+  });
+
+
+type AppEditCommunityTabPayload = {
+  communityId: ChatId
+};
+
+export const AppEditCommunityTab =
+  scaffoldSolidJSTab<AppEditCommunityTabPayload>({
+    title: 'Community.Edit',
+    getComponentModule: () => import('../communities/editCommunity')
+  });
+
+
+type AppAddChatToCommunityTabPayload = {
+  communityId: ChatId
+};
+
+export const AppAddChatToCommunityTab =
+  scaffoldSolidJSTab<AppAddChatToCommunityTabPayload>({
+    title: 'Community.AddChat',
+    getComponentModule: () => import('../communities/addChatToCommunity')
+  });
+
+
+type AppCommunityPendingRequestsTabPayload = {
+  communityId: ChatId
+};
+
+export const AppCommunityPendingRequestsTab =
+  scaffoldSolidJSTab<AppCommunityPendingRequestsTabPayload>({
+    title: 'Community.PendingRequests',
+    getComponentModule: () => import('../communities/communityPendingRequests')
+  });
+
+
+function getChatFoldersInitArgs() {
+  return {
+    animationData: lottieLoader.loadAnimationFromURLManually('Folders_1'),
+    filters: rootScope.managers.filtersStorage.getDialogFilters()
+  };
+}
+
+type AppChatFoldersTabPayload = ReturnType<typeof getChatFoldersInitArgs>;
+
+// getInitArgs is read both via makeSubTabConfig (any-cast) and directly (typed)
+// by foldersSidebarContent, so expose it on the constructor via Object.assign.
+export const AppChatFoldersTab = Object.assign(
+  scaffoldSolidJSTab<AppChatFoldersTabPayload>({
+    title: 'ChatList.Filter.List.Title',
+    getComponentModule: () => import('../sidebarLeft/tabs/chatFolders'),
+    onOpenAfterTimeout: function() {
+      (this as any)._onOpenAfterTimeout?.();
+    }
+  }),
+  {getInitArgs: getChatFoldersInitArgs}
+);
+
+
+type AppEditFolderTabPayload = ReturnType<typeof getEditFolderInitArgs> & {
+  initFilter?: MyDialogFilter
+};
+
+// getInitArgs (preload) + deleteFolder (called from createFolderContextMenu and
+// chatFolders via the hot-reload guard) are exposed on the constructor.
+export const AppEditFolderTab = Object.assign(
+  scaffoldSolidJSTab<AppEditFolderTabPayload>({
+    title: 'FilterHeaderEdit',
+    getComponentModule: () => import('../sidebarLeft/tabs/editFolder'),
+    onOpenAfterTimeout: function() {
+      (this as any)._onOpenAfterTimeout?.();
+    }
+  }),
+  {
+    getInitArgs: getEditFolderInitArgs,
+    deleteFolder: deleteEditFolder
+  }
+);
+
+
+function getMyStoriesInitArgs() {
+  return {
+    animationData: lottieLoader.loadAnimationFromURLManually('UtyanStories')
+  };
+}
+
+type AppMyStoriesTabPayload = ReturnType<typeof getMyStoriesInitArgs> & {
+  isArchive?: boolean,
+  chatId?: ChatId,
+  initialAlbumId?: number
+};
+
+export const AppMyStoriesTab = Object.assign(
+  scaffoldSolidJSTab<AppMyStoriesTabPayload>({
+    title: (p) => p.isArchive ? 'MyStories.Archive' : 'MyStories.Title',
+    getComponentModule: () => import('../sidebarLeft/tabs/myStories')
+  }),
+  {getInitArgs: getMyStoriesInitArgs}
+);
+
+// * public stories with a hashtag, or from a place: the title of a place says which of the two it is
+export const AppStoriesSearchTab = scaffoldSolidJSTab<{search: StoriesSearch}>({
+  title: ({search}) => search.area ?
+    ((search.area as MediaArea.mediaAreaVenue).title ? 'SharedPlace' : 'ChatLocation') :
+    'PublicStories',
+  getComponentModule: () => import('../sidebarLeft/tabs/storiesSearch')
+});
+
+
+export const AppArchivedTab =
+  scaffoldSolidJSTab({
+    title: 'ArchivedChats',
+    getComponentModule: () => import('../sidebarLeft/tabs/archivedTab'),
+    onOpenAfterTimeout: function() {
+      (this as any)._onOpenAfterTimeout?.();
+    },
+    onClose: function() {
+      (this as any)._onClose?.();
+    },
+    onCloseAfterTimeout: function() {
+      (this as any)._onCloseAfterTimeout?.();
+    }
+  });
+
+
+// ── 2FA wizard ──────────────────────────────────────────────────────────────
+
+type AppTwoStepVerificationSetTabPayload = {
+  messageFor: 'password' | 'email'
+};
+
+export const AppTwoStepVerificationSetTab =
+  scaffoldSolidJSTab<AppTwoStepVerificationSetTabPayload>({
+    title: (p) => p.messageFor === 'password' ? 'TwoStepVerificationPasswordSet' : 'TwoStepVerificationEmailSet',
+    getComponentModule: () => import('../sidebarLeft/tabs/2fa/passwordSet')
+  });
+
+
+type AppTwoStepVerificationTabPayload = {
+  state: AccountPassword,
+  plainPassword?: string
+};
+
+/**
+ * Two-Step Verification's screen works with the cloud password it was handed, so while one is set it is
+ * entered first, and an unconfirmed recovery email is confirmed first — the same from the Privacy and
+ * Security row, the settings search and a `tg://settings/privacy/2sv` link. Resolves with the screen once
+ * the password is accepted, so a result or a link can point at its control there, or with nothing when
+ * the password step is given up; with the email's confirmation when that comes first.
+ */
+async function openTwoStepVerificationTabChecked(slider: SidebarSlider, state: AccountPassword): Promise<SliderSuperTab> {
+  if(state.pFlags.has_password) {
+    const opened = deferredPromise<SliderSuperTab>();
+    let passed = false;
+    const checkTab = slider.createTab(AppTwoStepVerificationEnterPasswordTab);
+    // the step goes away once passed too, while the screen is still loading: only giving it up opens nothing
+    checkTab.middlewareHelper.onDestroy(() => {
+      if(!passed) opened.resolve(undefined);
+    });
+    await checkTab.open({
+      state,
+      onPassed: (screen) => {
+        passed = true;
+        screen.then((tab) => opened.resolve(tab));
+      }
+    });
+    return opened;
+  }
+
+  if(state.email_unconfirmed_pattern) {
+    const tab = slider.createTab(AppTwoStepVerificationEmailConfirmationTab);
+    tab.managers.passwordManager.resendPasswordEmail();
+    // the email screen's own module, and its weight, only for the one case that needs it
+    const {wrapEmailPattern} = await import('@components/emailVerification');
+    await tab.open({
+      state,
+      email: wrapEmailPattern(state.email_unconfirmed_pattern),
+      length: 6,
+      isFirst: true
+    });
+    return tab;
+  }
+
+  const tab = slider.createTab(AppTwoStepVerificationTab);
+  await tab.open({state});
+  return tab;
+}
+
+export const AppTwoStepVerificationTab = Object.assign(
+  scaffoldSolidJSTab<AppTwoStepVerificationTabPayload>({
+    title: 'TwoStepVerificationTitle',
+    getComponentModule: () => import('../sidebarLeft/tabs/2fa/index')
+  }),
+  {openChecked: openTwoStepVerificationTabChecked}
+);
+
+
+type AppTwoStepVerificationEnterPasswordTabPayload = {
+  state: AccountPassword,
+  plainPassword?: string,
+  isFirst?: boolean,
+  /** The current password was accepted: Two-Step Verification's screen is opening, and this resolves with it once open. */
+  onPassed?: (screen: Promise<InstanceOf<typeof AppTwoStepVerificationTab>>) => void
+};
+
+export const AppTwoStepVerificationEnterPasswordTab =
+  scaffoldSolidJSTab<AppTwoStepVerificationEnterPasswordTabPayload>({
+    title: (p) => (!p.state.pFlags.has_password || p.plainPassword) ? 'PleaseEnterFirstPassword' : 'PleaseEnterCurrentPassword',
+    getComponentModule: () => import('../sidebarLeft/tabs/2fa/enterPassword'),
+    onOpenAfterTimeout: function() {
+      (this as any)._onOpenAfterTimeout?.();
+    },
+    onClose: function() {
+      (this as any)._onClose?.();
+    }
+  });
+
+
+type AppTwoStepVerificationReEnterPasswordTabPayload = {
+  state: AccountPassword,
+  plainPassword?: string,
+  newPassword?: string
+};
+
+export const AppTwoStepVerificationReEnterPasswordTab =
+  scaffoldSolidJSTab<AppTwoStepVerificationReEnterPasswordTabPayload>({
+    title: 'PleaseReEnterPassword',
+    getComponentModule: () => import('../sidebarLeft/tabs/2fa/reEnterPassword'),
+    onOpenAfterTimeout: function() {
+      (this as any)._onOpenAfterTimeout?.();
+    }
+  });
+
+
+type AppTwoStepVerificationHintTabPayload = {
+  state: AccountPassword,
+  plainPassword?: string,
+  newPassword?: string
+};
+
+export const AppTwoStepVerificationHintTab =
+  scaffoldSolidJSTab<AppTwoStepVerificationHintTabPayload>({
+    title: 'TwoStepAuth.SetupHintTitle',
+    getComponentModule: () => import('../sidebarLeft/tabs/2fa/hint'),
+    onOpenAfterTimeout: function() {
+      (this as any)._onOpenAfterTimeout?.();
+    }
+  });
+
+
+type AppTwoStepVerificationEmailTabPayload = {
+  state: AccountPassword,
+  plainPassword?: string,
+  newPassword?: string,
+  hint?: string,
+  isFirst?: boolean,
+  justSetPasssword?: boolean
+};
+
+export const AppTwoStepVerificationEmailTab =
+  scaffoldSolidJSTab<AppTwoStepVerificationEmailTabPayload>({
+    title: 'RecoveryEmailTitle',
+    getComponentModule: () => import('../sidebarLeft/tabs/2fa/email'),
+    onOpenAfterTimeout: function() {
+      (this as any)._onOpenAfterTimeout?.();
+    }
+  });
+
+
+type AppTwoStepVerificationEmailConfirmationTabPayload = {
+  state: AccountPassword,
+  email: FormatterArgument,
+  length: number,
+  isFirst?: boolean,
+  forPasswordReset?: boolean,
+  justSetPasssword?: boolean
+};
+
+export const AppTwoStepVerificationEmailConfirmationTab =
+  scaffoldSolidJSTab<AppTwoStepVerificationEmailConfirmationTabPayload>({
+    title: 'TwoStepAuth.RecoveryTitle',
+    getComponentModule: () => import('../sidebarLeft/tabs/2fa/emailConfirmation'),
+    onOpenAfterTimeout: function() {
+      (this as any)._onOpenAfterTimeout?.();
+    },
+    onCloseAfterTimeout: function() {
+      (this as any)._onCloseAfterTimeout?.();
+    }
+  });
+
+
+type AppPrivateSearchTabPayload = {
+  peerId: PeerId,
+  threadId?: number,
+  onDatePick?: (timestamp: number) => void,
+  query?: string
+};
+
+export const AppPrivateSearchTab =
+  scaffoldSolidJSTab<AppPrivateSearchTabPayload>({
+    title: 'Search',
+    getComponentModule: () => import('../sidebarRight/tabs/search'),
+    onOpenAfterTimeout: function() {
+      (this as any)._onOpenAfterTimeout?.();
+    }
+  });
+
+
+export type AppAddMembersExtraCategory = {
+  key: string;
+  icon: Icon;
+  text: LangPackKey;
+  statusLangKey?: LangPackKey;
+};
+
+export type AppAddMembersPeerLoader = (
+  query: string,
+  isCurrent: () => boolean
+) => Promise<{
+  result: PeerId[],
+  isEnd: boolean
+}>;
+
+type AppAddMembersTabPayload = {
+  title: LangPackKey;
+  placeholder: LangPackKey;
+  type: 'channel' | 'chat' | 'privacy';
+  takeOut?: (peerIds: PeerId[], extras?: Set<string>) => Promise<any> | false | void;
+  skippable: boolean;
+  selectedPeerIds?: PeerId[];
+  selectedExtras?: Set<string>;
+  extraCategories?: ReadonlyArray<AppAddMembersExtraCategory>;
+  extraCategoriesSectionLangKey?: LangPackKey;
+  peersSectionLangKey?: LangPackKey;
+  peerType?: SelectSearchPeerType[];
+  channelParticipantsPeerId?: PeerId;
+  peerLoader?: AppAddMembersPeerLoader;
+  exceptSelf?: boolean;
+  filterPeerTypeBy?: IsPeerType[] | FilterPeerTypeByFunc;
+  limit?: number;
+  limitCallback?: () => void;
+  attachToPromise?: (promise: Promise<any>) => void;
+};
+
+export const AppAddMembersTab =
+  scaffoldSolidJSTab<AppAddMembersTabPayload>({
+    title: 'GroupAddMembers',
+    getComponentModule: () => import('../sidebarLeft/tabs/addMembers')
+  });
+(AppAddMembersTab as any).noSame = true;
+const _origAddMembersInit = (AppAddMembersTab.prototype as any).init;
+(AppAddMembersTab.prototype as any).init = function(payload: AppAddMembersTabPayload, overrideTitle?: LangPackKey) {
+  return _origAddMembersInit.call(this, payload, overrideTitle || payload.title);
+};

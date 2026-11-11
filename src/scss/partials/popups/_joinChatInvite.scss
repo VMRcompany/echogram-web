@@ -1,0 +1,22 @@
+.popup-join-chat-invite {
+  --popup-min-width: 22.5rem;
+  --popup-max-width: 420px;
+
+  .popup-body {
+    align-items: center;
+    padding: .5rem 0 1.25rem;
+  }
+
+  // a descendant selector on purpose: the subtitle declares its own margin-top, and at equal
+  // specificity which one wins would depend on CSS-module load order
+  & &-about {
+    margin-block: .5rem -.5rem;
+  }
+
+  &-request-caption {
+    font-size: var(--font-size-14);
+    line-height: var(--line-height-14);
+    margin-top: 1rem;
+    text-align: center;
+  }
+}

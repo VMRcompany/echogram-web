@@ -1,0 +1,145 @@
+import {MediaEditorFinalResult} from '@components/mediaEditor/finalRender/createFinalResult';
+import IMAGE_MIME_TYPES_SUPPORTED from '@environment/imageMimeTypesSupport';
+import VIDEO_MIME_TYPES_SUPPORTED from '@environment/videoMimeTypesSupport';
+import {createImageAndURLFromBlob} from '@helpers/createImageAndURLFromBlob';
+import {getAppWindow} from '@helpers/appWindow';
+import {createObjectURL, revokeObjectURL} from '@helpers/objectUrl';
+import rootScope from '@lib/rootScope';
+import {hotReloadGuardReady} from '@lib/solidjs/hotReloadGuardProvider';
+import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
+
+
+type OnFinishArgs = {
+  editorResult: MediaEditorFinalResult;
+  originalFile: File;
+};
+
+type GetFileAndOpenEditorArgs = {
+  dontCreatePreview?: boolean;
+  isEditingForAvatar?: boolean;
+  isEditingForumAvatar?: boolean;
+  canImageResultInGIF?: boolean;
+  /**
+   * Allowed media types in the file picker. Defaults to images only.
+   */
+  acceptMediaTypes?: Array<'photo' | 'video'>;
+  /**
+   * Optional gate to decide whether the editor should be opened for the selected file.
+   * If it returns false, `onSkipEditor` is called with the file and the editor is not opened.
+   * Defaults to always opening the editor.
+   */
+  shouldOpenEditor?: (file: File) => boolean | Promise<boolean>;
+  onSkipEditor?: (file: File) => void;
+  onFinish: (args: OnFinishArgs) => void;
+  /**
+   * Whether what asked for the editor is still there: the file is picked, decoded and the editor loaded
+   * in the meantime, and an editor asked for by a screen that has gone is not opened over what is there now.
+   */
+  isAlive?: () => boolean;
+};
+
+export async function getFileAndOpenEditor({
+  onFinish,
+  dontCreatePreview,
+  isEditingForAvatar,
+  isEditingForumAvatar,
+  canImageResultInGIF = false,
+  acceptMediaTypes = ['photo'],
+  shouldOpenEditor,
+  onSkipEditor,
+  isAlive
+}: GetFileAndOpenEditorArgs) {
+  // * the editor opens for the account the file was asked on, and not at all once the tab is on another
+  const managers = bindManagersToSession(rootScope.managers);
+  const input = createHiddenFileInput(acceptMediaTypes);
+  document.body.append(input);
+
+  const file = await getFileFromInput(input).finally(() => {
+    input.remove();
+  });
+
+  if(!file) return;
+
+  if(shouldOpenEditor && !(await shouldOpenEditor(file))) {
+    onSkipEditor?.(file);
+    return;
+  }
+
+  const isVideo = file.type.startsWith('video/');
+
+  let mediaSrc: string;
+  if(isVideo) {
+    mediaSrc = createObjectURL(file);
+  } else {
+    const imgResult = await createImageAndURLFromBlob(file); // make sure to render the image to know if it's valid
+    if(!imgResult.ok) return;
+    mediaSrc = imgResult.url;
+  }
+
+  let openMediaEditorFromMediaRaw: typeof import('@components/mediaEditor')['openMediaEditorFromMediaRaw'];
+  try {
+    // the editor mounts the app's top level, which nothing has loaded yet when the sign-up screen opens it
+    [{openMediaEditorFromMediaRaw}] = await Promise.all([import('@components/mediaEditor'), hotReloadGuardReady()]);
+  } catch(error) {
+    revokeObjectURL(mediaSrc);
+    throw error;
+  }
+
+  if(isAlive && !isAlive()) {
+    revokeObjectURL(mediaSrc);
+    return;
+  }
+
+  openMediaEditorFromMediaRaw({
+    isEditingForAvatar,
+    isEditingForumAvatar,
+    canFinishWithoutChanges: true,
+    canImageResultInGIF,
+    getMediaBlob: async() => file,
+    managers,
+    mediaSrc,
+    mediaType: isVideo ? 'video' : 'image',
+    // Editing an avatar with a video → avatar-video mode (≤10s trim, forced mute,
+    // cover-frame picker). Non-avatar callers are unaffected.
+    isVideoAvatarMode: isEditingForAvatar && isVideo,
+    initialTab: isVideo ? 'adjustments' : 'crop',
+    onEditFinish: (editorResult) => onFinish({editorResult, originalFile: file}),
+    dontCreatePreview,
+    onClose: () => revokeObjectURL(mediaSrc)
+  });
+}
+
+function createHiddenFileInput(acceptMediaTypes: Array<'photo' | 'video'>): HTMLInputElement {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.style.display = 'none';
+
+  const mimeTypes: string[] = [];
+  if(acceptMediaTypes.includes('photo')) mimeTypes.push(...IMAGE_MIME_TYPES_SUPPORTED);
+  if(acceptMediaTypes.includes('video')) mimeTypes.push(...VIDEO_MIME_TYPES_SUPPORTED);
+  input.accept = mimeTypes.join(',');
+
+  return input;
+}
+
+function getFileFromInput(input: HTMLInputElement): Promise<File | void> {
+  const promise = new Promise<File | void>((resolve) => {
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      resolve(file);
+    });
+
+    // Resolve the promise if the user cancels the file selection — active window (the PiP when popped)
+    getAppWindow().addEventListener('focus', () => {
+      // It seems like the focus event fires before the change event, so we need to wait a bit before resolving
+      setTimeout(() => {
+        input.remove();
+        resolve();
+      }, 1000);
+    }, {once: true});
+  });
+
+  input.click();
+
+  return promise;
+}

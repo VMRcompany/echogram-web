@@ -1,0 +1,277 @@
+import {createSignal, JSX, onCleanup, onMount} from 'solid-js';
+
+import Button from '@components/buttonTsx';
+import PasswordInputField from '@components/passwordInputField';
+import PasswordMonkey from '@components/monkeys/password';
+import simpleConfirmation from '@components/popups/simpleConfirmation';
+import MediaHeader from '@components/mediaHeader';
+import {toastNew} from '@components/toast';
+import {wrapFormattedDuration} from '@components/wrappers/wrapDuration';
+import anchorCallback from '@helpers/dom/anchorCallback';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import focusWhenSettled from '@helpers/dom/focusWhenSettled';
+import htmlToSpan from '@helpers/dom/htmlToSpan';
+import replaceContent from '@helpers/dom/replaceContent';
+import {setDirection} from '@helpers/dom/setInnerHTML';
+import formatDuration from '@helpers/formatDuration';
+import mediaSizes from '@helpers/mediaSizes';
+import {AccountPassword} from '@layer';
+import {LangPackKey, i18n} from '@lib/langPack';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+
+import AuthCard from '@/pages/AuthCard';
+import {CardSpec, useAuthFlow} from '@/pages/authFlow';
+import styles from '@/pages/authFlow.module.scss';
+import whenDetached from '@helpers/dom/whenDetached';
+
+if(import.meta.hot) import.meta.hot.accept();
+
+type Spec = Extract<CardSpec, {name: 'password'}>;
+
+const TEST = false;
+
+/**
+ * Card variant of `pagePassword`. Single password input over a `PasswordMonkey`
+ * animation, with a "forgot password" link that leads to `emailRecover` (or to
+ * full account reset if recovery isn't available).
+ */
+export default function PasswordCard(_props: {spec: Spec}) {
+  const {managers, navigate, toIm, isLeaving} = useAuthFlow();
+
+  let monkey: PasswordMonkey | undefined;
+  const monkeyContainer = document.createElement('div');
+  const monkeySize = mediaSizes.isMobile ? 100 : 130;
+
+  let getStateInterval: number | undefined;
+  let state: AccountPassword;
+  let resetLoading = false;
+  // * an answer that comes after the card has gone - dropped, once the sign-in over the app was closed -
+  // * is not taken for a failure: no toast over what is there now, no polling started again
+  let gone = false;
+  const isGone = () => gone || isLeaving();
+
+  /* ---------- state ---------- */
+
+  const [submitting, setSubmitting] = createSignal(false);
+  const [nextKey, setNextKey] = createSignal<LangPackKey>('Login.Next');
+
+  /* ---------- input ---------- */
+
+  const passwordInputField = new PasswordInputField({
+    label: 'LoginPassword',
+    name: 'password'
+  });
+  const passwordInput = passwordInputField.input as HTMLInputElement;
+
+  /* ---------- forgot link ---------- */
+
+  const resetLink = i18n('ForgotPassword', [
+    anchorCallback(() => {
+      if(resetLoading) return;
+      resetLoading = true;
+
+      managers.passwordManager.requestRecovery().then((res) => {
+        navigate({name: 'emailRecover', payload: {email_pattern: res.email_pattern}});
+      }).catch(async(err: ApiError) => {
+        if(isGone()) {
+          return;
+        }
+
+        if(err.type === 'PASSWORD_RECOVERY_NA') {
+          await simpleConfirmation({
+            titleLangKey: 'Login.ResetPassword.Title',
+            descriptionLangKey: 'Login.ResetPassword.NoEmailText',
+            button: {
+              langKey: 'Login.ResetPassword.ResetAccount',
+              isDanger: true
+            }
+          });
+
+          await simpleConfirmation({
+            titleLangKey: 'Login.ResetAccount.Title',
+            descriptionLangKey: 'Login.ResetAccount.Text',
+            button: {
+              langKey: 'Login.ResetPassword.ResetAccount',
+              isDanger: true
+            }
+          });
+
+          await managers.appAccountManager.deleteAccount('Forgot password').then(() => {
+            navigate({name: 'signIn'});
+          }).catch((err: ApiError) => {
+            if(err.type === '2FA_RECENT_CONFIRM') {
+              simpleConfirmation({
+                titleLangKey: 'Login.ResetAccountFail.Title',
+                descriptionLangKey: 'Login.ResetAccountFail.TextCancelled',
+                button: {langKey: 'OK'}
+              });
+            } else if(err.type.startsWith('2FA_CONFIRM_WAIT_')) {
+              const waitTime = +err.type.replace('2FA_CONFIRM_WAIT_', '');
+              simpleConfirmation({
+                titleLangKey: 'Login.ResetAccountFail.Title',
+                descriptionLangKey: 'Login.ResetAccountFail.TextWait',
+                descriptionArgs: [wrapFormattedDuration(formatDuration(waitTime))],
+                button: {langKey: 'OK'}
+              });
+            } else {
+              console.error(err);
+              toastNew({langPackKey: 'Error.AnError'});
+            }
+          });
+          return;
+        }
+
+        toastNew({langPackKey: 'Error.AnError'});
+      }).finally(() => {
+        resetLoading = false;
+      });
+    })
+  ]);
+  resetLink.classList.add(styles.forgotLink);
+
+  /* ---------- state polling (session relevance) ---------- */
+
+  function getState() {
+    if(isGone()) {
+      return;
+    }
+
+    if(!getStateInterval) {
+      getStateInterval = window.setInterval(getState, 10e3);
+    }
+
+    return !TEST && managers.passwordManager.getState().then((_state) => {
+      state = _state;
+
+      if(state.hint) {
+        // the user's own words: they order by their own direction
+        const hint = htmlToSpan(wrapEmojiText(state.hint));
+        setDirection(hint);
+        replaceContent(passwordInputField.label, hint);
+      } else {
+        passwordInputField.setLabel();
+      }
+    });
+  }
+
+  /* ---------- submit ---------- */
+
+  function onSubmit(e?: Event) {
+    if(e) cancelEvent(e);
+
+    if(!passwordInput.value.length) {
+      passwordInput.classList.add('error');
+      return;
+    }
+
+    setSubmitting(true);
+    passwordInput.disabled = true;
+    setNextKey('PleaseWait');
+
+    const value = passwordInput.value;
+    passwordInputField.setValueSilently('' + Math.random()); // prevent saving suggestion
+    passwordInputField.setValueSilently(value);
+
+    managers.passwordManager.check(value, state).then((response) => {
+      switch(response._) {
+        case 'auth.authorization':
+          if(getStateInterval) {
+            clearInterval(getStateInterval);
+            getStateInterval = undefined;
+          }
+          // * the monkey stays until the card is gone (`onCleanup`): the client fades in over it
+          toIm();
+          break;
+        default:
+          setSubmitting(false);
+          passwordInput.disabled = false;
+          setNextKey(response._ as LangPackKey);
+          break;
+      }
+    }).catch((err: any) => {
+      if(isGone()) {
+        return;
+      }
+
+      setSubmitting(false);
+      passwordInput.disabled = false;
+      passwordInputField.input.classList.add('error');
+
+      switch(err.type) {
+        default:
+          setNextKey('PASSWORD_HASH_INVALID');
+          passwordInput.select();
+          break;
+      }
+
+      getState();
+    });
+  }
+
+  passwordInput.addEventListener('keypress', function(this, e) {
+    this.classList.remove('error');
+    setNextKey('Login.Next');
+
+    if(e.key === 'Enter') {
+      return onSubmit();
+    }
+  });
+
+  /* ---------- lifecycle ---------- */
+
+  let cancelFocus: (() => void) | undefined;
+  onMount(() => {
+    managers.appStateManager.pushToState('authState', {_: 'authStatePassword'});
+
+    monkey = new PasswordMonkey(passwordInputField, monkeySize);
+    monkeyContainer.append(monkey.container);
+    monkey.load();
+
+    getState();
+
+    cancelFocus = focusWhenSettled(passwordInput);
+  });
+
+  onCleanup(() => {
+    gone = true;
+    cancelFocus?.();
+    if(getStateInterval) {
+      clearInterval(getStateInterval);
+      getStateInterval = undefined;
+    }
+
+    // * as in the code card: the card is kept for its exit animation after this scope is gone, and a
+    // * destroyed offscreen lottie canvas blanks at once
+    const leaving = monkey;
+    monkey = undefined;
+    whenDetached(monkeyContainer.closest<HTMLElement>('.' + styles.card), () => leaving?.remove());
+  });
+
+  return (
+    <AuthCard
+      class={styles.pagePassword}
+      header={
+        <MediaHeader>
+          <MediaHeader.Sticker element={monkeyContainer} size={monkeySize}/>
+          <MediaHeader.Title tag="h1">{i18n('Login.Password.Title')}</MediaHeader.Title>
+          <MediaHeader.Subtitle>{i18n('Login.Password.Subtitle')}</MediaHeader.Subtitle>
+        </MediaHeader>
+      }
+    >
+      {passwordInputField.container}
+      {resetLink}
+      <Button
+        class="btn-primary btn-color-primary"
+        disabled={submitting()}
+        onClick={onSubmit}
+      >
+        {i18n(nextKey())}
+        {submitting() && (
+          <svg xmlns="http://www.w3.org/2000/svg" class="preloader-circular" viewBox="25 25 50 50">
+            <circle class="preloader-path" cx="50" cy="50" r="20" fill="none" stroke-miterlimit="10"/>
+          </svg>
+        )}
+      </Button>
+    </AuthCard>
+  );
+}

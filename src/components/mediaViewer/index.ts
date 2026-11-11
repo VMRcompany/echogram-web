@@ -1,0 +1,898 @@
+import type {MyDocument} from '@appManagers/appDocsManager';
+import MEDIA_MIME_TYPES_SUPPORTED from '@environment/mediaMimeTypesSupport';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import findUpTag from '@helpers/dom/findUpTag';
+import setInnerHTML from '@helpers/dom/setInnerHTML';
+import mediaSizes from '@helpers/mediaSizes';
+import SearchListLoader from '@helpers/searchListLoader';
+import {Message, MessageMedia, WebPage} from '@layer';
+import confirmationPopup from '@components/confirmationPopup';
+import appDownloadManager from '@lib/appDownloadManager';
+import {MyMessage} from '@appManagers/appMessagesManager';
+import {MyPhoto} from '@appManagers/appPhotosManager';
+import canSaveMessageMedia from '@appManagers/utils/messages/canSaveMessageMedia';
+import {getMediaFromMessageOrRich} from '@appManagers/utils/messages/getMediaFromMessage';
+import wrapRichText from '@richTextProcessor/wrapRichText';
+import {MediaSearchContext} from '@components/appMediaPlaybackController';
+import AppMediaViewerBase, {MEDIA_VIEWER_CLASSNAME} from '@components/mediaViewer/base';
+import overlayAvatarVideoOnMover from '@components/mediaViewer/avatarVideo';
+import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
+import showDeleteMessagesPopup from '@components/popups/deleteMessages';
+import Scrollable from '@components/scrollable';
+import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMediaTab';
+import {ChatType} from '@components/chat/chatType';
+import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
+import TranslatableMessage from '@components/translatableMessage';
+import {MAX_FILE_SAVE_SIZE} from '@appManagers/constants';
+import I18n, {i18n, LangPackKey} from '@lib/langPack';
+import wrapEmojiText from '@richTextProcessor/wrapEmojiText';
+import wrapWebPageDescription from '@components/wrappers/webPageDescription';
+import Button from '@components/button';
+import onQuoteClick from '@helpers/dom/onQuoteClick';
+import {canCopyMediaToClipboard, canCopyVideoFrameToClipboard} from '@helpers/copyMediaToClipboard';
+import toHHMMSS from '@helpers/string/toHHMMSS';
+import {getPeerProfilePhotoActions, reportProfilePhoto, setMainProfilePhoto} from '@components/mediaViewer/profilePhotoActions';
+import {setButtonLoader} from '@components/putPreloader';
+import copyMessageMediaWithFeedback from '@components/copyMessageMediaWithFeedback';
+import {canEditMessageMediaWithEditor, getEditMediaLangKey} from '@components/chat/editMessageMedia';
+import {hotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
+import AlbumThumbs, {AlbumThumbItem, ALBUM_THUMBS_CLASSNAME, getAlbumThumbsHeight} from '@components/mediaViewer/albumThumbs';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import {batch, createSignal} from 'solid-js';
+import {render} from 'solid-js/web';
+import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
+import Modes from '@config/modes';
+
+const isItemIndex = (index: number) => typeof(index) === 'number' && index >= 0;
+
+type AppMediaViewerTargetType = {
+  element: HTMLElement,
+  mid: number,
+  peerId: PeerId,
+  message?: MyMessage,
+  index?: number
+};
+
+export const onMediaCaptionClick = (caption: HTMLElement, e: MouseEvent) => {
+  const a = findUpTag(e.target, 'A');
+  const spoiler = findUpClassName(e.target, 'spoiler');
+  const quoteDiv = findUpClassName(e.target, 'quote-like-collapsable');
+  const isSpoilerVisible = caption.classList.contains('is-spoiler-visible');
+  if(quoteDiv && (!spoiler || isSpoilerVisible)) {
+    if(onQuoteClick(e, quoteDiv)) {
+      return;
+    }
+  }
+
+  if(!a || a.classList.contains('timestamp')) {
+    return;
+  }
+
+  if(a instanceof HTMLAnchorElement && (!spoiler || isSpoilerVisible)) { // close viewer if it's t.me/ redirect
+    const onclick = a.getAttribute('onclick');
+    if(!onclick || onclick.includes('showMaskedAlert')) {
+      return;
+    }
+
+    cancelEvent(e);
+    return () => {
+      a.click();
+    };
+  }
+};
+
+export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delete' | 'forward' | 'copy' | 'edit', AppMediaViewerTargetType> {
+  protected listLoader: SearchListLoader<AppMediaViewerTargetType>;
+  protected btnMenuForward: ButtonMenuItemOptionsVerifiable;
+  protected btnMenuCopy: ButtonMenuItemOptionsVerifiable;
+  protected btnMenuDownload: ButtonMenuItemOptionsVerifiable;
+  protected btnMenuDelete: ButtonMenuItemOptionsVerifiable;
+  protected btnMenuEdit: ButtonMenuItemOptionsVerifiable;
+  protected btnMenuShareAtTime: ButtonMenuItemOptionsVerifiable;
+  protected btnMenuSetMainPhoto: ButtonMenuItemOptionsVerifiable;
+  protected btnMenuReportPhoto: ButtonMenuItemOptionsVerifiable;
+  private deleteAsChatPhoto = false;
+  private btnMenuEditText = new I18n.IntlElement({key: 'EditThisPhoto'});
+  private btnMenuCopyText = new I18n.IntlElement({key: 'MediaViewer.Context.Copy'});
+  private btnMenuShareAtTimeText = new I18n.IntlElement();
+  private canShareAtTime = false;
+  // * the second the menu offered, so that what is shared is what it said
+  private shareAtTime = 0;
+  private videoAvatarCleanup?: () => void;
+  private albumThumbItems = createSignal<AlbumThumbItem[]>([]);
+  private albumThumbIndex = createSignal(0);
+  // * the same object for a thumb while its album stays on screen, so the strip moves it instead of redrawing
+  private albumThumbCache: Map<string, AlbumThumbItem> = new Map();
+
+  get searchContext() {
+    return this.listLoader.searchContext;
+  }
+
+  constructor(protected local?: boolean, sponsored?: boolean) {
+    super(new SearchListLoader({
+      processItem: (item) => {
+        const isForDocument = this.searchContext.inputFilter._ === 'inputMessagesFilterDocument';
+        const {mid, peerId} = item;
+        const media = getMediaFromMessageOrRich(item);
+
+        if(!media) return;
+
+        if(isForDocument && !AppMediaViewer.isMediaCompatibleForDocumentViewer(media)) {
+          return;
+        }
+
+        return {element: null as HTMLElement, mid, peerId};
+      }
+    }), ['edit', 'delete', 'forward', 'copy'], sponsored ? 60 : 0);
+
+    this.buttons.copy.classList.add('media-viewer-copy-button');
+    this.buttons.copy.setAttribute('aria-label', i18n('MediaViewer.Context.Copy').textContent);
+
+    this.listLoader.onEmptied = () => {
+      this.close();
+    };
+
+    /* const stub = document.createElement('div');
+    stub.classList.add(MEDIA_VIEWER_CLASSNAME + '-stub');
+    this.content.main.prepend(stub); */
+
+    this.content.caption = document.createElement('div');
+    this.content.caption.classList.add(MEDIA_VIEWER_CLASSNAME + '-caption', 'spoilers-container'/* , 'media-viewer-stub' */);
+
+    let captionTimeout: number;
+    const setCaptionTimeout = () => {
+      if(captionTimeout) {
+        clearTimeout(captionTimeout);
+      }
+
+      captionTimeout = window.setTimeout(() => {
+        captionTimeout = undefined;
+        this.content.caption.classList.remove('is-focused');
+      }, 800);
+    };
+    this.content.caption.addEventListener('touchstart', () => {
+      if(!mediaSizes.isMobile) return;
+
+      this.content.caption.classList.add('is-focused');
+
+      if(captionTimeout) {
+        clearTimeout(captionTimeout);
+        captionTimeout = undefined;
+      }
+
+      document.addEventListener('touchend', setCaptionTimeout, {once: true});
+    });
+
+    const captionScrollable = new Scrollable(this.content.caption);
+    captionScrollable.onAdditionalScroll = setCaptionTimeout;
+
+    const albumThumbs = document.createElement('div');
+    albumThumbs.classList.add(ALBUM_THUMBS_CLASSNAME, MEDIA_VIEWER_CLASSNAME + '-appear');
+    const disposeAlbumThumbs = render(() => AlbumThumbs({
+      items: this.albumThumbItems[0],
+      current: this.albumThumbIndex[0],
+      onSelect: this.onAlbumThumbSelect
+    }), albumThumbs);
+    this.middlewareHelper.get().onDestroy(disposeAlbumThumbs);
+
+    // this.content.main.append(this.content.caption);
+    this.wholeDiv.append(albumThumbs, this.content.caption);
+
+    const onLoadedMore = this.listLoader.onLoadedMore;
+    this.listLoader.onLoadedMore = () => {
+      onLoadedMore();
+      // * an album at the edge of what was loaded gets the rest of its items
+      const {message, index} = this.target || {};
+      if(message) {
+        this.setAlbumThumbs(message, index, this.listLoader.previous, this.listLoader.next, true);
+      }
+    };
+
+    attachClickEvent(this.buttons.delete, this.onDeleteClick);
+    attachClickEvent(this.buttons.copy, this.onCopyMediaClick);
+    attachClickEvent(this.buttons.edit, this.onEditClick);
+
+    const buttons: ButtonMenuItemOptionsVerifiable[] = [this.btnMenuEdit = {
+      icon: 'brush',
+      textElement: this.btnMenuEditText.element,
+      onClick: this.onEditClick,
+      verify: () => false
+    }, this.btnMenuForward = {
+      icon: 'forward',
+      text: 'Forward',
+      onClick: this.onForwardClick
+    }, this.btnMenuShareAtTime = {
+      icon: 'forward',
+      textElement: this.btnMenuShareAtTimeText.element,
+      onClick: this.onShareAtTimeClick,
+      verify: this.verifyShareAtTime
+    }, this.btnMenuCopy = {
+      icon: 'copy',
+      textElement: this.btnMenuCopyText.element,
+      onClick: this.onCopyMediaClick,
+      keepOpen: true,
+      verify: () => false
+    }, this.btnMenuDownload = {
+      icon: 'download',
+      text: 'MediaViewer.Context.Download',
+      onClick: this.onDownloadClick
+    }, this.btnMenuSetMainPhoto = {
+      icon: 'user',
+      text: 'SetAsMain',
+      onClick: this.onSetMainPhotoClick,
+      verify: () => false
+    }, this.btnMenuReportPhoto = {
+      icon: 'flag',
+      text: 'ReportChat',
+      onClick: this.onReportPhotoClick,
+      verify: () => false
+    }, this.btnMenuDelete = {
+      icon: 'delete',
+      className: 'danger',
+      text: 'Delete',
+      onClick: this.onDeleteClick
+    }];
+
+    this.setBtnMenuToggle(buttons, [this.btnMenuShareAtTime, this.btnMenuSetMainPhoto, this.btnMenuReportPhoto]);
+
+    // * constructing html end
+
+    this.setListeners();
+  }
+
+  protected setListeners() {
+    super.setListeners();
+    attachClickEvent(this.buttons.forward, this.onForwardClick);
+    attachClickEvent(this.author.container, this.onAuthorClick);
+
+    const onClick = (e: MouseEvent) => {
+      const callback = onMediaCaptionClick(this.content.caption, e);
+      if(callback) {
+        this.close().then(() => {
+          this.content.caption.removeEventListener('click', onClick, {capture: true});
+          callback();
+        });
+        return false;
+      }
+    };
+
+    this.content.caption.addEventListener('click', onClick, {capture: true});
+  }
+
+  /* public close(e?: MouseEvent) {
+    const good = !this.setMoverAnimationPromise;
+    const promise = super.close(e);
+
+    if(good) { // clear
+      this.currentMessageId = 0;
+      this.peerId = 0;
+    }
+
+    return promise;
+  } */
+
+  protected getMessageByPeer(peerId: PeerId, mid: number) {
+    return this.searchContext.isScheduled ? this.managers.appMessagesManager.getScheduledMessageByPeer(peerId, mid) : this.managers.appMessagesManager.getMessageByPeer(peerId, mid);
+  }
+
+  onPrevClick = async(target: AppMediaViewerTargetType) => {
+    this.openMedia({
+      message: this.local ? target.message : await this.getMessageByPeer(target.peerId, target.mid),
+      index: target.index,
+      target: target.element,
+      fromRight: -1
+    });
+  };
+
+  onNextClick = async(target: AppMediaViewerTargetType) => {
+    this.openMedia({
+      message: this.local ? target.message : await this.getMessageByPeer(target.peerId, target.mid),
+      index: target.index,
+      target: target.element,
+      fromRight: 1
+    });
+  };
+
+  onDeleteClick = async() => {
+    const managers = bindManagersToSession(this.managers);
+    const target = this.target;
+    if(this.deleteAsChatPhoto) {
+      try {
+        await confirmationPopup({
+          titleLangKey: 'Delete',
+          descriptionLangKey: 'AreYouSureDeletePhoto',
+          button: {
+            langKey: 'Delete',
+            isDanger: true
+          }
+        });
+      } catch{
+        return;
+      }
+
+      await managers.appChatsManager.editPhoto(target.peerId.toChatId());
+      this.target = {element: this.content.media} as any;
+      this.close();
+      return;
+    }
+
+    showDeleteMessagesPopup(
+      target.peerId,
+      [target.mid],
+      ChatType.Chat,
+      () => {
+        this.target = {element: this.content.media} as any;
+        this.close();
+      }
+    );
+  };
+
+  onEditClick = async() => {
+    const {peerId, mid} = this.target;
+    const chat = hotReloadGuard.appImManager.chat;
+    if(chat?.peerId !== peerId) {
+      return;
+    }
+
+    // the editor is a fullscreen overlay of its own — get out of the way first,
+    // which also puts the bubble back on screen for its open animation
+    try {
+      await this.close();
+    } catch{
+      return; // another close is already animating
+    }
+
+    chat.input.initMessageMediaEditing(mid);
+  };
+
+  onForwardClick = () => {
+    const target = this.target;
+    if(target.mid) {
+      // appSidebarRight.forwardTab.open([target.mid]);
+      hotReloadGuard.showForwardPopup({
+        [target.peerId]: [target.mid]
+      }, () => {
+        return this.close();
+      });
+    }
+  };
+
+  onAuthorClick = async(e: MouseEvent) => {
+    let {mid, peerId, message} = this.target;
+    if(mid && mid !== Number.MAX_SAFE_INTEGER) {
+      const threadId = this.searchContext.threadId;
+      message ||= await this.getMessageByPeer(peerId, mid);
+      this.close(e)
+      // .then(() => mediaSizes.isMobile ? appSidebarRight.sharedMediaTab.closeBtn.click() : Promise.resolve())
+      .then(async() => {
+        if(mediaSizes.isMobile) {
+          const tab = hotReloadGuard.appSidebarRight.getTab(AppSharedMediaTab);
+          if(tab) {
+            tab.close();
+          }
+        }
+
+        hotReloadGuard.appImManager.setInnerPeer({
+          peerId: message.peerId,
+          lastMsgId: mid,
+          threadId
+        });
+      });
+    }
+  };
+
+  onDownloadClick = async(_: any, docId?: DocId) => {
+    if(docId) {
+      const doc = await this.managers.appDocsManager.getDoc(docId);
+      appDownloadManager.downloadToDisc({media: doc, queueId: hotReloadGuard.appImManager.chat.bubbles.lazyLoadQueue.queueId});
+      return;
+    }
+    const {message, index} = this.target;
+    const media = getMediaFromMessageOrRich(message, index);
+    if(!media) return;
+    appDownloadManager.downloadToDisc({media, queueId: hotReloadGuard.appImManager.chat.bubbles.lazyLoadQueue.queueId});
+  };
+
+  onCopyMediaClick = () => {
+    const {message, index} = this.target;
+    copyMessageMediaWithFeedback({
+      message,
+      media: getMediaFromMessageOrRich(message, index),
+      index,
+      video: this.getShownVideo(),
+      button: this.btnMenuCopy,
+      cleanup: setButtonLoader(this.buttons.copy as HTMLButtonElement)
+    });
+  };
+
+  // * tdesktop's "Share at 0:42": the forward starts the video there for whoever it goes to. Only once this slide's
+  // * video is there, as tdesktop's needs its player (the base refreshes the menu when it comes)
+  private verifyShareAtTime = () => {
+    const video = this.canShareAtTime && this.getShownVideo();
+    if(!video) {
+      return false;
+    }
+
+    this.shareAtTime = Math.floor(video.currentTime || 0);
+    this.btnMenuShareAtTimeText.compareAndUpdate({
+      key: 'MediaViewer.Context.ShareAtTime',
+      args: [toHHMMSS(this.shareAtTime)]
+    });
+    return true;
+  };
+
+  // * the actions only the menus have act on the slide their menu was opened on (`getMenuTarget`)
+  onShareAtTimeClick = () => {
+    const target = this.getMenuTarget();
+    if(!target) return;
+    this.getShownVideo()?.pause();
+    hotReloadGuard.showForwardPopup({
+      [target.peerId]: [target.mid]
+    }, () => {
+      return this.close();
+    }, undefined, undefined, undefined, this.shareAtTime);
+  };
+
+  private getPhotoId({message, index}: AppMediaViewerTargetType) {
+    return (getMediaFromMessageOrRich(message, index) as MyPhoto).id;
+  }
+
+  onSetMainPhotoClick = async() => {
+    const target = this.getMenuTarget();
+    if(!target) return;
+    if(await setMainProfilePhoto(this.managers, target.peerId, this.getPhotoId(target)) && this.target === target) {
+      this.close();
+    }
+  };
+
+  onReportPhotoClick = () => {
+    const target = this.getMenuTarget();
+    if(target) reportProfilePhoto(target.peerId, this.getPhotoId(target));
+  };
+
+  private setCaption(message: MyMessage) {
+    const isSponsored = !!(message as Message.message).pFlags.sponsored;
+    if(isSponsored) {
+      this.author.nameEl.append(i18n('SponsoredMessageAd'));
+    }
+
+    const media = getMediaFromMessageOrRich(message);
+    const loadPromises: Promise<any>[] = [];
+    const richTextOptions: Parameters<typeof wrapRichText>[1] = {
+      maxMediaTimestamp: ((media as MyDocument)?.type === 'video' && (media as MyDocument).duration) || undefined,
+      textColor: 'white',
+      loadPromises
+    };
+
+    let hasCaption: boolean;
+    let html: HTMLElement;
+    if(isSponsored) {
+      const sponsoredMessage = (message as Message.message).sponsoredMessage;
+      const webPage = ((message as Message.message).media as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage;
+      html = document.createElement('div');
+      hasCaption = true;
+      const b = document.createElement('b');
+      b.append(wrapEmojiText(sponsoredMessage.title));
+      html.append(
+        b,
+        '\n',
+        wrapWebPageDescription(webPage, {...richTextOptions, entities: webPage.entities}, true)
+      );
+
+      const button = Button('btn-primary media-viewer-caption-button', {noRipple: true});
+      button.append(wrapEmojiText(sponsoredMessage.button_text));
+      this.content.caption.append(button);
+      this.content.caption.classList.add('has-button');
+
+      attachClickEvent(button, () => {
+        this.close().then(() => {
+          hotReloadGuard.appImManager.onSponsoredBoxClick(message as Message.message);
+        });
+      });
+    } else if(hasCaption = !!(message as Message.message).message) {
+      html = TranslatableMessage({
+        peerId: message.peerId,
+        message: message as Message.message,
+        middleware: this.content.mover.middlewareHelper.get(),
+        richTextOptions
+      });
+      this.saveTimestamps(html, loadPromises);
+    }
+
+    setInnerHTML(this.content.caption.firstElementChild, html);
+    this.content.caption.classList.toggle('hide', !hasCaption);
+    // this.content.container.classList.toggle('with-caption', !!caption);
+  }
+
+  private removeTimestamps() {
+    this.videoTimestamps = [];
+  }
+
+  private async saveTimestamps(messageContent: HTMLElement, loadPromises: Promise<any>[]) {
+    loadPromises && await Promise.all(loadPromises);
+    const timestampElements = Array.from(messageContent.querySelectorAll('.timestamp[data-timestamp]'));
+
+    this.videoTimestamps = timestampElements.map((element) => ({
+      time: +(element as HTMLElement).dataset.timestamp,
+      text: this.extractTimestampText(element)
+    }));
+  }
+
+  private extractTimestampText(element: Element) {
+    const result: string[] = [];
+    let current = element.nextSibling;
+    while(current) {
+      if(current instanceof HTMLElement && current.classList.contains('timestamp')) break;
+
+      const text = current.textContent;
+
+      const shouldBreak = text.includes('\n');
+      result.push(text.split('\n')[0].trim());
+
+      if(shouldBreak) break;
+      current = current.nextSibling;
+    }
+
+    return result.filter(Boolean).join(' ');
+  }
+
+  public setSearchContext(context: MediaSearchContext) {
+    this.listLoader.setSearchContext(context);
+
+    return this;
+  }
+
+  protected getBottomChromeHeight() {
+    return this.albumThumbItems[0]().length > 1 ? getAlbumThumbsHeight() : 0;
+  }
+
+  private getTargetMessage(target: Pick<AppMediaViewerTargetType, 'peerId' | 'mid' | 'message'>) {
+    if(target.message) {
+      return target.message;
+    }
+
+    // * synchronous: whether the strip is there decides the media's room before the viewer opens
+    return this.searchContext?.isScheduled ?
+      apiManagerProxy.getMessageFromStorage(`${target.peerId}_scheduled`, target.mid) :
+      apiManagerProxy.getMessageByPeer(target.peerId, target.mid);
+  }
+
+  // * an album is the messages of one grouped_id, or the items of one message that carries several (paid
+  // * media; an Instant View page's media come as such items too). A single item's index is null or -1
+  private getAlbumKey(target: Pick<AppMediaViewerTargetType, 'peerId' | 'mid' | 'message' | 'index'>) {
+    const groupedId = (this.getTargetMessage(target) as Message.message)?.grouped_id;
+    if(groupedId) {
+      return `${target.peerId}_${groupedId}`;
+    }
+
+    if(isItemIndex(target.index)) {
+      return `${target.peerId}_${target.mid}_items`;
+    }
+  }
+
+  private getTargetKey(target: Pick<AppMediaViewerTargetType, 'peerId' | 'mid' | 'index'>) {
+    return `${target.peerId}_${target.mid}_${isItemIndex(target.index) ? target.index : ''}`;
+  }
+
+  /**
+   * The thumbs of the album `message` belongs to, from the items around it in the list: only what the
+   * viewer can go to gets a thumb, in the order the arrows go.
+   */
+  private setAlbumThumbs(
+    message: MyMessage,
+    index: number,
+    previous: AppMediaViewerTargetType[],
+    next: AppMediaViewerTargetType[],
+    relayout?: boolean
+  ) {
+    const current: AppMediaViewerTargetType = {element: undefined, peerId: message.peerId, mid: message.mid, message, index};
+    const key = this.getAlbumKey(current);
+    const run: AppMediaViewerTargetType[] = [current];
+    if(key) {
+      for(let i = previous.length - 1; i >= 0 && this.getAlbumKey(previous[i]) === key; --i) {
+        run.unshift(previous[i]);
+      }
+
+      for(let i = 0; i < next.length && this.getAlbumKey(next[i]) === key; ++i) {
+        run.push(next[i]);
+      }
+    }
+
+    const cache = this.albumThumbCache;
+    const items: AlbumThumbItem[] = [];
+    for(const target of run) {
+      const thumbKey = this.getTargetKey(target);
+      let item = cache.get(thumbKey);
+      if(!item) {
+        const targetMessage = this.getTargetMessage(target);
+        const media = targetMessage && getMediaFromMessageOrRich(targetMessage, target.index) as MyPhoto | MyDocument;
+        if(!media) {
+          break;
+        }
+
+        item = {key: thumbKey, media, message: targetMessage};
+      }
+
+      items.push(item);
+    }
+
+    const heightBefore = this.getBottomChromeHeight();
+    cache.clear();
+    items.forEach((item) => cache.set(item.key, item));
+    batch(() => {
+      this.albumThumbIndex[1](Math.max(0, items.indexOf(cache.get(this.getTargetKey(current)))));
+      this.albumThumbItems[1](items.length > 1 ? items : []);
+    });
+
+    // * on open the base class lays the viewer out right after
+    if(relayout && heightBefore !== this.getBottomChromeHeight()) {
+      this.applyLayoutVariables();
+    }
+  }
+
+  protected applyLayoutPadding() {
+    super.applyLayoutPadding();
+    // * the caption stands on the strip
+    this.wholeDiv.style.setProperty('--media-viewer-album-height', this.getBottomChromeHeight() + 'px');
+  }
+
+  /**
+   * "3 of 15" before the date, as tdesktop and the avatar viewer have it: the place in the list the arrows
+   * go through. A list given whole counts on itself; a search asks the server for the place of the item
+   * opened, and the loader counts every other from it over the results it loads (`getPosition`).
+   */
+  private setPositionCounter() {
+    const target = this.target;
+    const render = ({position, count}: {position: number, count: number}) => {
+      this.setDateExtra(count > 1 ? i18n('Of', [position, count]) : undefined);
+    };
+
+    if(this.local || this.searchContext.useSearch === false) {
+      const {previous, next} = this.listLoader;
+      render({position: previous.length + 1, count: previous.length + 1 + next.length});
+      return;
+    }
+
+    const position = this.listLoader.getPosition(target);
+    if(position) {
+      render(position);
+      return;
+    }
+
+    this.listLoader.loadPosition(target).then((result) => {
+      if(result && this.target === target) {
+        render(result);
+      }
+    });
+  }
+
+  private onAlbumThumbSelect = (index: number) => {
+    if(this.setMoverPromise) {
+      return;
+    }
+
+    const key = this.albumThumbItems[0]()[index]?.key;
+    const {previous, next} = this.listLoader;
+    const previousIndex = previous.findIndex((target) => this.getTargetKey(target) === key);
+    if(previousIndex !== -1) {
+      this.listLoader.go(previousIndex - previous.length);
+      return;
+    }
+
+    const nextIndex = next.findIndex((target) => this.getTargetKey(target) === key);
+    if(nextIndex !== -1) {
+      this.listLoader.go(nextIndex + 1);
+    }
+  };
+
+  private setMessageActionVisibility(options: {
+    cantForward: boolean,
+    cantCopy: boolean,
+    cantDownload: boolean,
+    cantDelete: boolean,
+    cantEdit: boolean,
+    cantShareAtTime?: boolean,
+    cantSetMainPhoto?: boolean,
+    cantReportPhoto?: boolean,
+    editLangKey?: LangPackKey,
+    copyFrame?: boolean
+  }) {
+    if(options.editLangKey) {
+      this.btnMenuEditText.compareAndUpdate({key: options.editLangKey});
+      this.buttons.edit.setAttribute('aria-label', I18n.format(options.editLangKey, true));
+    }
+
+    const copyLangKey: LangPackKey = options.copyFrame ? 'MediaViewer.Context.CopyFrame' : 'MediaViewer.Context.Copy';
+    if(this.btnMenuCopyText.key !== copyLangKey) {
+      this.btnMenuCopyText.compareAndUpdate({key: copyLangKey});
+      this.buttons.copy.setAttribute('aria-label', I18n.format(copyLangKey, true));
+    }
+
+    this.canShareAtTime = !(options.cantShareAtTime ?? true);
+
+    const actions: [(HTMLElement | ButtonMenuItemOptionsVerifiable)[], boolean][] = [
+      [[this.buttons.edit, this.btnMenuEdit], options.cantEdit],
+      [[this.buttons.forward, this.btnMenuForward], options.cantForward],
+      [[this.buttons.copy, this.btnMenuCopy], options.cantCopy],
+      [[this.buttons.download, this.btnMenuDownload], options.cantDownload],
+      [[this.btnMenuSetMainPhoto], options.cantSetMainPhoto ?? true],
+      [[this.btnMenuReportPhoto], options.cantReportPhoto ?? true],
+      [[this.buttons.delete, this.btnMenuDelete], options.cantDelete]
+    ];
+
+    actions.forEach(([buttons, hide]) => {
+      buttons.forEach((button) => {
+        if(button instanceof HTMLElement) {
+          // * hidden on every page until its rights come: with the keyboard layer, the focus it holds stays in the
+          // * viewer rather than dropping to the page's body
+          if(hide && Modes.a11y && button.contains(button.ownerDocument.activeElement)) {
+            this.wholeDiv.focus({preventScroll: true});
+          }
+          button.classList.toggle('hide', hide);
+        } else {
+          button.verify = () => !hide;
+        }
+      });
+    });
+
+    this.wholeDiv.classList.toggle('no-forwards', options.cantDownload);
+    this.updateMoreMenu();
+  }
+
+  public openMedia({
+    message,
+    index,
+    target,
+    fromRight = 0,
+    reverse = false,
+    prevTargets = [],
+    nextTargets = [],
+    mediaTimestamp
+  }: {
+    message: MyMessage,
+    index?: number,
+    target?: HTMLElement,
+    fromRight?: number,
+    reverse?: boolean,
+    prevTargets?: AppMediaViewerTargetType[],
+    nextTargets?: AppMediaViewerTargetType[],
+    mediaTimestamp?: number
+    /* , needLoadMore = true */
+  }) {
+    if(this.setMoverPromise) return this.setMoverPromise;
+    if(this.isAskedTooLate()) return Promise.resolve();
+
+    const mid = message.mid;
+    const fromId = (message as Message.message).fwd_from && !message.fromId ? getFwdFromName((message as Message.message).fwd_from) : message.fromId;
+    const media = getMediaFromMessageOrRich(message, index);
+
+    const isSponsored = !!(message as Message.message).pFlags.sponsored || !message.fromId;
+    const noAuthor = isSponsored;
+    const isServiceMessage = message._ === 'messageService';
+    const action = isServiceMessage ? (message as Message.messageService).action : undefined;
+    const isChatPhotoEdit = !!action &&
+      (action._ === 'messageActionChannelEditPhoto' || action._ === 'messageActionChatEditPhoto') &&
+      message.peerId.isAnyChat();
+
+    // "edit" reopens the media in the editor and replaces the message with the result,
+    // so it needs the composer of the very chat this message lives in (see onEditClick)
+    const canOpenEditor = !this.local &&
+      !isSponsored &&
+      canEditMessageMediaWithEditor(message as Message.message) &&
+      hotReloadGuard.appImManager.chat?.peerId === message.peerId &&
+      !!hotReloadGuard.appImManager.chat.input?.messageInput;
+
+    // Start with a conservative state, but do not put worker-proxy permission checks
+    // in front of the first animation frame. The controls reconcile as soon as all
+    // the independent checks settle.
+    this.deleteAsChatPhoto = false;
+    this.setMessageActionVisibility({cantForward: true, cantCopy: true, cantDownload: true, cantDelete: true, cantEdit: true});
+    const permissionsPromise = Promise.all([
+      this.managers.appPeersManager.noForwards(message.peerId),
+      isServiceMessage || noAuthor ? Promise.resolve(false) : this.managers.appMessagesManager.canForward(message),
+      isChatPhotoEdit ?
+        this.managers.appChatsManager.hasRights(message.peerId.toChatId(), 'change_info') :
+        // * a local message (an Instant View's, a bot's preview) is in no history to be deleted from
+        this.local ? Promise.resolve(false) : this.managers.appMessagesManager.canDeleteMessage(message),
+      canOpenEditor ? this.managers.appMessagesManager.canEditMessage(message, 'text') : Promise.resolve(false)
+    ]);
+
+    this.removeTimestamps();
+    this.setCaption(message);
+
+    // * before the base class sizes the media: the strip takes room under it. The list is set on the
+    // * first open only, from the targets given here
+    this.setAlbumThumbs(
+      message,
+      index,
+      this.isFirstOpen ? prevTargets : this.listLoader.previous,
+      this.isFirstOpen ? nextTargets : this.listLoader.next
+    );
+
+    // * a video shared at a moment ("Share at 0:42") starts there, as in tdesktop; a seek asked for (a timestamp
+    // * link) goes first
+    const messageMedia = (message as Message.message).media;
+    const sharedAt = messageMedia?._ === 'messageMediaDocument' ? messageMedia.video_timestamp || undefined : undefined;
+    const promise = super._openMedia({
+      media: media as MyPhoto | MyDocument,
+      timestamp: message.date,
+      fromId,
+      fromRight,
+      target,
+      reverse,
+      prevTargets,
+      nextTargets,
+      message,
+      mediaTimestamp: mediaTimestamp ?? sharedAt,
+      noAuthor
+      /* , needLoadMore */
+    });
+    this.target.mid = mid;
+    this.target.peerId = message.peerId;
+    this.target.message = message;
+    this.target.index = index;
+
+    if(!noAuthor) {
+      this.setPositionCounter();
+    }
+
+    void permissionsPromise.then(([noForwards, canForward, canDelete, canEdit]) => {
+      if(this.target?.message !== message) return;
+      const cantForward = !canForward;
+      const cantDownload = (isServiceMessage ? noForwards : cantForward && !isSponsored) || !canSaveMessageMedia(message, noForwards);
+      const copyFrame = canCopyVideoFrameToClipboard(media as MyDocument);
+      const cantCopy = cantDownload || !(copyFrame || canCopyMediaToClipboard(media));
+      const cantDelete = !canDelete;
+      this.deleteAsChatPhoto = isChatPhotoEdit && !cantDelete;
+      // * a chat's photo: the right asked for it is to change the chat's info
+      const photoActions = isChatPhotoEdit && (media as MyPhoto)?._ === 'photo' ? getPeerProfilePhotoActions({
+        peerId: message.peerId,
+        photoId: (media as MyPhoto).id,
+        canChangeInfo: canDelete
+      }) : undefined;
+      // * the message's own video, not a link preview's, as tdesktop has it
+      const isOwnVideo = (message as Message.message).media?._ === 'messageMediaDocument' && (media as MyDocument)?.type === 'video';
+      this.setMessageActionVisibility({
+        cantForward,
+        cantCopy,
+        cantDownload,
+        cantDelete,
+        cantEdit: !canEdit,
+        cantShareAtTime: cantForward || !isOwnVideo,
+        cantSetMainPhoto: !photoActions?.canSetMain,
+        cantReportPhoto: !photoActions?.canReport,
+        editLangKey: getEditMediaLangKey(message as Message.message),
+        copyFrame
+      });
+    }).catch((error) => {
+      this.log.warn('failed to resolve media viewer actions', error);
+    });
+
+    // Animated avatar (a profile/chat photo with video_sizes — e.g. a group /
+    // channel avatar-change service message): overlay the looping video on the
+    // still image once the open/move animation settles, like the avatar viewer.
+    this.videoAvatarCleanup?.();
+    this.videoAvatarCleanup = undefined;
+    if((media as MyPhoto)?._ === 'photo' && (media as MyPhoto).video_sizes?.length) {
+      const photo = media as MyPhoto;
+      Promise.resolve(promise).then(() => {
+        if(this.target?.message !== message || !this.content.mover) return;
+        this.videoAvatarCleanup = overlayAvatarVideoOnMover(this.content.mover, photo);
+      });
+    }
+
+    return promise;
+  }
+
+  public close(e?: MouseEvent) {
+    this.videoAvatarCleanup?.();
+    this.videoAvatarCleanup = undefined;
+    return super.close(e);
+  }
+
+  public static isMediaCompatibleForDocumentViewer(media: MyPhoto | MyDocument) {
+    return (media._ === 'photo' || MEDIA_MIME_TYPES_SUPPORTED.has(media.mime_type) && media.size <= MAX_FILE_SAVE_SIZE);
+  }
+}

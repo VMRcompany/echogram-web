@@ -1,0 +1,24 @@
+// Popup shell only — the two steps inside it style themselves
+// (`@components/emailVerification.module.scss`).
+.popup {
+  --popup-min-width: 26.25rem;
+  --popup-max-width: 26.25rem;
+  --popup-height: 26.25rem;
+
+  &Footer {
+    padding: 1.625rem 0 0;
+  }
+}
+
+.slider {
+  height: 100%;
+
+  :global(.tabs-tab) {
+    background-color: var(--surface-color);
+    padding: 1rem;
+
+    .page {
+      height: 100%;
+    }
+  }
+}

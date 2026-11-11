@@ -1,0 +1,29 @@
+@use "../../shared" as *;
+
+.popup-toggle-read-date {
+  --popup-min-width: 24rem;
+  --popup-max-width: 24rem;
+  text-align: center;
+  @include text-overflow(false);
+
+  .popup-body {
+    padding: 1rem;
+  }
+
+  &-sticker {
+    border-radius: 50%;
+    background-color: var(--primary-color);
+    margin-bottom: 1rem;
+  }
+
+  &-button {
+    text-transform: initial;
+    margin-top: 1rem;
+    border-radius: $section-rounded-border-radius;
+  }
+
+  .delimiter-with-text {
+    margin: 1.25rem 0 .875rem;
+    padding: 0 2.25rem;
+  }
+}

@@ -1,0 +1,10 @@
+$z-index: 6;
+
+.EmoticonsDropdown {
+  z-index: $z-index;
+}
+
+// * as high as the dropdown, and mounted after it: a peek at one of its emoji shows over it
+.MediaPeek {
+  --media-peek-z-index: #{$z-index};
+}

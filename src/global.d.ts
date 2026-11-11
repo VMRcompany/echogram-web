@@ -1,0 +1,368 @@
+import type ListenerSetter from '@helpers/listenerSetter';
+import type {Middleware, MiddlewareHelper} from '@helpers/middleware';
+import type {Chat, Document, Message, User} from '@layer';
+import type {MediaSize} from '@helpers/mediaSize';
+import type {AnimationItemGroup} from '@components/animationIntersector';
+import type LazyLoadQueue from '@components/lazyLoadQueue';
+import type {AppManagers} from '@lib/managers';
+import type {CustomProperty} from '@helpers/dom/customProperties';
+import type Icons from '@/icons';
+import type {CancellablePromise} from '@helpers/cancellablePromise';
+import type Languages from '@lib/tinyld/languages';
+import type {ValueOrGetter} from '@helpers/solid/readValue';
+import type {MTAppConfig as AppConfig} from '@/appConfig';
+
+declare global {
+  interface AddEventListenerOptions extends EventListenerOptions {
+    once?: boolean;
+    passive?: boolean;
+    // ls?: ListenerSetter;
+  }
+
+  interface HTMLCanvasElement {
+    dpr?: number
+  }
+
+  interface HTMLElement {
+    middlewareHelper?: MiddlewareHelper;
+    timeAppenders?: {element: HTMLElement, callback: () => void}[];
+    timeSpan?: HTMLElement;
+    onMiniVideoMouseMove?: (e: MouseEvent) => void;
+    message?: Message;
+    // middleware?: Middleware;
+  }
+
+  interface HTMLMediaElement {
+    isSeeking?: boolean;
+    ignoreLeak?: boolean;
+  }
+
+  interface HTMLVideoElement {
+    _loop?: boolean | number;
+    _autoplay?: boolean;
+    mini?: boolean;
+  }
+
+  interface Window {
+    fillChatInputEditorTestData?: () => boolean | Promise<boolean>;
+    Prism?: {
+      manual?: boolean
+    };
+    documentPictureInPicture?: DocumentPictureInPicture;
+  }
+
+  // https://developer.chrome.com/docs/web-platform/document-picture-in-picture
+  interface DocumentPictureInPictureOptions {
+    width?: number;
+    height?: number;
+    disallowReturnToOpener?: boolean;
+    preferInitialWindowPlacement?: boolean;
+  }
+
+  interface DocumentPictureInPicture extends EventTarget {
+    readonly window: Window | null;
+    requestWindow(options?: DocumentPictureInPictureOptions): Promise<Window>;
+    onenter: ((this: DocumentPictureInPicture, ev: Event) => any) | null;
+  }
+
+  interface NotificationAction {
+    action: string;
+    title: string;
+  }
+
+  interface NotificationOptions {
+    actions?: NotificationAction[];
+  }
+
+  // * remove these types when navigation api is stable
+
+  interface NavigationEntry {
+    key: string;
+    url: string;
+    getState(): any;
+    sameDocument: boolean;
+    index: number;
+  }
+
+  interface NavigationOptions {
+    state: any;
+    history: 'push' | 'replace';
+  }
+
+  interface NavigationEvent extends Event {
+    navigationType: 'push' | 'replace' | 'reload' | 'traverse';
+    destination: NavigationEntry;
+    sameDocument: boolean;
+    intercept(options?: {
+      handler?: () => void,
+      focusReset?: 'after-transition' | 'manual',
+      scroll?: 'after-transition' | 'manual'
+    }): void;
+    scroll(): void;
+  }
+
+  interface Navigation {
+    entries(): NavigationEntry[];
+    currentEntry: NavigationEntry;
+    navigate(url: string | URL, options: NavigationOptions): void;
+    traverseTo(key: string): void;
+    updateCurrentEntry(options: NavigationEntryOptions): void;
+    addEventListener(type: 'navigate', listener: (event: NavigationEvent) => void): void;
+    removeEventListener(type: 'navigate', listener: (event: NavigationEvent) => void): void;
+    back(): void;
+  }
+
+  const navigation: Navigation;
+
+  // * until here
+
+  // typescript is lack of types
+  interface Selection {
+    modify(alter: 'move' | 'extend', direction: 'forward' | 'backward' | 'left' | 'right', granularity: 'character' | 'word' | 'sentence' | 'line' | 'paragraph' | 'lineboundary' | 'sentenceboundary' | 'paragraphboundary' | 'documentboundary'): void;
+  }
+
+  type UserId = User.user['id'];
+  type ChatId = Chat.chat['id'];
+  // type PeerId = `u${UserId}` | `c${ChatId}`;
+  // type PeerId = `${UserId}` | `-${ChatId}`;
+  type PeerId = number;
+  // type PeerId = number;
+  type BotId = UserId;
+  type DocId = Document.document['id'];
+  type Long = string | number;
+  type MTLong = string;
+  type MTAppConfig = AppConfig;
+
+  type AppEmoji = {emoji: string, docId?: DocId};
+  type Icon = keyof typeof Icons;
+  type PremiumPromoFeatureType = 'stories' | 'double_limits' | 'voice_to_text' | 'faster_download' |
+    'translations' | 'animated_emoji' | 'more_upload' | 'emoji_status' | 'profile_badge' |
+    'advanced_chat_management' | 'no_ads' | 'app_icons' | 'infinite_reactions' |
+    'animated_userpics' | 'premium_stickers' | 'peer_colors' | 'wallpapers' |
+    'saved_tags' | 'last_seen' | 'message_privacy' | 'pm_noforwards' |
+    // Telegram Business — the `business_promo_order` set
+    'business_location' | 'business_hours' | 'quick_replies' | 'greeting_message' |
+    'away_message' | 'business_bots' | 'business_links' | 'business_intro' | 'folder_tags';
+
+  type MTMimeType = 'video/quicktime' | 'image/gif' | 'image/jpeg' | 'application/pdf' |
+    'video/mp4' | 'image/webp' | 'audio/aac' | 'audio/flac' | 'audio/mp4' | 'audio/mpeg' |
+    'audio/ogg' | 'video/ogg' | 'application/octet-stream' |
+    'application/x-tgsticker' | 'video/webm' | 'image/svg+xml' | 'image/png' | 'application/json' |
+    'application/x-tgwallpattern' | 'audio/wav' | 'image/avif' | 'image/jxl' | 'image/bmp' |
+    'image/heic' | 'application/x-mpegurl' | 'application/x-tgstoryboard' | 'application/x-tgstoryboardmap';
+
+  type MTFileExtension = 'mov' | 'gif' | 'pdf' | 'jpg' | 'jpeg' | 'wav' |
+    'tgv' | 'tgs' | 'svg' | 'mp4' | 'webm' | 'webp' | 'mp3' | 'm4a' | 'aac' |
+    'flac' | 'opus' | 'oga' | 'ogg' | 'ogv' | 'json' |
+    'png' | 'avif' | 'jxl' | 'bmp' | 'heic' | 'heif';
+
+  type ApiFileManagerError = 'DOWNLOAD_CANCELED' | 'UPLOAD_CANCELED' | 'FILE_TOO_BIG' | 'FILE_EMPTY' | 'REFERENCE_IS_NOT_REFRESHED';
+  type StorageError = 'STORAGE_OFFLINE' | 'NO_ENTRY_FOUND' | 'IDB_CREATE_TIMEOUT';
+  type ReferenceError = 'NO_NEW_CONTEXT' | 'NO_CONTEXT';
+  type NetworkerError = 'NETWORK_BAD_RESPONSE' | 'NETWORK_BAD_REQUEST' | 'NETWORK_RESULT_UNREADABLE' | 'BIND_FAILED';
+  type FiltersError = 'PINNED_DIALOGS_TOO_MUCH' | 'PINNED_DIALOGS_CHANGED';
+  type LottieError = 'FRAME_OUT_OF_RANGE' | 'ITEM_DESTROYED' | 'FILE_INVALID';
+
+  type LocalFileError = ApiFileManagerError | ReferenceError | StorageError;
+  type LocalErrorType = LocalFileError | NetworkerError | FiltersError | LottieError |
+    'UNKNOWN' | 'NO_DOC' | 'MIDDLEWARE' | 'PORT_DISCONNECTED' | 'NO_AUTO_DOWNLOAD' | 'CHAT_PRIVATE' | 'NO_WASM' |
+    'CANCELED' | 'TIMEOUT' | 'TAB_ALREADY_OPEN';
+
+  type ServerErrorType =
+    | 'FILE_REFERENCE_EXPIRED'
+    | 'SESSION_REVOKED'
+    | 'AUTH_KEY_DUPLICATED'
+    | 'SESSION_PASSWORD_NEEDED'
+    | 'CONNECTION_NOT_INITED'
+    | 'ERROR_EMPTY'
+    | 'MTPROTO_CLUSTER_INVALID'
+    | 'BOT_PRECHECKOUT_TIMEOUT'
+    | 'BOT_PRECHECKOUT_FAILED'
+    | 'PAYMENT_FAILED'
+    | 'REQUESTED_INFO_INVALID'
+    | 'SHIPPING_OPTION_INVALID'
+    | 'SHIPPING_NOT_AVAILABLE'
+    | 'PAYMENT_CREDENTIALS_INVALID'
+    | 'PAYMENT_CREDENTIALS_ID_INVALID'
+    | 'TMP_PASSWORD_INVALID'
+    | 'PASSWORD_HASH_INVALID'
+    | 'SRP_ID_INVALID'
+    | 'CHANNEL_PRIVATE'
+    | 'VOICE_MESSAGES_FORBIDDEN'
+    | 'PHOTO_INVALID_DIMENSIONS'
+    | 'PHOTO_SAVE_FILE_INVALID'
+    | 'WALLPAPER_INVALID'
+    | 'USER_ALREADY_PARTICIPANT'
+    | 'USER_WAS_KICKED'
+    | 'USERNAME_INVALID'
+    | 'USERNAME_PURCHASE_AVAILABLE'
+    | 'USERNAMES_ACTIVE_TOO_MUCH'
+    | 'BOT_INVALID'
+    | 'USERNAME_NOT_OCCUPIED'
+    | 'PINNED_TOO_MUCH'
+    | 'LOCATION_INVALID'
+    | 'FILE_ID_INVALID'
+    | 'CHANNEL_FORUM_MISSING'
+    | 'TRANSCRIPTION_FAILED'
+    | 'USER_NOT_PARTICIPANT'
+    | 'PEER_ID_INVALID'
+    | 'MSG_VOICE_MISSING'
+    | 'CHAT_ADMIN_REQUIRED'
+    | 'QUERY_ID_INVALID'
+    | 'CHAT_ADMIN_INVITE_REQUIRED'
+    | 'BOT_APP_INVALID'
+    | 'FILTER_NOT_SUPPORTED'
+    | 'INVITES_TOO_MUCH'
+    | 'AICOMPOSE_FLOOD_PREMIUM'
+    | 'AICOMPOSE_TONE_SLUG_INVALID'
+    | 'AICOMPOSE_TONE_INVALID'
+    | 'TONE_NOT_FOUND'
+    | 'FILTERS_TOO_MUCH'
+    | 'PEERS_LIST_EMPTY'
+    | 'INVITE_SLUG_EXPIRED'
+    | 'DIALOG_FILTERS_TOO_MUCH'
+    | 'CHATLISTS_TOO_MUCH'
+    | 'FRESH_RESET_AUTHORISATION_FORBIDDEN'
+    | 'FRESH_CHANGE_AUTHORIZATION_FORBIDDEN'
+    | 'NO_USER'
+    | 'USER_PRIVACY_RESTRICTED'
+    | 'REACTION_INVALID'
+    | 'CHAT_NOT_MODIFIED'
+    | 'REACTIONS_TOO_MANY'
+    | 'LIMIT_PER_POST_INVALID'
+    | 'INVITE_HASH_EXPIRED'
+    | 'PHONE_NOT_OCCUPIED'
+    | 'PHONE_NUMBER_INVALID'
+    | 'PARTICIPANT_ID_INVALID'
+    | 'PREMIUM_ACCOUNT_REQUIRED'
+    | 'BOOST_NOT_MODIFIED'
+    | 'PREMIUM_GIFTED_NOT_ALLOWED'
+    | `FLOOD_WAIT_${number}`
+    | 'MESSAGE_NOT_MODIFIED'
+    | 'MESSAGE_EMPTY'
+    | 'MESSAGE_ID_REQUIRED'
+    | 'SLUG_INVALID'
+    | `PREMIUM_SUB_ACTIVE_UNTIL_${number}`
+    | `PHONE_MIGRATE_${number}`
+    | `NETWORK_MIGRATE_${number}`
+    | `USER_MIGRATE_${number}`
+    | `STATS_MIGRATE_${number}`
+    | `FILE_MIGRATE_${number}`
+    | `CALL_MIGRATE_${number}`
+    | 'MSG_WAIT_FAILED'
+    | 'MSG_WAIT_TIMEOUT'
+    | 'SAVED_DIALOGS_UNSUPPORTED'
+    | 'YOUR_PRIVACY_RESTRICTED'
+    | 'INVITE_REQUEST_SENT'
+    | 'GROUPCALL_INVALID'
+    | 'TIME_TOO_BIG'
+    | 'TIME_TOO_SMALL'
+    | 'TIME_INVALID'
+    | 'GROUPCALL_FORBIDDEN'
+    | 'VIDEO_CHANNEL_INVALID'
+    | 'GROUPCALL_JOIN_MISSING'
+    | `SLOWMODE_WAIT_${number}`
+    | 'BALANCE_TOO_LOW'
+    | 'FORM_EXPIRED'
+    | `FLOOD_PREMIUM_WAIT_${number}`
+    | 'STORY_ID_TOO_MANY'
+    | 'STORY_NOT_MODIFIED'
+    | `FILE_REFERENCE_${number}_EXPIRED`
+    | 'ADDRESS_STREET_LINE1_INVALID'
+    | 'ADDRESS_STREET_LINE2_INVALID'
+    | 'ADDRESS_COUNTRY_INVALID'
+    | 'ADDRESS_CITY_INVALID'
+    | 'ADDRESS_STATE_INVALID'
+    | 'ADDRESS_POSTCODE_INVALID'
+    | 'REQ_INFO_NAME_INVALID'
+    | 'REQ_INFO_EMAIL_INVALID'
+    | 'REQ_INFO_PHONE_INVALID'
+    | 'FILE_REFERENCE_INVALID'
+    | 'USER_NOT_MUTUAL_CONTACT'
+    | 'USER_BOT'
+    | 'BOTS_TOO_MUCH'
+    | 'YOU_BLOCKED_USER'
+    | 'USER_KICKED'
+    | 'FROZEN_METHOD_INVALID'
+    | 'EMAIL_INVALID'
+    | 'EMAIL_NOT_ALLOWED'
+    | 'EMAIL_VERIFY_EXPIRED'
+    | 'CODE_INVALID'
+    | 'PASSWORD_RECOVERY_NA'
+    | '2FA_RECENT_CONFIRM'
+    | `2FA_CONFIRM_WAIT_${number}`
+    | 'PASSKEY_CREDENTIAL_NOT_FOUND'
+    | 'SUMMARY_FLOOD_PREMIUM'
+    | 'AUTH_TOKEN_EXPIRED'
+    | 'CHANNELS_TOO_MUCH'
+    | 'USERS_TOO_MUCH'
+    | 'GROUP_FULL'
+    | 'ACCESS_DENIED'
+    | 'CHANNEL_PUBLIC_GROUP_NA'
+    | 'USER_BANNED_IN_CHANNEL'
+    | 'CHANNEL_INVALID'
+    | 'CHANNEL_ALREADY_LINKED'
+    | 'COMMUNITY_REQUEST_CREATED'
+    | 'COMMUNITY_PEERS_TOO_MUCH'
+    | 'BOOSTS_REQUIRED'
+    | 'USERNAME_OCCUPIED'
+    | 'MESSAGE_EDIT_FORBIDDEN'
+    | 'MESSAGE_ID_INVALID'
+    | 'PHONE_CODE_EMPTY'
+    | 'PHONE_CODE_EXPIRED'
+    | 'PHONE_CODE_INVALID'
+    | 'WIDGET_RESPONSE_TIMEOUT'
+  ;
+
+  type WalletErrorType =
+    | 'WALLET_UNAVAILABLE'
+    | 'WALLET_USER_UNAVAILABLE'
+    | 'WALLET_TONCENTER_ERROR'
+    | 'WALLET_TRANSFER_RECEIPT_MISSING'
+    | 'WALLET_TRANSFER_SEND_FAILED'
+    | 'WALLET_TRANSFER_DATA_INVALID'
+    | 'WALLET_TRANSFER_FAILED'
+    | 'WALLET_TRANSFER_CANCELLED'
+    | 'WALLET_TRANSFER_EXPIRED'
+    | 'WALLET_TRANSFER_REPLACED'
+    | 'WALLET_KEY_MISMATCH'
+    | 'WALLET_BACKUP_NOT_AVAILABLE'
+    | 'WALLET_PROOF_INVALID'
+    | 'WALLET_ROTATION_NOT_FOUND'
+    | 'PASSWORD_MISSING';
+
+  type ErrorType = LocalErrorType | ServerErrorType | WalletErrorType;
+
+  type TelegramChoosePeerType = 'users' | 'bots' | 'groups' | 'channels';
+
+  type TranslatableLanguageISO = typeof Languages[number][0];
+
+  type ApiError = {
+    type: ErrorType,
+    stack?: string,
+    message?: string,
+    code?: number,
+    handled?: boolean,
+    originalError?: any,
+  };
+
+  // read it through getElectronHelpers() from @helpers/electronHelpers — a bare `typeof` check also
+  // matches any element whose id happens to be `electronHelpers`, which message content can render
+  const electronHelpers: {
+    openExternal(url): void;
+  } | undefined;
+
+  type DOMRectMinified = {top: number, right: number, bottom: number, left: number};
+  type DOMRectEditable = DOMRectMinified & {width: number, height: number};
+  type MaybePromise<T> = Promise<T> | T;
+  type MaybeDeferredPromise<T> = CancellablePromise<T> | T;
+
+  type WrapSomethingOptions = {
+    lazyLoadQueue?: LazyLoadQueue | false,
+    middleware?: Middleware,
+    customEmojiSize?: MediaSize,
+    textColor?: ValueOrGetter<CustomProperty>,
+    animationGroup?: AnimationItemGroup,
+    managers?: AppManagers
+  };
+}

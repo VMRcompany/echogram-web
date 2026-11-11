@@ -1,0 +1,155 @@
+@use "../scss/mixins" as *;
+
+.Slideshow {
+  --secondary-opacity-max: 1;
+  aspect-ratio: var(--slideshow-aspect-ratio, 16 / 9);
+  max-height: var(--slideshow-max-height, none);
+  width: 100%;
+  position: relative;
+  cursor: pointer;
+  user-select: none; // a drag pages, it does not select
+  background-color: var(--surface-color);
+  z-index: 1;
+  overflow: hidden;
+
+  @include animation-level-global(2) {
+    transition: aspect-ratio var(--transition-standard-in);
+  }
+
+  /* &:before, &:after {
+    position: absolute;
+    content: " ";
+    height: 100%;
+    width:
+  } */
+  @include hover-global() {
+    .Arrow {
+      opacity: 0.2;
+    }
+  }
+
+  &.IsSingle {
+    .Arrow,
+    .Dots {
+      display: none;
+    }
+  }
+
+  &.IsSwiping {
+    .Arrow {
+      opacity: 0 !important;
+    }
+  }
+
+  &.NoArrows {
+    .Arrow {
+      display: none;
+    }
+  }
+}
+
+.Items {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  transform-origin: var(--transform-origin-inline-start) top;
+  transition: transform .2s ease-in-out;
+  position: absolute;
+  inset: 0;
+  // will-change: transform;
+
+  .NoTransition & {
+    transition: none !important;
+  }
+}
+
+.Item {
+  width: inherit;
+  height: 100%;
+  min-width: 100%;
+  display: flex;
+  position: relative;
+}
+
+.Dots {
+  align-items: center;
+  bottom: var(--slideshow-dots-bottom, calc(.75rem * var(--iv-scale, 1)));
+  display: flex;
+  height: calc(.75rem * var(--iv-scale, 1));
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 3;
+
+  @include animation-level-transition(bottom var(--transition-standard-in), opacity var(--transition-standard-in), $global: true);
+}
+
+.Dot {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  flex: 0 0 calc(.75rem * var(--iv-scale, 1));
+  height: calc(.75rem * var(--iv-scale, 1));
+  margin: 0;
+  padding: calc(.1875rem * var(--iv-scale, 1));
+  width: calc(.75rem * var(--iv-scale, 1));
+
+  &::after {
+    background-color: #fff;
+    border-radius: 50%;
+    content: '';
+    display: block;
+    height: 100%;
+    opacity: .4;
+    transition: opacity .2s ease-in-out;
+    width: 100%;
+  }
+
+  &.Active::after {
+    opacity: 1;
+  }
+}
+
+.Arrow {
+  position: absolute;
+  top: 0;
+  inset-inline-start: 0;
+  bottom: 0;
+  width: calc(100% / 3);
+  opacity: 0;
+  z-index: 2;
+
+  @include animation-level-global(1) {
+    transition: opacity .2s ease-in-out;
+  }
+
+  @include hover-global() {
+    opacity: 1 !important;
+  }
+
+  &Icon {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 2.1875rem;
+    color: #fff;
+    inset-inline-start: .625rem;
+  }
+
+  /* .Slideshow:not(.IsSwiping) & {
+    @include hover() {
+      opacity: 1;
+    }
+  } */
+
+  &Next {
+    inset-inline: auto 0;
+
+    .ArrowIcon {
+      inset-inline: auto .625rem;
+    }
+  }
+}

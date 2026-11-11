@@ -1,0 +1,30 @@
+.popup {
+  --popup-width: 26.25rem;
+
+  :global {
+    .popup-body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+  }
+}
+
+.bubbles {
+  width: 100%;
+}
+
+.bubblesContent {
+  padding-block: 1rem;
+}
+
+.bubble {
+  width: calc(100% - 2rem);
+  pointer-events: none;
+}
+
+.text {
+  margin-top: 0.5rem;
+  padding-inline: 1rem;
+  font-size: var(--font-size-15);
+}

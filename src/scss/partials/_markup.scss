@@ -1,0 +1,117 @@
+@use "../shared" as *;
+
+// [contenteditable=true] {
+  // [style*="markup"] {
+  //   font-family: inherit !important;
+  // }
+
+  // [style*="bold"] {
+  //   font-weight: bold;
+  // }
+
+  // [style*="italic"] {
+  //   font-style: italic;
+  // }
+
+  // [style*="underline"] {
+  //   text-decoration-line: underline;
+  // }
+
+  // [style*="strikethrough"] {
+  //   text-decoration-line: line-through;
+  // }
+
+  // [style*="underline"][style*="strikethrough"] {
+  //   text-decoration-line: underline line-through;
+  // }
+
+  // [style*="monospace"] {
+  //   font-family: var(--font-monospace) !important;
+  // }
+
+  // [style*="spoiler"] {
+  //   background-color: var(--spoiler-draft-background-color);
+  // }
+// }
+
+.is-markup {
+  font-family: inherit !important;
+}
+
+.dialog-subtitle-flex,
+.reply-subtitle {
+  sub,
+  sup {
+    line-height: 0;
+  }
+}
+
+[data-markup*="bold"] {
+  font-weight: bold;
+}
+
+[data-markup*="italic"] {
+  font-family: var(--font-serif) !important;
+  font-style: italic;
+}
+
+[data-markup*="underline"] {
+  text-decoration-line: underline;
+}
+
+[data-markup*="strikethrough"] {
+  text-decoration-line: line-through;
+}
+
+[data-markup*="underline"][data-markup*="strikethrough"] {
+  text-decoration-line: underline line-through;
+}
+
+[data-markup*="monospace"] {
+  font-family: var(--font-monospace) !important;
+  color: var(--primary-color);
+
+  // &[data-language] {
+  //   color: var(--primary-color);
+  // }
+}
+
+// * the spoiler in the composer: dust in the colour of its text, which drifts where the animations are in full
+[data-markup*="spoiler"] {
+  $dust: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='32'%3E%3Cfilter id='d'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='1' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 14 0 0 0 -8.6'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23d)'/%3E%3C/svg%3E");
+  background-color: currentColor;
+  -webkit-mask-image: $dust;
+  mask-image: $dust;
+  -webkit-mask-size: 96px 32px;
+  mask-size: 96px 32px;
+
+  @include animation-level(2) {
+    animation: spoiler-dust-drift 1.6s steps(8) infinite;
+  }
+}
+
+@keyframes spoiler-dust-drift {
+  from {
+    -webkit-mask-position: 0 0;
+    mask-position: 0 0;
+  }
+
+  to {
+    -webkit-mask-position: 96px 32px;
+    mask-position: 96px 32px;
+  }
+}
+
+[data-markup*="date"] {
+  color: var(--link-color);
+}
+
+.markup-diff-delete {
+  color: var(--gc-red-text-color);
+  text-decoration: line-through;
+}
+
+.markup-diff-insert {
+  color: var(--gc-blue-text-color);
+  text-decoration: underline;
+}

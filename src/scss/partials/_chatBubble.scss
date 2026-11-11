@@ -1,0 +1,4645 @@
+@use "sass:string";
+@use "sass:math";
+@use "../shared" as *;
+@use "chatVariables" as *;
+
+@keyframes bubbleSelected {
+  0% {
+    opacity: 0;
+  }
+
+  25% {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+// * the gradient of the outgoing bubbles (`--message-out-gradient-image-<phase>`, `none` when the theme gives them one colour)
+// * over a part of one that clips it: a piece of it fixed to the chat's frame (`.bubbles`, whose transform makes it the
+// * box what is fixed in it is laid out in), the vertical one stretched across that from its column a pixel wide, the
+// * freeform one (`--message-out-gradient-freeform: 1`) as wide as the frame. The compositor keeps it in place as the
+// * chat scrolls and draws it from its picture, so a scroll restyles and repaints nothing more. A transform on the
+// * bubble or its wrapper takes the piece in, and it is placed there where the frame is (below)
+@mixin message-out-gradient-piece {
+  content: "";
+  position: fixed;
+  // * where the frame is, against what took the piece in (below)
+  inset: var(--message-out-gradient-top, 0) auto auto var(--message-out-gradient-left, 0);
+  width: calc(1px + (var(--message-out-gradient-width, 100%) - 1px) * var(--message-out-gradient-freeform, 0));
+  height: var(--message-out-gradient-height, 100%);
+  border-radius: 0;
+  background-size: 100% 100%;
+  image-rendering: var(--message-out-gradient-rendering, auto);
+  // * the column across both ways: what took it in may start inside the bubble's tail
+  transform: scaleX(calc(20000 - 19999 * var(--message-out-gradient-freeform, 0)));
+  transform-origin: 50% 0;
+  pointer-events: none;
+}
+
+// * the gradient's phases (`GRADIENT_PHASES`): the freeform one's, the same picture at every one of them otherwise
+$message-out-gradient-phases: 0, 1, 2, 3, 4, 5, 6, 7;
+
+// * no piece of the gradient drawn, nor laid out: a piece is a layer of the compositor's even when it draws nothing
+@mixin message-out-gradient-hidden {
+  --message-out-gradient-display: none;
+  --message-out-gradient-next-display: none;
+}
+
+@mixin message-out-gradient {
+  @supports (clip-path: border-box) {
+    &::before {
+      @include message-out-gradient-piece;
+      // * none without a gradient: a piece is a layer of the compositor's even when it draws nothing
+      display: var(--message-out-gradient-display, none);
+      // * longhands: a shorthand of a `var()` next to one is serialized empty, and the Picture-in-Picture window gets
+      // * the app's styles as text (`mirrorDocumentStyles`)
+      background-image: var(--message-out-gradient-phase-image, var(--message-out-gradient-image-0));
+    }
+
+    // * the freeform gradient's next phase, which comes up over this one as a message is sent and then takes its place
+    // * (`advanceOutgoingMessageGradient`): there from the start, as an opacity changed with the display set is not
+    // * animated
+    &::after {
+      @include message-out-gradient-piece;
+      display: var(--message-out-gradient-next-display, none);
+      background-image: var(--message-out-gradient-next-image, var(--message-out-gradient-image-7));
+      opacity: var(--message-out-gradient-next-opacity, 0);
+      // * the wallpaper's easing (`ChatBackgroundGradientRenderer`, easeOutQuad)
+      transition: opacity var(--message-out-gradient-next-duration, 0ms) cubic-bezier(.25, .46, .45, .94);
+    }
+  }
+}
+
+// * the freeform gradient's phase and its move to the next one, classes of the chat's frame
+// * (`advanceOutgoingMessageGradient`), set on its pieces, not there: a property changed there restyles every message.
+// * The pictures are the nearest theme's, the same one at every phase but the freeform gradient's
+@each $phase in $message-out-gradient-phases {
+  .message-out-gradient-phase-#{$phase} {
+    .bubbles-gradient,
+    .bubble-gradient,
+    .bubble-gradient ~ .bubble-tail {
+      --message-out-gradient-phase-image: var(--message-out-gradient-image-#{$phase});
+      --message-out-gradient-next-image: var(--message-out-gradient-image-#{($phase + 7) % 8});
+    }
+  }
+}
+
+.is-message-out-gradient-advancing {
+  .bubbles-gradient,
+  .bubble-gradient,
+  .bubble-gradient ~ .bubble-tail {
+    --message-out-gradient-next-opacity: 1;
+  }
+}
+
+// * as long as the scroll the wallpaper moves with, in steps of 50ms
+@for $step from 5 through 12 {
+  .message-out-gradient-advance-#{$step * 50} {
+    .bubbles-gradient,
+    .bubble-gradient,
+    .bubble-gradient ~ .bubble-tail {
+      --message-out-gradient-next-duration: #{$step * 50}ms;
+    }
+  }
+}
+
+// * the outgoing bubbles' gradient drawn for a whole chat at once (`OutgoingGradientUnion`): under the list, cut out by
+// * the shapes of the bubbles it is drawn for, which show a piece of their own when they are not cut out
+.bubbles-gradient {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  // * the list's first child, as tall as the list and in sight wherever it is scrolled: the browser would keep it where
+  // * it is rather than a message, and a message above the screen that grows would push the ones in sight down
+  overflow-anchor: none;
+  // * the bubbles' colour under it, as a bubble paints it under its own piece
+  background-color: var(--message-out-gradient-under, var(--message-out-background-color));
+  @include message-out-gradient;
+
+  &.is-empty {
+    @include message-out-gradient-hidden;
+    background: none;
+  }
+
+  // * resized to have the shapes read after the next layout
+  &-sentinel {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 0;
+    visibility: hidden;
+  }
+}
+
+// * the flash a bubble gets when a jump lands on it: the highlight colour comes up and fades away,
+// * over an overlay that is painted with that colour and is taken away afterwards, by the timeout in
+// * `highlightBubble` (BUBBLE_HIGHLIGHT_DURATION, the same 2s). `forwards` is what holds the faded-out
+// * end until it is: the timeout runs in a task, so it is late by a frame at best and by however long
+// * the main thread is busy at worst — and with no fill mode the overlay snaps back to the full colour
+// * it is painted with, blinking once before it goes.
+@mixin bubble-highlight-flash {
+  body:not(.animation-level-0) & {
+    animation: bubbleSelected 2s linear forwards;
+  }
+}
+
+.bubbles-date-group {
+  position: relative;
+
+  /* .sticky_sentinel {
+    visibility: visible;
+    background: #000;
+  } */
+
+  .sticky_sentinel--top {
+    /* Adjust the height and top values based on your on your sticky top position.
+    e.g. make the height bigger and adjust the top so observeHeaders()'s
+    IntersectionObserver fires as soon as the bottom of the sentinel crosses the
+    top of the intersection container. */
+    height: $bubble-overflow-big;
+    top: 0;
+  }
+
+  // .sticky_sentinel--bottom {
+  //   /* Height should match the top of the header when it's at the bottom of the
+  //   intersection container. */
+  //   height: 1px;
+  //   bottom: 0;
+  // }
+}
+
+.bubbles-group {
+  position: relative;
+
+  &-avatar {
+    position: sticky !important;
+    top: 0;
+    bottom: calc(var(--chat-padding-bottom) + var(--chat-input-height-surplus, 0px) + var(--chat-input-keyboard-height, 0px) + #{$bubble-overflow-big} + .25rem);
+    cursor: pointer;
+    pointer-events: all;
+    overflow: hidden;
+
+    @include animation-level(2) {
+      transition: bottom var(--transition-standard-out);
+    }
+
+    .bubbles.is-selecting & {
+      transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+      transform-origin: bottom;
+    }
+
+    &.is-gesturing-reply {
+      transform: translateX(0);
+
+      &.animating.backwards {
+        // keep animating `bottom` too: releasing the swipe on the LAST group fires
+        // `initMessageReply`, which grows the input and shifts `--chat-padding-bottom` (this
+        // avatar is pinned to it) — overriding the transition to `transform` only made that
+        // coincident `bottom` change snap instead of animate, so the avatar jumped vertically.
+        transition: transform var(--transition-standard-out), bottom var(--transition-standard-out);
+      }
+    }
+
+    &-container {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      display: flex;
+      flex-direction: column-reverse;
+
+      // make avatar clickable
+      z-index: 2;
+      pointer-events: none;
+
+      &.avatar-for-reply-markup::before {
+        content: '';
+        display: grid;
+        flex: 0 0 auto;
+        grid-template-rows:
+          $reply-markup-margin-top
+          repeat(var(--reply-markup-row-count), $reply-markup-row-height);
+      }
+    }
+  }
+}
+
+.bubble {
+  --line-height: var(--messages-line-height);
+  --primary-color: var(--message-primary-color);
+  --primary-color-rgb: var(--message-primary-color-rgb);
+  // links are in the accent colour: an outgoing message's own one
+  --link-color: var(--primary-color);
+  --secondary-text-color: var(--message-status-color);
+  --peer-color-rgb: var(--message-primary-color-rgb);
+  --peer-border-background: rgb(var(--peer-color-rgb));
+  --max-width: 100%;
+  position: relative;
+  z-index: 1;
+  margin: 0 auto $bubble-margin;
+  user-select: none;
+  display: flex;
+  flex-wrap: wrap;
+  box-sizing: border-box;
+  //flex-direction: column; // fix 'Unread messages', still need to refactor it
+
+  // * guest-chat messages force the guest bot's avatar even in a 1-on-1 chat (which otherwise
+  // * has no avatar column), so reserve room for it; group chats already indent via .is-chat
+  &.is-guest-chat .bubble-content-wrapper {
+    margin-inline-start: 2.875rem;
+  }
+
+  .is-guest-chat-for {
+    font-weight: var(--font-weight-normal);
+  }
+
+  .bubble-name-chip-container {
+    display: flex !important;
+    align-items: flex-start;
+    justify-content: flex-start;
+    max-width: 100%;
+  }
+
+  .ephemeral-badge-container {
+    margin: $message-padding-top $message-padding-horizontal 0;
+  }
+
+  .ephemeral-badge {
+    display: flex;
+    align-items: center;
+    gap: .25rem;
+    width: fit-content;
+    max-width: 100%;
+    padding: .125rem .375rem;
+    border-radius: .5rem;
+    color: var(--message-primary-color);
+    background-color: rgba(var(--message-primary-color-rgb), .12);
+    font-weight: var(--font-weight-normal);
+    font-size: var(--messages-secondary-text-size);
+    line-height: var(--messages-secondary-line-height);
+    overflow: hidden;
+    user-select: none;
+
+    &-icon {
+      flex: 0 0 auto;
+      font-size: .875rem;
+    }
+
+    &-peer {
+      display: inline;
+      color: inherit;
+      font-weight: var(--font-weight-bold);
+      cursor: pointer;
+    }
+  }
+
+  &.is-ephemeral.just-media,
+  &.is-welcome-first.just-media {
+    .ephemeral-badge-container.ephemeral-badge-standalone {
+      margin: 0;
+      background-color: transparent;
+    }
+
+    .ephemeral-badge {
+      color: #fff;
+      background-color: var(--message-highlighting-color);
+      max-width: 15rem;
+    }
+  }
+
+  &.is-sponsored {
+    --max-width: calc(80% - var(--message-beside-button-margin) * -1) !important;
+    width: 100%;
+    order: 999999;
+    margin-bottom: 0;
+
+    .bubble-content-wrapper {
+      width: 100%;
+    }
+
+    .bubble-content {
+      min-width: string.unquote('min(100%, 15rem)') !important;
+    }
+  }
+
+  // &.is-deleting:after {
+  //   display: none;
+  // }
+
+  &:not(.service) {
+    @include respond-to(not-handhelds) {
+      --max-width: 85%;
+    }
+  }
+
+  @include respond-to(handhelds) {
+    --max-width: calc(100% - var(--message-handhelds-margin)) !important;
+  }
+
+  &.is-gesturing-reply {
+    transform: translateX(0);
+
+    &.animating.backwards {
+      transition: transform var(--transition-standard-out);
+    }
+
+    .bubble-gesture-reply-icon {
+      width: var(--message-beside-button-size);
+      height: var(--message-beside-button-size);
+      position: absolute;
+      top: 50%;
+      inset-inline-end: var(--message-beside-button-margin);
+      transform: translateY(-50%);
+      color: #fff;
+      border-radius: 50%;
+      background-color: var(--message-highlighting-color);
+      opacity: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform: translateY(-50%) scale(0.6);
+      visibility: hidden;
+      font-size: 1.125rem !important;
+
+      @include animation-level(2) {
+        transition: transform .1s ease-in-out;
+      }
+
+      &.is-visible {
+        visibility: visible;
+        // opacity: 1;
+        transform: translateY(-50%) scale(1);
+      }
+
+      // fade the icon out on release instead of dropping it in a single frame (it fades IN via the
+      // inline opacity ramp during the swipe, so match that on the way out)
+      &.is-hiding {
+        opacity: 0 !important;
+
+        @include animation-level(1) {
+          transition: opacity var(--transition-standard-out);
+        }
+      }
+    }
+  }
+
+  &.is-highlighted,
+  &.is-selected,
+  /* .bubbles.is-selecting */ & {
+    &:after {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      /* top: 0;
+      bottom: 0; */
+      top: -#{$bubble-overflow};
+      bottom: -#{$bubble-overflow};
+      content: " ";
+      z-index: -1;
+    }
+  }
+
+  /* &.is-highlighted, &.is-selected {
+    &:not(.is-group-last):after {
+      height: calc(100% + #{$bubble-overflow}) !important;
+    }
+
+    & + &:not(.is-group-last) {
+      &:after {
+        top: .125rem !important;
+        height: calc(100% - #{$bubble-overflow}) !important;
+      }
+    }
+  } */
+
+  // ! if turn this on, there will be an empty space
+  /* &.is-highlighted, &.is-selected {
+    &.is-group-last:after {
+      bottom: #{$bubble-overflow} !important;
+    }
+  } */
+
+  &.is-highlighted:after {
+    //background-color: rgba(0, 132, 255, .3);
+    background-color: var(--message-highlighting-color);
+
+    @include bubble-highlight-flash;
+  }
+
+  &.is-first-unread {
+    @include respond-to(handhelds) {
+      max-width: unset;
+    }
+
+    &:before {
+      content: var(--unread-messages-text);
+      height: 30px;
+      margin-bottom: $bubble-overflow-big;
+      margin-left: -50%;
+      margin-right: -50%;
+      width: 200vw;
+      text-align: center;
+      color: var(--primary-color);
+      line-height: 2.1;
+      font-weight: var(--font-weight-bold);
+      font-size: 15px;
+      background-color: var(--surface-color);
+      z-index: 2;
+      position: relative;
+    }
+
+    &.is-highlighted,
+    &.is-selected,
+    &.is-active {
+      &:after {
+        top: calc(#{$bubble-overflow} + 30px);
+      }
+    }
+  }
+
+  // * `is-active` is the context menu's target, `is-selected` is a selected message — same highlight
+  &.is-selected,
+  &.is-active {
+    &:after {
+      background-color: var(--message-highlighting-color);
+    }
+
+    body:not(.animation-level-0) & {
+      &:after {
+        animation: fade-in-opacity .2s linear forwards;
+      }
+
+      &.backwards:after,
+      &.is-active-backwards:after {
+        animation: fade-in-backwards-opacity .2s linear forwards;
+      }
+    }
+  }
+
+  //&.is-highlighted:after, &.is-first-unread:before, &.is-selected:after {
+  &:after,
+  &:before {
+    width: 100vw;
+    display: block;
+  }
+
+  &.is-multiple-documents {
+    &:before,
+    &:after {
+      display: none;
+    }
+
+    .user-avatar {
+      z-index: 2;
+    }
+  }
+
+  .replies-footer + .poll-message .poll-footer-button {
+    border-radius: 0 !important;
+  }
+
+  &-select-checkbox {
+    z-index: 3;
+    position: absolute;
+    inset-inline-start: 0;
+    display: flex;
+    margin: 0;
+    // the bubble under it is the click target; the checkbox only shows what the selection holds.
+    // A touch device toggles on the press, and a tap's click on the box would tick it back
+    pointer-events: none;
+
+    .checkbox-box-border {
+      border-color: var(--message-checkbox-border-color);
+    }
+
+    .checkbox-box-background {
+      background-color: var(--message-checkbox-color);
+    }
+
+    .checkbox-box-check {
+      use {
+        stroke-width: 3.5;
+      }
+    }
+  }
+
+  & > &-select-checkbox {
+    //bottom: .75rem; // * by avatar
+    // * middle of a one-line bubble — which is also the middle of the avatar beside it (both are
+    // * the same height and sit on the same baseline), so every bubble takes the same offset
+    bottom: .1875rem;
+    /* left: 0;
+    top: 50%;
+    transform: translateY(-50%); */
+    .checkbox-box {
+      box-shadow: 0px 0px 3px 0px rgba(0, 0, 0, .4);
+    }
+  }
+
+  .bubbles.is-selecting &:not(.is-album) {
+    .audio,
+    .document,
+    .attachment,
+    poll-element {
+      pointer-events: none !important;
+    }
+  }
+
+  // ! hide context menu for media on android
+  .bubbles.is-selecting & {
+    img,
+    video,
+    a {
+      pointer-events: none;
+    }
+
+    // * with the a11y layer an album item's spoiler is a button of its own, which would reveal the
+    // * media instead of letting the click select the item - the item's checkbox lies over it too
+    .media-spoiler-container {
+      pointer-events: none;
+    }
+  }
+
+  &-content {
+    //min-width: 60px;
+    min-width: 56px;
+    max-width: 100%;
+    border-start-start-radius: var(--border-start-start-radius);
+    border-start-end-radius: var(--border-start-end-radius);
+    border-end-start-radius: var(--border-end-start-radius);
+    border-end-end-radius: var(--border-end-end-radius);
+    box-shadow: 0 1px 2px 0 rgba(16, 35, 47, .15);
+    position: relative;
+    // display: flex;
+    // flex-direction: column-reverse;
+    // align-items: flex-start;
+    z-index: 2;
+    user-select: none;
+    background-color: var(--message-background-color);
+
+    body.animation-level-0 & {
+      transition: none;
+    }
+
+    /* html.no-touch .bubbles:not(.is-selecting) &,
+    html.is-touch .bubbles.is-selecting:not(.no-select) & {
+      user-select: text;
+    } */
+    html.no-touch body:not(.no-select) .bubbles:not(.is-selecting) &,
+    html.is-touch body:not(.no-select) .bubbles.is-selecting & { // * need no-select on body because chat-input transforms in channels
+      user-select: text;
+    }
+
+    &.hover-reaction-visible {
+      .bubble-beside-button {
+        transform: translateX(calc(1.125rem * var(--reflect)));
+
+        .bubble.is-out & {
+          transform: translateX(calc(-1.125rem * var(--reflect)));
+
+          &.goto-original {
+            transform: translateX(calc(-1.125rem * var(--reflect))) rotate(180deg);
+          }
+        }
+      }
+    }
+
+    &.is-clickable {
+      cursor: pointer;
+    }
+
+    &-background {
+      background-color: inherit;
+      border-radius: inherit;
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+    }
+  }
+
+  &-hover-reaction {
+    --size: 1.875rem;
+    --offset: calc(var(--size) * -.75);
+    position: absolute;
+    inset-inline-end: var(--offset);
+    // bottom: -.0625rem;
+    bottom: 0;
+    width: var(--size);
+    height: 1.625rem;
+    border-radius: var(--size);
+    z-index: 2;
+    background-color: var(--surface-color);
+    cursor: pointer;
+    opacity: 0;
+    transform: scale(.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--menu-box-shadow);
+
+    @include animation-level-transition(opacity var(--btn-corner-transition), transform var(--btn-corner-transition));
+
+    // reduced: it fades where it stands, in and out
+    @include animation-level-below(2) {
+      transform: none;
+    }
+
+    &.is-visible {
+      &.forwards {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    &-sticker {
+      width: 1.125rem;
+      height: 1.125rem;
+      position: relative;
+    }
+  }
+
+  &-slot {
+    &-part {
+      position: absolute;
+      inset: 0;
+    }
+  }
+
+  /* &.with-beside-button &-content {
+    @include respond-to(handhelds) {
+      max-width: calc(100% - var(--message-handhelds-margin)) !important;
+    }
+  } */
+
+  /* &.with-beside-button &-content {
+    margin-right: calc(var(--message-beside-button-margin) * -1);
+  } */
+
+  &.service {
+    max-width: var(--chat-width);
+
+    .bubble-content {
+      margin: 0 auto;
+      max-width: 100%;
+      box-shadow: none;
+    }
+  }
+
+  &.is-date {
+    position: sticky;
+    top: calc(var(--chat-padding-top) + #{$bubble-overflow-big});
+    padding-bottom: #{$bubble-overflow-big + $bubble-margin};
+    z-index: 2;
+    transition: opacity .3s ease;
+    opacity: .99999; // for safari
+    pointer-events: none;
+    font-weight: var(--font-weight-bold);
+
+    &:before,
+    &:after {
+      display: none;
+    }
+
+    body.animation-level-0 & {
+      transition: none;
+    }
+
+    &.is-sticky {
+      opacity: .00001; // for safari
+
+      .bubbles-inner:not(.is-scrolling) & {
+        .bubble-content {
+          cursor: default;
+        }
+      }
+    }
+
+    .can-click-date & .bubble-content {
+      cursor: pointer;
+      pointer-events: all;
+    }
+
+    .bubbles:not(.has-sticky-dates) & {
+      visibility: hidden;
+    }
+
+    .bubbles.has-sticky-dates &.is-fake {
+      display: none;
+    }
+
+    &.is-fake {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 100%;
+      transform: translateX(-50%);
+      opacity: 1 !important;
+      transition: none !important;
+      visibility: visible !important;
+    }
+  }
+
+  &-beside-button {
+    position: absolute;
+    inset-inline-end: var(--message-beside-button-margin);
+    bottom: 0;
+    width: var(--message-beside-button-size);
+    height: var(--message-beside-button-size);
+    font-size: 1.5rem;
+    align-items: center;
+    display: flex;
+    justify-content: center;
+    color: var(--badge-text-color);
+    border-radius: 50%;
+    //background: rgba(0, 0, 0, .16);
+    background: var(--message-highlighting-color);
+    cursor: pointer;
+    transform: translateX(0);
+    user-select: none;
+
+    &--not-last {
+      transform: unset !important;
+    }
+
+    &-top {
+      inset-block: .375rem auto;
+    }
+
+    html.no-touch &.with-hover {
+      opacity: 0;
+    }
+
+    html.no-touch body.animation-level-1 & {
+      transition: opacity .2s ease-in-out;
+    }
+
+    html.no-touch body.animation-level-2 & {
+      transition: opacity .2s ease-in-out, transform .2s ease-in-out;
+    }
+
+    &--transcribe {
+      font-size: 1.375rem;
+    }
+
+    &--lifted {
+      bottom: calc(var(--message-beside-button-size) + 0.25rem);
+    }
+
+    .with-beside-replies &--lifted {
+      bottom: 0;
+      inset-inline-end: calc(var(--message-beside-button-margin) - var(--message-beside-button-size) - 0.25rem);
+    }
+  }
+
+  &-view-button {
+    --ripple-color: rgba(var(--peer-color-rgb), .1);
+    border-radius: 6px;
+    // color: var(--message-primary-color);
+    color: rgb(var(--peer-color-rgb));
+    height: 2.5rem;
+    margin: 0 0.5625rem .25rem;
+    width: calc(100% - 1.125rem);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none !important;
+    padding: 0 .375rem;
+    background-color: rgba(var(--peer-color-rgb), .1);
+
+    &-text {
+      @include text-overflow(true);
+    }
+
+    @include hover() {
+      background-color: rgba(var(--peer-color-rgb), .2);
+    }
+
+    .message & {
+      margin: .375rem 0 -.375rem;
+      width: 100%;
+      max-width: 100%;
+
+      @include text-overflow(true);
+    }
+  }
+
+  @include hover() {
+    .bubble-beside-button {
+      opacity: 1;
+    }
+  }
+
+  .forward {
+    font-size: 1.25rem;
+  }
+
+  .summarize {
+    position: sticky;
+    // --chat-padding-top clears the topbar + floating plates so the sticky button
+    // isn't hidden behind them (same baseline as sticky .is-date labels).
+    top: calc(var(--chat-padding-top) + .5rem);
+    // bottom: calc(var(--message-beside-button-size) + var(--message-beside-button-margin));
+    // inset-inline-end: var(--message-beside-button-margin);
+
+    &-container {
+      position: absolute;
+      top: 0;
+      bottom: calc(var(--message-beside-button-margin) * -1);
+      inset-inline-end: var(--message-beside-button-margin);
+
+      &.is-last-button {
+        bottom: 0;
+      }
+    }
+  }
+
+  &.is-group-last {
+    margin-bottom: #{$bubble-margin-big};
+
+    &:after {
+      bottom: -#{$bubble-overflow-big};
+    }
+  }
+
+  &.is-group-first {
+    &:after {
+      top: -#{$bubble-overflow-big};
+    }
+  }
+
+  &:not(.forwarded):not(.must-have-name) {
+    &:not(.is-group-first) {
+      .name {
+      // .bubble-content > .name,
+      // .document-wrapper > .name {
+        display: none;
+      }
+    }
+  }
+
+  &:not(.forwarded) {
+    &:not(.is-group-first) {
+      .name-first-line {
+        display: none;
+      }
+    }
+  }
+
+  &.photo,
+  &.video {
+    .bubble-content {
+      width: min-content;
+    }
+  }
+
+  &.emoji-big .emoji-image {
+    height: 1.125rem;
+    width: 1.125rem;
+    vertical-align: bottom;
+  }
+
+  .thumbnail {
+    position: absolute;
+  }
+
+  .canvas-thumbnail {
+    border-radius: inherit;
+  }
+
+  .canvas-dots {
+    z-index: 1;
+  }
+
+  &.emoji-big {
+    --emoji-size: 1rem;
+    font-size: 0;
+
+    .bubble-content {
+      line-height: 1;
+    }
+
+    .attachment {
+      --custom-emoji-size: var(--emoji-size);
+      border-radius: 0 !important;
+
+      .emoji-image {
+        width: var(--emoji-size);
+        height: var(--emoji-size);
+        max-width: 64px;
+        max-height: 64px;
+      }
+
+      .custom-emoji,
+      .emoji {
+        display: inline-block;
+      }
+    }
+
+    &:not(.sticker) {
+      .attachment {
+        padding-top: .25rem;
+        padding-bottom: 1.25rem;
+        //max-width: fit-content!important;
+        max-height: fit-content!important;
+
+        display: block;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: var(--emoji-size);
+
+        .emoji-native {
+          height: auto;
+          width: auto;
+        }
+      }
+
+      .message {
+        margin-top: -1.125rem;
+      }
+
+      .bubble-content {
+        max-width: string.unquote('min(420px, 100%)');
+      }
+    }
+  }
+
+  &.just-media {
+    --message-time-background: var(--message-highlighting-color);
+
+    .bubble-content {
+      background: none!important;
+      box-shadow: none;
+    }
+
+    img {
+      object-fit: contain;
+    }
+
+    .time {
+      inset-inline-end: 0;
+    }
+  }
+
+  &.sticker,
+  &.emoji-big:not(.sticker) {
+    .bubble-content {
+      align-self: flex-start;
+    }
+
+    .message {
+      position: relative !important;
+      margin-inline-start: auto;
+      inset-inline-end: 0 !important;
+    }
+  }
+
+  &.sticker {
+    .attachment {
+      position: absolute;
+      border-radius: 0;
+      z-index: 1;
+
+      // * a sensitive one stands blurred under its warning until it is revealed
+      &.is-sensitive-sticker {
+        > img,
+        > canvas,
+        > video,
+        > svg {
+          @include animation-level(1) {
+            transition: filter var(--transition-standard-out);
+          }
+        }
+      }
+
+      &.is-blurred {
+        > img,
+        > canvas,
+        > video,
+        > svg {
+          filter: blur(1.25rem);
+        }
+      }
+
+      // * a premium one's art faces the middle of the chat (reflect-x-at-*), its warning reads as it is
+      &.reflect-x-at-start .sensitive-content-warning {
+        transform: translate(-50%, -50%) scaleX(-1);
+
+        .is-rtl & {
+          transform: translate(-50%, -50%);
+        }
+      }
+
+      .is-rtl &.reflect-x-at-end .sensitive-content-warning {
+        transform: translate(-50%, -50%) scaleX(-1);
+      }
+    }
+  }
+
+  &.round {
+    .attachment {
+      max-width: var(--round-video-size) !important;
+      max-height: var(--round-video-size) !important;
+      // border-radius: 50%;
+      // width: var(--round-video-size) !important;
+      // height: var(--round-video-size) !important;
+    }
+
+    .media-photo,
+    .media-video {
+      border-radius: 50% !important;
+      pointer-events: none;
+    }
+
+    // * a sensitive one is covered as round as it is
+    .media-spoiler-container {
+      border-radius: 50%;
+      overflow: hidden;
+    }
+  }
+
+  &:not(.emoji-big) .attachment {
+    font-size: 0;
+  }
+
+  .attachment {
+    max-width: 100%;
+    border-start-start-radius: var(--border-start-start-radius);
+    border-start-end-radius: var(--border-start-end-radius);
+    border-end-start-radius: var(--border-end-start-radius);
+    border-end-end-radius: var(--border-end-end-radius);
+    overflow: hidden;
+    user-select: none;
+
+    //-webkit-mask-image: -webkit-radial-gradient(circle, white 100%, black 100%); // fix safari overflow
+
+    display: flex; // lol
+    justify-content: center;
+    position: relative;
+    cursor: pointer;
+
+    img,
+    video {
+      max-width: 100%;
+    }
+
+    .preloader-container {
+      & ~ .video-play {
+        display: none;
+      }
+    }
+
+    &.no-background {
+      background: none !important;
+    }
+
+    &.no-brt {
+      --border-start-start-radius: 0;
+      --border-start-end-radius: 0;
+    }
+
+    &.no-brb {
+      --border-end-start-radius: 0;
+      --border-end-end-radius: 0;
+    }
+  }
+
+  &.must-have-name .attachment {
+    --border-start-start-radius: 0;
+    --border-start-end-radius: 0;
+  }
+
+  .media-container {
+    &-aspecter {
+      position: relative;
+      margin: 0 auto;
+      z-index: 1;
+      // * a picture fitted into the box stays inside the box's frame (the border of a photo or a
+      // * video): cut off by it, the bubble showed less than the media viewer and the peek open from
+      // * and close back into
+      max-height: 100%;
+    }
+
+    &-fitted {
+      background-color: transparent !important;
+
+      > .thumbnail {
+        opacity: .8;
+
+        &.fade-in {
+          animation: thumbnail-fade-in-opacity .2s ease-in-out forwards;
+        }
+      }
+    }
+  }
+
+  .preloader-container {
+    z-index: 2;
+  }
+
+  &:not(.sticker) {
+    .attachment {
+      max-width: string.unquote('min(420px, 100%)');
+      max-height: string.unquote('min(400px, 100%)');
+
+      width: max-content;
+    }
+  }
+
+  // An HTML widget: as wide as it was sent (`width` on the attachment), else as wide as a bubble may be;
+  // as tall as its content or its declared height. It has no intrinsic size, so the media limits above do
+  // not apply.
+  &.widget-message {
+    // the content too: an outgoing one (pushed to the end by its margin) is not stretched, and a widget, as wide as its
+    // box, would take the width it started at
+    &.is-full-width {
+      .bubble-content-wrapper,
+      .bubble-content {
+        width: 100%;
+      }
+    }
+
+    .attachment {
+      width: 100%;
+      max-width: 100%;
+      max-height: none;
+    }
+
+    // the network marker explains itself on a tap, and on hover (its title): a time icon takes no pointer otherwise
+    .time-widget-network {
+      cursor: pointer;
+      pointer-events: auto;
+    }
+  }
+
+  img:not(.emoji):not(.custom-emoji-placeholder),
+  video {
+    object-fit: cover;
+    width: 100%;
+    height: 100%;
+
+    .is-safari & {
+      border-radius: inherit;
+    }
+  }
+
+  &.is-album {
+    .attachment {
+      max-width: string.unquote('min(451px, 100%)');
+      max-height: none;
+      //overflow: hidden;
+    }
+  }
+
+  .album-item {
+    background-color: var(--message-highlighting-color);
+    max-width: 100%;
+    cursor: pointer;
+    position: absolute;
+    overflow: hidden;
+
+    @include animation-level(0) {
+      transition: none !important;
+    }
+
+    /* .bubbles.is-selecting & {
+      -webkit-mask-image: -webkit-radial-gradient(circle, white 100%, black 100%); // fix safari overflow
+    } */
+
+    &-media { // * fix overflow for handhelds
+      border-radius: inherit;
+
+      @include animation-level(0) {
+        transition: none !important;
+      }
+    }
+
+    .bubble-select-checkbox {
+      bottom: auto !important;
+      inset-inline: auto .5rem;
+      top: .5rem;
+    }
+
+    // * the item a jump lands on: the flash a bubble gets, over the photo of this one item — and
+    // * over its spoiler cover, which takes the same level earlier in the tree
+    &.is-highlighted:after {
+      content: " ";
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      border-radius: inherit;
+      background-color: var(--message-highlighting-color);
+      pointer-events: none;
+
+      @include bubble-highlight-flash;
+    }
+
+    // * the selection drives its state with SetTransition (`forwards` while in, `animating` +
+    // * `backwards` while out), the context menu's target with its own pair of classes
+    &.is-selected,
+    &.is-active {
+      border-radius: 0;
+
+      .album-item-media {
+        transform: scale(1);
+      }
+
+      &.animating,
+      &.is-active-backwards {
+        transition: border-radius var(--transition-standard-out);
+
+        .album-item-media {
+          transition: transform var(--transition-standard-out), border-radius var(--transition-standard-out);
+        }
+      }
+
+      &.forwards,
+      &.is-active:not(.is-active-backwards) {
+        transition: border-radius var(--transition-standard-in);
+
+        .album-item-media {
+          transition: transform var(--transition-standard-in), border-radius var(--transition-standard-in);
+          transform: scale(.883333);
+        }
+
+        &, .album-item-media {
+          //border-radius: .5rem;
+          border-radius: 0;
+        }
+      }
+    }
+  }
+
+  &-first {
+    --border-start-start-radius: #{$bubble-border-radius-big};
+    --border-start-end-radius: #{$bubble-border-radius-big};
+    --border-end-end-radius: #{$bubble-border-radius-big};
+    --border-end-start-radius: #{$bubble-border-radius-big};
+    order: -1;
+    margin-top: .5rem;
+    justify-content: center;
+    align-items: center;
+    max-width: 100%;
+
+    @include animation-level(0) {
+      flex: 1 1 auto;
+    }
+
+    .attachment {
+      pointer-events: none;
+    }
+
+    .bubble-content-wrapper {
+      max-width: 100%;
+    }
+
+    .time {
+      display: none !important;
+    }
+
+    &:before,
+    &:after {
+      display: none;
+    }
+  }
+
+  .document {
+    &-name {
+      font-size: var(--messages-text-size);
+    }
+
+    &-size {
+      font-size: var(--messages-secondary-text-size);
+    }
+  }
+
+  &.is-square-photo {
+    .bubble-content {
+      width: fit-content;
+    }
+  }
+
+  .reply.is-expired-story {
+    .reply-subtitle {
+      color: var(--primary-color);
+    }
+  }
+
+  .reply {
+    --font-size: var(--messages-secondary-text-size);
+    // min-width: string.unquote("max(120px, calc(100% - 1rem))");
+    // max-width: calc(100% - 1rem);
+    margin: 0 $reply-padding-horizontal .5rem;
+
+    &.mb-shorter {
+      margin-bottom: -.125rem;
+    }
+
+    &-summary {
+      margin-inline: 0;
+      margin-bottom: .25rem;
+
+      .sparkles-container {
+        color: rgb(var(--peer-color-rgb));
+      }
+    }
+  }
+
+  &.just-media {
+    .floating-part {
+      --primary-color: #fff;
+      --primary-color-rgb: 255, 255, 255;
+      --link-plate-color: #{$link-plate-service-color};
+      --ripple-color: rgba(var(--primary-color-rgb), .1);
+      // padding: .375rem .5rem;
+      border-radius: .25rem;
+      position: absolute;
+      top: 0;
+      // margin-bottom: 0;
+      margin: 0;
+      background-color: var(--message-highlighting-color);
+      white-space: nowrap;
+      max-width: 15rem;
+
+      @include respond-to(handhelds) {
+        max-width: calc(100vw - var(--chat-bubbles-padding) * 2 - 10px - 100%);
+      }
+    }
+
+    .name {
+      color: #fff !important;
+      padding: .375rem .625rem;
+      line-height: var(--line-height);
+
+      // .peer-title {
+      //   font-weight: var(--font-weight-normal) !important;
+      //   // pointer-events: none;
+      // }
+    }
+
+    .bubble-name-rank {
+      display: none;
+    }
+
+    .reply {
+      width: max-content;
+      // @include respond-to(handhelds) {
+      //   padding: 8px 6px 8px 8px;
+      // }
+
+      &-content {
+        margin-top: 0;
+        position: relative;
+        max-width: none !important;
+      }
+
+      &-title,
+      &-subtitle,
+      i {
+        color: var(--primary-color) !important;
+      }
+
+      &-subtitle {
+        overflow: hidden;
+      }
+
+      @include hover() {
+        background-color: var(--message-highlighting-hover-color);
+      }
+    }
+
+    .name-with-reply {
+      border-radius: $bubble-border-radius-big;
+      padding: .375rem .5rem;
+    }
+  }
+
+  .message,
+  .service-msg {
+    --custom-emoji-size: var(--messages-custom-emoji-size);
+  }
+
+  .message {
+    font-size: var(--messages-text-size);
+    margin: $message-padding-top $message-padding-horizontal $message-padding-bottom;
+    max-width: 100%;
+    color: var(--primary-text-color);
+    line-height: var(--line-height); // 21 / 16
+    word-break: break-word;
+    white-space: pre-wrap; // * fix spaces on line begin
+    position: relative;
+
+    .custom-emoji {
+      display: inline-flex; // fix RTL thumb absolute position
+    }
+
+    &.mt-bigger {
+      margin-top: $message-padding-horizontal;
+    }
+
+    &.mt-shorter {
+      margin-top: #{$message-padding-top - 2px};
+    }
+
+    &.mb-shorter {
+      margin-bottom: #{$message-padding-bottom - 2px};
+    }
+
+    &.margin-bigger {
+      margin: $message-padding-horizontal;
+    }
+
+    &.is-hovering-spoiler {
+      cursor: pointer;
+    }
+  }
+
+  .next-is-message {
+    margin-bottom: #{-$message-padding-top} !important;
+  }
+
+  &.audio-message {
+    --max-content-width: 335px;
+
+    .audio {
+      width: var(--max-content-width);
+    }
+  }
+
+  &.voice-message {
+    --max-content-width: 364px;
+
+    .document-message {
+      max-width: fit-content;
+    }
+  }
+
+  &.min-content {
+    .bubble-content {
+      width: min-content;
+    }
+  }
+
+  &.audio-message,
+  &.voice-message,
+  &.document-message {
+    .bubble-content > .name {
+      margin-bottom: -.25rem;
+    }
+  }
+
+  &.is-single-document {
+    .document {
+      margin-top: .5rem;
+      margin-bottom: .5rem;
+    }
+
+    .document {
+      .time-inner {
+        margin-bottom: -3px;
+      }
+    }
+  }
+
+  .audio {
+    --padding-left: 4rem;
+    // * offset the .message inner padding
+    margin: -.25rem -.5rem;
+    user-select: none; // * because it's inside of .message that has user-select: text;
+
+    &-title {
+      font-weight: var(--font-weight-bold);
+    }
+
+    &-ico {
+      font-size: 0;
+    }
+
+    &-animated-icon {
+      color: var(--message-icon-text-color) !important;
+    }
+
+    .time {
+      position: absolute;
+      bottom: 4px;
+      inset-inline-end: 8px;
+    }
+  }
+
+  .message.expired-story-message {
+    .reply {
+      pointer-events: none;
+      margin: 4px -4px 0 !important;
+    }
+
+    &.is-empty {
+      .reply {
+        margin-top: 0 !important;
+        margin-inline-end: 2.5rem !important;
+        background-color: transparent;
+
+        &-content {
+          margin-inline-start: .375rem;
+        }
+      }
+
+      .time {
+        height: 0;
+      }
+    }
+  }
+
+  &.call-message {
+    --min-content-width: 200px;
+  }
+
+  &.document-message {
+    --max-content-width: 325px;
+  }
+
+  &-call {
+    cursor: pointer;
+    padding: .125rem 0;
+    // The icon hangs off the end of the block, the way every official client
+    // draws it — tdesktop paints it at `paintw - historyCallIconPosition.x`
+    // (history_view_call.cpp:120), iOS at `boundingWidth - width - 8`
+    // (ChatMessageCallBubbleContentNode.swift:351).
+    padding-inline-start: .125rem;
+    padding-inline-end: 3.5625rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+    user-select: none;
+
+    &-icon {
+      position: absolute;
+      inset-inline-end: .3125rem;
+      inset-block: 0;
+      height: 1.5rem;
+      margin-block: auto;
+      font-size: 1.5rem;
+      color: var(--primary-color);
+    }
+
+    &-title {
+      font-weight: var(--font-weight-bold);
+    }
+
+    &-arrow {
+      display: inline-block;
+      transform: rotate(135deg);
+      font-size: 1rem;
+
+      &-red {
+        color: var(--danger-color);
+      }
+
+      &-green {
+        color: var(--message-out-primary-color);
+      }
+    }
+
+    &-subtitle {
+      font-size: var(--messages-secondary-text-size);
+      color: var(--secondary-text-color);
+      display: flex;
+      align-items: center;
+      margin-top: .0625rem;
+      margin-inline-start: -.1875rem;
+      line-height: var(--messages-secondary-line-height);
+    }
+
+    &-status {
+      white-space: nowrap;
+    }
+
+    // Who was on the call — iOS puts their faces and a count on the status line
+    // (ChatMessageCallBubbleContentNode.swift:246-345), Android the same
+    // (ChatMessageCell.java:8896-8926). Insets are iOS' avatarsLeft/RightInset.
+    &-participants {
+      display: flex;
+      align-items: center;
+      flex: 0 0 auto;
+      margin-inline-start: .3125rem;
+
+      .stacked-avatars {
+        // The rings punch through to the bubble, not to the surface behind it.
+        --border-color: var(--message-background-color);
+        margin-inline-end: .3125rem;
+      }
+    }
+  }
+
+  .document-message {
+    margin-top: .4375rem;
+  }
+
+  .document {
+    --icon-margin: .75rem;
+
+    // @include respond-to(handhelds) {
+    //   --icon-margin: .5rem;
+
+    //   .document-size {
+    //     font-size: .75rem;
+    //   }
+
+    //   &:not(.document-with-thumb) .document-ico {
+    //     padding: 1.125rem 0 0 0;
+    //   }
+    // }
+
+    &-name {
+      line-height: 1.4;
+      margin-top: 1px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .time {
+      height: 0;
+      align-self: flex-start;
+    }
+  }
+
+  &.is-multiple-documents {
+    .message {
+      padding: 0 $message-padding-horizontal !important;
+      margin: 0 !important;
+      border-radius: inherit;
+    }
+
+    .reply {
+      margin: 0 0 .5rem !important;
+    }
+
+    .document-container {
+      position: relative;
+      border-radius: inherit;
+      padding: .25rem 0;
+
+      .document-selection {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        z-index: -2;
+        width: 200vw;
+        left: -75vw;
+      }
+
+      &.is-highlighted,
+      &.is-selected,
+      &.is-active {
+        .document-wrapper {
+          &:before {
+            content: " ";
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            background-color: var(--message-background-color);
+            border-radius: inherit;
+            z-index: -1;
+          }
+        }
+      }
+
+      &.is-highlighted {
+        .document-selection {
+          background-color: var(--message-highlighting-color);
+
+          @include bubble-highlight-flash;
+        }
+      }
+
+      &.is-selected,
+      &.is-active {
+        .document-selection {
+          background-color: var(--message-highlighting-color);
+        }
+
+        body:not(.animation-level-0) & {
+          .document-selection/* ,
+          .document-wrapper:before */ {
+            animation: fade-in-opacity .2s linear forwards;
+          }
+
+          &.backwards,
+          &.is-active-backwards {
+            .document-selection/* ,
+            .document-wrapper:before */ {
+              animation: fade-in-backwards-opacity .2s linear forwards;
+            }
+          }
+        }
+      }
+
+      &.is-first {
+        .document-selection {
+          top: #{-$bubble-overflow}; // * padding inner + half padding outer
+        }
+
+        .document-wrapper {
+          border-start-start-radius: inherit;
+          border-start-end-radius: inherit;
+        }
+      }
+
+      &.is-last {
+        padding-bottom: $message-padding-bottom;
+
+        .document-selection {
+          bottom: #{-$bubble-overflow};
+        }
+
+        .document-wrapper {
+          border-end-start-radius: inherit;
+          border-end-end-radius: inherit;
+        }
+      }
+    }
+
+    &.is-group-first .document-container.is-first {
+      .document-selection {
+        top: #{-$bubble-overflow-big};
+      }
+    }
+
+    &.is-group-last .document-container.is-last {
+      .document-selection {
+        bottom: #{-$bubble-overflow-big};
+      }
+    }
+
+    .document-wrapper {
+      > .name {
+        margin: -.125rem 0 .25rem;
+      }
+    }
+
+    // .document,
+    // .audio {
+    //   .time-inner {
+    //     position: relative;
+    //     bottom:
+    //   }
+    // }
+
+    .time-inner {
+      margin-bottom: 5px !important;
+    }
+
+    .reactions-tag {
+      margin-bottom: .125rem !important;
+    }
+
+    // .document-message {
+    //   .time-inner {
+    //     margin-bottom: -4px !important;
+    //   }
+    // }
+  }
+
+  &.poll-message {
+    .message {
+      margin: 0 !important;
+    }
+
+    .reactions-block {
+      margin-block: -1rem 0.375rem;
+      margin-inline: 0.25rem 0.5rem;
+    }
+  }
+
+  .document {
+    height: 54px !important;
+
+    // @include respond-to(handhelds) {
+    //   height: 38px !important;
+    // }
+  }
+
+  &.poll-message {
+    .time {
+      position: absolute;
+      inset-inline-end: 8px;
+      bottom: 5px;
+    }
+  }
+
+  &.is-message-empty {
+    .bubble-content-wrapper {
+      width: min-content;
+    }
+
+    &:not(.emoji-big) {
+      .reactions-like-block {
+        max-width: fit-content;
+      }
+    }
+
+    .reaction-like-block {
+      --chosen-background-color: var(--primary-color);
+    }
+
+    .reaction-tag-dot {
+      background-color: var(--counter-color) !important;
+      opacity: .4;
+    }
+
+    .reaction-block {
+      &:not(.is-chosen) {
+        @include hover() {
+          &:after {
+            background-color: #fff;
+          }
+        }
+      }
+    }
+  }
+
+  &.with-reply-markup {
+    .bubble-content {
+      min-width: 100%;
+    }
+  }
+
+  &.with-replies .attachment {
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+  }
+
+  &.with-beside-replies .bubble-content {
+    min-height: 5.5rem;
+  }
+
+  .colored-name {
+    color: rgb(var(--peer-color-rgb)) !important;
+
+    .premium-icon,
+    .emoji-status-text-color {
+      opacity: .6;
+      color: inherit;
+    }
+  }
+
+  .time {
+    visibility: hidden; // * can't use color transparent here, because in name can be emoji
+    font-size: var(--messages-time-text-size);
+    height: var(--messages-time-text-size);
+    user-select: none;
+    line-height: 1;
+    vertical-align: middle;
+    pointer-events: none; // do not show title
+    display: inline-flex;
+    z-index: 1;
+    /* display: inline-flex;
+    align-items: center; */
+    cursor: pointer;
+    margin-inline-start: .1875rem;
+    direction: ltr; // * rtl fix
+    float: right;   // * rtl fix
+
+    // * the line's end, which is the left in RTL (`float: inline-end` is not on our targets)
+    .is-rtl & {
+      float: left;
+      direction: inherit;
+    }
+
+    &-sending-status {
+      order: 5;
+      font-size: calc(var(--messages-text-size) + 3px);
+      //vertical-align: middle;
+      // margin-left: 1px;
+      line-height: var(--messages-time-text-size); // of message
+      color: var(--message-status-color);
+    }
+
+    &-part {
+      font-size: 1.125rem;
+      margin-inline-end: .375rem;
+    }
+
+    &-pinned {
+      margin-inline-end: .125rem;
+    }
+
+    &-repeat {
+      margin-inline-end: .25rem;
+    }
+
+    &-icon {
+      pointer-events: none;
+      height: 1.125rem;
+
+      &-views {
+        margin-inline-start: 2px;
+      }
+    }
+
+    &-edited, &-repeat {
+      overflow: visible;
+      font-size: inherit;
+    }
+
+    &-inner {
+      pointer-events: all;
+      position: absolute;
+      // bottom: 0;
+      inset-inline-end: 0;
+      display: flex;
+      align-items: center;
+      line-height: 1;
+      padding: inherit;
+      white-space: nowrap;
+      height: var(--messages-time-text-size); // * as font-size
+      visibility: visible;
+      color: var(--message-time-color);
+      bottom: #{$message-padding-bottom - 6px};
+    }
+
+    &-replies {
+      margin-inline-end: .375rem;
+      order: -1;
+      display: inline-flex;
+
+      &-icon {
+        margin-inline-start: .125rem;
+        font-size: 12px;
+        height: 12px;
+      }
+    }
+
+    &-post-author {
+      // * the time runs the way the UI does (see `direction` above), so its end is a physical side
+      &-comma {
+        float: right;
+        direction: ltr;
+
+        .is-rtl & {
+          float: left;
+        }
+      }
+    }
+
+    &-effect {
+      width: .75rem;
+      height: .75rem;
+      position: relative;
+      margin-inline-end: .125rem;
+    }
+
+    &.is-block {
+      float: none;
+      display: block;
+    }
+
+    &.is-floating {
+      @include floating-time;
+      margin-left: 0;
+      align-items: center;
+      padding: 0 .3125rem !important;
+      margin: 0 !important;
+      max-width: inherit;
+      opacity: 1;
+
+      @include animation-level(1) {
+        transition: opacity var(--transition-standard-in);
+      }
+
+      .time-inner {
+        @include floating-time-backing;
+        margin: inherit;
+        max-width: inherit;
+        // padding: 0 .3125rem;
+        height: inherit;
+        bottom: 0 !important;
+      }
+
+      .time-sending-status {
+        color: currentColor;
+      }
+
+      .time-post-author {
+        @include text-overflow();
+      }
+    }
+
+    & + .clearfix {
+      display: table;
+    }
+  }
+
+  .clearfix {
+    display: none;
+  }
+
+  &.has-webpage:not(.invert-media) .time {
+    float: none;
+  }
+
+  &.with-replies:not(.sticker):not(.with-beside-replies) .time.is-floating {
+    bottom: 53px;
+  }
+
+  &.sticker,
+  &.with-replies.round,
+  &.emoji-big {
+    .time {
+      bottom: 0 !important;
+      inset-inline-end: 0 !important;
+    }
+  }
+
+  .video-time,
+  .video-play {
+    pointer-events: none;
+  }
+
+  .video-time {
+    --height: calc(var(--messages-time-text-size) + .375rem);
+    position: absolute;
+    top: 3px;
+    inset-inline-start: 3px;
+    border-radius: var(--height);
+    background-color: var(--message-time-background);
+    padding: 0px 6px;
+    z-index: 2;
+    font-size: var(--messages-time-text-size);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    user-select: none;
+    height: var(--height);
+    line-height: 1;
+    opacity: 1;
+
+    @include animation-level(1) {
+      transition: opacity var(--transition-standard-in);
+    }
+
+    &-icon {
+      // * same as .iconVolume
+      order: 1;
+      padding-block: 0;
+      padding-inline: 3px 1px;
+      font-size: calc(var(--messages-time-text-size) + 8px);
+      color: #fff;
+    }
+
+    &.is-error .video-time-icon {
+      font-size: calc(var(--messages-time-text-size) + 4px);
+      padding: 0;
+      margin-inline-start: 1px;
+    }
+
+    &.other-side {
+      inset-inline: auto 3px;
+    }
+  }
+
+  &.show-controls {
+    .video-time {
+      opacity: 0;
+    }
+  }
+
+  // * mini player section
+
+  &.show-controls .time.is-floating {
+    opacity: 0;
+  }
+
+  .ckin__fullscreen {
+    border: none !important;
+
+    .media-photo {
+      display: none;
+    }
+
+    .media-container-aspecter {
+      width: 100% !important;
+      height: 100% !important;
+    }
+  }
+
+  .video-to-viewer {
+    color: #fff;
+    position: absolute;
+    top: .125rem;
+    inset-inline-end: .125rem;
+    z-index: 2;
+    background-color: var(--message-time-background);
+
+    @include hover() {
+      background-color: rgba(0, 0, 0, .6);
+    }
+  }
+
+  // * mini player section end
+
+  // a rich message's link button is drawn as a button
+  .anchor-url:not(.rich-button-link) {
+    text-decoration: underline;
+  }
+
+  // in a dark theme an outgoing message's links are as white as its text: every kind of them is told
+  // apart by its underline, as iOS does it
+  .night &.is-out .message a:not(.peer-title):not(.rich-button-link) {
+    text-decoration: underline;
+  }
+
+  .video-play {
+    background-color: var(--message-time-background);
+    color: #fff;
+    text-align: center;
+    font-size: 2.125rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+  }
+
+  .peer-title {
+    cursor: pointer;
+    flex: 0 0 auto;
+    max-width: 100%;
+  }
+
+  .name {
+    margin: $message-padding-top $message-padding-horizontal 0;
+    font-weight: var(--font-weight-bold) !important;
+    color: rgb(var(--peer-color-rgb, var(--primary-color-rgb)));
+    font-size: var(--messages-secondary-text-size);
+    line-height: calc(var(--messages-secondary-text-size) + .25rem);
+    max-width: 100%;
+    // cut off for the ellipsis, but not the ripple of a held name, whose plate reaches past its text
+    // (helpers/dom/linkPress.ts); `clip` makes no formatting context of its own, `flow-root` does
+    display: flow-root;
+    overflow: clip;
+    overflow-clip-margin: $link-plate-bleed;
+    text-overflow: ellipsis;
+    user-select: none;
+
+    .badge-fake {
+      display: inline-block;
+      vertical-align: text-bottom;
+    }
+
+    // a name with icons is a flex row: it hugs them as a plain name hugs its text, so that what is
+    // pressed (the ripple of helpers/dom/linkPress.ts) and clicked is the name, not the whole line
+    > .peer-title.with-icons,
+    .name-first-line > .peer-title.with-icons {
+      width: fit-content;
+    }
+  }
+
+  &-name-forwarded {
+    font-weight: var(--font-weight-normal);
+
+    .peer-title {
+      font-weight: var(--font-weight-bold);
+    }
+
+    &-avatar {
+      display: inline-block;
+      vertical-align: bottom;
+      margin-inline-end: .25rem;
+      cursor: pointer;
+    }
+  }
+
+  .title-flex {
+    display: flex;
+    // align-items: center;
+    max-width: inherit;
+    overflow: inherit;
+    // the margin `.name` clips with (it is not inherited by itself)
+    overflow-clip-margin: inherit;
+
+    // * a name beside a tag gives way to it (desktop): one line, cut with an ellipsis, while the tag
+    // * stays whole. Clipped as `.name` is, so that a held name's plate still shows past its text
+    > .bubble-name-first {
+      flex: 0 1 auto;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: clip;
+      overflow-clip-margin: $link-plate-bleed;
+      text-overflow: ellipsis;
+    }
+
+    // * the line is laid out in the interface's direction, whatever its texts' are: `.name` around it is
+    // * `dir=auto`, which an Arabic tag after a Latin name would turn right to left
+    direction: ltr;
+
+    .is-rtl & {
+      direction: rtl;
+    }
+
+    // * the free room between the name and what follows it is a flexible gap of the line itself: a
+    // * margin on the name (`dir=auto`, so RTL for an Arabic one) would land on the other side of it and
+    // * push the name from the line's start
+    &::before {
+      content: '';
+      flex: 1 1 0;
+      order: 1;
+    }
+
+    > .bubble-name-rank {
+      flex-shrink: 0;
+      // * a tag's text keeps its own direction, as the name's (`dir=auto`)
+      unicode-bidi: plaintext;
+    }
+
+    &-topic {
+      > .bubble-name-rank,
+      > .bubble-name-first + .bubble-name-boosts {
+        margin-inline-start: auto;
+      }
+    }
+  }
+
+  &-name {
+    &-rank {
+      color: var(--message-time-color);
+      order: 999;
+      @include text-overflow();
+
+      // * a member tag is the box of a pill, which the pointer and a press light up (desktop's
+      // * ripple): in the middle of the name line, a little shorter than it, the gap after the name
+      // * outside it. A plain tag's box is a pill's too and ends where the line does - the name
+      // * line clips anything past it - so its text stands where a pill's does
+      &.is-member-tag {
+        cursor: pointer;
+        align-self: center;
+        line-height: 1rem;
+        padding-inline: .375rem;
+        margin-inline-start: .25rem;
+      }
+    }
+
+    &-boosts {
+      order: 1000;
+
+      &-icon {
+        margin-inline-end: .125rem;
+      }
+    }
+
+    &-rank,
+    &-boosts {
+      font-weight: var(--font-weight-normal);
+      font-size: var(--messages-time-text-size);
+      padding-inline-start: .25rem;
+    }
+  }
+
+  &:not(.has-webpage) {
+    &.photo,
+    &.video,
+    &.widget-message {
+      &:not(.is-reply) .bubble-content > .name {
+        margin-bottom: $message-padding-top;
+      }
+
+      .bubble-name-chip-container {
+        margin-bottom: 0;
+      }
+
+      &.is-reply .bubble-name-chip-container {
+        margin-bottom: .25rem;
+      }
+    }
+  }
+
+  &:not(.has-webpage):not(.is-album):not(.sticker):not(.round):not(.emoji-big) .attachment {
+    background-color: #000;
+  }
+
+  &:not(.sticker):not(.emoji-big):not(.forwarded) {
+    &.hide-name,
+    &:not(.is-group-first):not(.must-have-name) {
+      .reply {
+        margin-top: $reply-padding-top;
+      }
+    }
+  }
+
+  &.is-outgoing {
+    .reactions {
+      pointer-events: none;
+    }
+  }
+
+  .bubble-tail {
+    display: none;
+  }
+
+  &.can-have-tail {
+    &.is-forced-rounded, &.is-group-last {
+      .bubble-tail {
+        position: absolute;
+        bottom: 0;
+        width: 11px;
+        height: 20px;
+        z-index: -2;
+        display: block;
+        background-color: var(--message-background-color);
+        // * the tail's shape (11×20), cut out of an element so that it can take the gradient of the outgoing bubbles
+        clip-path: path("M3 19h6V2c-.193 2.84-.876 5.767-2.05 8.782-.904 2.325-2.446 4.485-4.625 6.48A1 1 0 0 0 3 19z");
+        transform: translateY(1px) scaleX(var(--reflect));
+      }
+    }
+  }
+
+  &.photo,
+  &.video {
+    .attachment {
+      border: 1px solid var(--message-background-color);
+    }
+  }
+
+  &__media-container {
+    cursor: pointer;
+    border-radius: inherit;
+  }
+
+  .audio,
+  poll-element {
+    white-space: normal; // * fix due to .message white-space prewrap
+  }
+
+  .replies {
+    user-select: none;
+
+    .c-ripple__circle {
+      background-color: var(--light-primary-color);
+    }
+
+    .rp {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      overflow: hidden;
+      border-radius: inherit;
+      cursor: pointer;
+    }
+
+    &-beside {
+      flex-direction: column;
+      width: 36px;
+      min-height: 36px;
+      height: auto;
+      max-height: 52px;
+      bottom: 47px; // * forward button + 9px margin
+      border-radius: 2rem;
+      inset-inline-end: -44px; // * because not 38px, as forward button
+      padding: .375rem 0 .5rem;
+
+      &-text {
+        font-size: .75rem;
+        margin-top: .125rem;
+      }
+    }
+
+    &-footer {
+      height: 3.0625rem;
+      border-top: .0625rem solid var(--border-color);
+      position: relative;
+      display: flex;
+      align-items: center;
+      padding: 0 .5rem;
+      border-end-start-radius: inherit;
+      border-end-end-radius: inherit;
+      color: var(--primary-color);
+      min-width: 15rem;
+
+      @include hover() {
+        background-color: var(--light-primary-color);
+
+        & ~ .bubble-tail {
+          background-color: var(--light-filled-message-primary-color);
+
+          &::before,
+          &::after {
+            content: none;
+          }
+        }
+
+        // .tgico-next {
+        //   animation: arrow-shake .3s ease-out forwards;
+        // }
+      }
+
+      &-icon {
+        font-size: 1.5rem;
+        line-height: 1;
+        height: 1.5rem;
+
+        &-comments {
+          margin-inline: .125rem .375rem;
+        }
+
+        &-next {
+          position: absolute;
+          inset-inline-end: .1875rem;
+        }
+      }
+
+      &-text {
+        font-weight: var(--font-weight-bold);
+        font-size: .9375rem;
+        margin-inline-start: .5rem;
+        display: flex;
+        align-items: center;
+        color: var(--primary-color);
+        line-height: 1.125rem;
+      }
+
+      &-avatars {
+        --margin-right: -.875rem;
+        --border-size: 2px;
+      }
+
+      &.is-unread {
+        .replies-footer-text {
+          &:after {
+            content: " ";
+            background-color: var(--primary-color);
+            width: .5rem;
+            height: .5rem;
+            margin-inline-start: .75rem;
+            border-radius: 50%;
+          }
+        }
+      }
+    }
+  }
+
+  &.is-thread-starter {
+    .user-avatar {
+      display: none;
+    }
+
+    &.is-in .bubble-content-wrapper {
+      margin-inline-start: 0;
+    }
+  }
+
+  .message {
+    .reaction {
+      --background-color: var(--light-filled-message-primary-color);
+
+      &:not(.is-chosen),
+      &.is-chosen.backwards {
+        --counter-color: var(--message-primary-color);
+
+        .stacked-avatars {
+          --border-color: var(--background-color);
+        }
+      }
+
+      // * of the bubble's colour where the accent it stands on is white (an outgoing one of a theme's colours at night),
+      // * as a tag's is
+      &.is-chosen.forwards {
+        --counter-color: var(--message-icon-text-color);
+      }
+    }
+
+    .reactions-tag {
+      margin-bottom: .5rem;
+
+      .time-inner {
+        margin-bottom: -.1875rem;
+      }
+    }
+
+    .reactions-like-block {
+      .time {
+        position: unset !important;
+        right: auto !important;
+        bottom: auto !important;
+        order: 100;
+        margin-top: .125rem;
+      }
+    }
+  }
+
+  .monospace-text {
+    cursor: pointer;
+  }
+
+  &.is-invoice {
+    .attachment {
+      background-color: inherit !important;
+    }
+  }
+
+  &.with-reply-markup {
+    --border-end-start-radius: #{$bubble-border-radius-medium} !important;
+    --border-end-end-radius: #{$bubble-border-radius-medium} !important;
+  }
+
+  .name-with-reply {
+    .name {
+      display: flow-root;
+      padding: 0 !important;
+      margin: 0;
+
+      &:not(:last-child) {
+        .hide-ol {
+          display: none;
+        }
+
+        .peer-title {
+          font-weight: var(--font-weight-bold) !important;
+        }
+      }
+
+      .bubble-name-chip-container:last-child {
+        margin-bottom: 0;
+      }
+    }
+
+    .is-via {
+      display: block;
+      @include text-overflow();
+    }
+
+    .reply {
+      margin: .25rem 0 0;
+      padding: 0;
+      width: auto;
+      height: auto;
+      max-height: none;
+    }
+  }
+
+  .name .bubble-name-chip-container {
+    margin: .25rem 0;
+  }
+
+  &.is-message-empty:not(.is-reply) .name .bubble-name-chip-container {
+    margin-bottom: 0;
+  }
+
+  .audio-transcribed-text {
+    margin-bottom: .75rem;
+    margin-top: .25rem;
+
+    &.is-error {
+      color: var(--message-primary-color);
+    }
+
+    .audio-transcribing-dots {
+      // Real dots instead of an animated `content`, which only a pseudo-element can do. They keep
+      // their width while hidden, so the text never shifts and nothing has to be reserved behind
+      // them; each has its own keyframes so they accumulate and reset together rather than blink
+      // out of step, which is what sharing one set with staggered delays would give.
+      &-dot {
+        opacity: 0;
+        animation-duration: 1.5s;
+        animation-iteration-count: infinite;
+        animation-timing-function: steps(1, end);
+
+        &-1 {
+          animation-name: audio-dots-1;
+        }
+
+        &-2 {
+          animation-name: audio-dots-2;
+        }
+
+        &-3 {
+          animation-name: audio-dots-3;
+        }
+
+        // * with no animations they stand, all three shown
+        @include animation-level-below(1) {
+          animation: none;
+          opacity: 1;
+        }
+      }
+    }
+  }
+
+  .video-transcribed-text {
+    margin-top: .25rem;
+  }
+
+  &.no-forwards {
+    .bubble-beside-button.forward {
+      display: none;
+    }
+  }
+
+  &-service-button {
+    min-height: 34px;
+    font-weight: var(--font-weight-bold);
+    background-color: rgba(var(--message-highlighting-color-rgb), .8);
+    color: currentColor;
+    padding: 0 1.25rem;
+    border-radius: 34px;
+    position: relative;
+    margin-top: .625rem;
+  }
+
+  &-story-mention {
+    &-wrapper {
+      flex-direction: column;
+      width: 184px;
+      padding: 1.125rem 1rem .625rem !important;
+      // padding-top: 1.125rem;
+      // padding-bottom: 1rem !important;
+    }
+
+    &-avatar-container {
+      position: relative;
+      width: 100px;
+      height: 100px;
+      display: flex;
+      cursor: pointer;
+    }
+
+    &-preview {
+      position: absolute;
+      top: 5.5px;
+      right: 5.5px;
+      bottom: 5.5px;
+      left: 5.5px;
+      border-radius: 50%;
+      overflow: hidden;
+      pointer-events: none;
+      // cursor: pointer;
+    }
+
+    &-text {
+      margin-top: .75rem;
+    }
+  }
+
+  // * the plate of a message this client cannot show, drawn as Android draws it (`UnsupportedBlockDrawable`): on the
+  // * wallpaper in the service lines' colours, in a bubble with no background of its own (`.just-media`)
+  &-unsupported {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    width: 25rem;
+    max-width: 100%;
+    padding: .4375rem .6875rem .4375rem .375rem;
+    border-radius: 1.125rem;
+    background-color: var(--message-highlighting-color);
+    color: #fff;
+    user-select: none;
+
+    &-icon {
+      flex: 0 0 auto;
+      width: 3rem;
+      height: 3rem;
+
+      &-bubble {
+        fill: rgba(0, 0, 0, .11);
+      }
+
+      &-plane {
+        fill: currentColor;
+      }
+    }
+
+    &-text {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: .125rem;
+    }
+
+    &-title {
+      @include text-overflow();
+      font-size: var(--font-size-14);
+      line-height: var(--line-height-14);
+      font-weight: var(--font-weight-bold);
+    }
+
+    &-subtitle {
+      font-size: var(--font-size-13);
+      line-height: var(--line-height-13);
+      opacity: .7;
+    }
+  }
+
+  // * its width gives way to a column narrower than it, with an avatars' margin beside it too, as text would wrap
+  &.is-unsupported .bubble-content-wrapper {
+    min-width: 0;
+  }
+
+  // Generic "media + caption + button" service bubble (e.g. suggested profile
+  // photo). Centered round media, modeled on the story-mention bubble above.
+  &-service-media {
+    &-wrapper {
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      width: 184px;
+      padding: 1.125rem 1rem .625rem !important;
+    }
+
+    &-avatar-container {
+      position: relative;
+      width: 100px;
+      height: 100px;
+      display: flex;
+
+      &.is-clickable {
+        cursor: pointer;
+      }
+    }
+
+    &-text {
+      margin-top: .75rem;
+    }
+
+    &-button {
+      margin-top: .625rem;
+    }
+  }
+
+  &.is-giveaway &-content {
+    max-width: 20rem;
+  }
+
+  &-giveaway {
+    text-align: center;
+    padding: 0 1rem;
+    max-width: 100%;
+    line-height: calc(var(--font-size) + .25rem);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-width: 16rem;
+    margin: 0 auto .5rem;
+
+    &-results &-sticker {
+      margin-top: 1rem;
+    }
+
+    &-link {
+      pointer-events: all;
+      cursor: pointer;
+    }
+
+    &-sticker {
+      margin: 0 auto;
+      display: flex;
+      justify-content: center;
+      margin-top: -2rem;
+
+      &-counter {
+        background-color: var(--primary-color);
+        color: var(--message-icon-text-color);
+        border: 2px solid var(--message-background-color);
+        border-radius: 1.5rem;
+        height: 1.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 .375rem;
+        position: absolute;
+        bottom: 0;
+        z-index: 1;
+        font-weight: var(--font-weight-bold);
+        font-size: calc(var(--font-size) - 2px);
+
+        &-stars {
+          background-color: #ffbc2e;
+        }
+      }
+    }
+
+    &-row {
+      margin-top: .75rem;
+
+      &-title {
+        margin-bottom: .1875rem;
+      }
+    }
+
+    &-channels {
+      display: flex;
+      gap: .375rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: .375rem;
+    }
+
+    &-channel {
+      margin: 0 !important;
+      background-color: rgba(var(--peer-color-rgb), .1) !important;
+      color: rgb(var(--peer-color-rgb)) !important;
+      font-weight: var(--font-weight-bold);
+      max-width: 100% !important;
+      pointer-events: all;
+
+      .is-out & {
+        --peer-color-rgb: var(--message-out-primary-color-rgb) !important;
+      }
+
+      @include hover() {
+        background-color: rgba(var(--peer-color-rgb), .2) !important;
+      }
+    }
+
+    &-countries {
+      margin-top: .25rem;
+    }
+
+    &-country {
+      display: inline-flex;
+
+      .emoji {
+        line-height: inherit !important;
+      }
+    }
+
+    &-and-more {
+      margin-top: .375rem;
+    }
+
+    &-results {
+      max-width: 20rem;
+    }
+
+    // .delimiter-with-text {
+    //   margin-top: .125rem;
+    // }
+  }
+
+  .verified-icon {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+
+  &.is-similar-channels {
+    .bubble-content {
+      &-wrapper {
+        padding: 0 !important;
+      }
+    }
+  }
+
+  &-similar-channels {
+    height: 0;
+    overflow: hidden;
+
+    // @include animation-level(2) {
+    //   transition: height var(--transition-standard-in);
+    // }
+
+    // &.is-visible {
+    //   height: 9.125rem;
+    // }
+  }
+
+  &-sponsored {
+    &-buttons {
+      display: flex;
+      flex-direction: column;
+      width: 1.875rem;
+      height: 4rem;
+      border-radius: 15px;
+      pointer-events: none;
+      background-color: var(--message-highlighting-color) !important;
+      padding: 2px 0;
+      inset-block: 0;
+      inset-inline-end: calc((1.875rem + .5rem) * -1);
+
+      &-delimiter {
+        position: absolute;
+        width: 100%;
+        height: 0.5px;
+        background-color: #fff;
+        opacity: .2;
+        flex: 0 0 auto;
+        justify-self: center;
+      }
+
+      &-button {
+        width: 1.875rem;
+        height: 1.875rem;
+        color: #fff;
+        font-size: 1.375rem;
+        pointer-events: all;
+
+        @include hover() {
+          background-color: var(--message-highlighting-hover-color) !important;
+        }
+      }
+    }
+  }
+
+  // * its paid reaction's effect playing (reactions.ts)
+  &.has-paid-effect {
+    z-index: 3;
+  }
+
+  &.has-service-description {
+    .service-msg {
+      flex-direction: column;
+      align-items: flex-start !important;
+      padding: .75rem 1rem .875rem !important;
+    }
+
+    .center {
+      align-self: center;
+    }
+
+    .empty-bubble-placeholder-title {
+      font-weight: var(--font-weight-bold);
+      font-size: 1rem !important;
+    }
+
+    &:not(.with-reply-markup) {
+      .bubble-content {
+        border-radius: 1.5rem !important;
+      }
+    }
+  }
+}
+
+.webpage {
+  $parent: ".webpage";
+  $webpage-padding: .375rem;
+  $webpage-padding-vertical: .25rem;
+  --secondary-color: var(--primary-color);
+  --secondary-text-color: var(--primary-color);
+  --link-color: var(--primary-color);
+  --message-highlighting-color: rgba(var(--primary-color-rgb), .3);
+  margin: .25rem 0;
+  // max-width: 100%;
+  font-size: var(--messages-secondary-text-size);
+  line-height: var(--messages-secondary-line-height);
+  text-decoration: none !important;
+  color: var(--primary-text-color);
+  display: block;
+
+  // * a shared contact is pressed, not read: never selected, as before it became a preview
+  &.is-contact {
+    user-select: none;
+  }
+
+  & + .time {
+    display: block;
+    float: unset;
+  }
+
+  .audio-transcribed-text {
+    margin-bottom: 0;
+    order: 4;
+  }
+
+  .document {
+    height: 3.375rem;
+
+    // @include respond-to(handhelds) {
+    //   padding-left: 44px;
+    // }
+  }
+
+  .has-document {
+    display: flex;
+    flex-direction: column;
+  }
+
+  &.has-square-photo {
+    #{$parent} {
+      &-preview {
+        // max-width: string.unquote('min(3rem, 100%)');
+        // max-height: string.unquote('min(3rem, 100%)');
+        max-width: 100%;
+        max-height: 100%;
+        margin: 0;
+
+        &-resizer {
+          width: 3rem;
+          height: 3rem;
+          // * at the end of the line the text runs on (a `dir="auto"` message may run either way);
+          // * `float: inline-end` is not on every target, so a side first, and the UI's end in RTL
+          float: right;
+          margin-inline-start: .625rem;
+
+          @supports (float: inline-end) {
+            float: inline-end;
+          }
+
+          .is-rtl & {
+            float: left;
+          }
+        }
+
+        // sticker-set / custom-emoji preview grid: box is sized inline (boxSize px),
+        // so let the square resizer size to the grid instead of the fixed 3rem.
+        &.webpage-stickerset-grid {
+          max-width: none;
+          max-height: none;
+        }
+
+        &-resizer:has(.webpage-stickerset-grid) {
+          width: auto;
+          height: auto;
+        }
+      }
+    }
+
+    // * too small for the words: the eye alone
+    .sensitive-content-warning {
+      padding: .375rem;
+
+      .i18n {
+        display: none;
+      }
+    }
+  }
+
+  &-stickerset {
+    // square NxN grid of the set's preview stickers (side from ceil(sqrt(count)))
+    &-grid {
+      display: grid;
+      grid-template-columns: repeat(var(--sticker-grid-side), 1fr);
+      gap: 1px;
+      pointer-events: none;
+    }
+
+    &-cell {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+
+      img,
+      canvas,
+      video {
+        max-width: 100%;
+        max-height: 100%;
+      }
+    }
+  }
+
+  &.no-text {
+    margin-bottom: .75rem;
+  }
+
+  &-preview {
+    max-width: string.unquote('min(420px, 100%)');
+    max-height: string.unquote('min(380px, 100%)');
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    user-select: none;
+    position: relative;
+    width: max-content;
+
+    img,
+    video {
+      max-width: 100%;
+    }
+
+    &-with-document {
+      margin-bottom: 0 !important;
+      min-width: 100%;
+      overflow: unset;
+    }
+
+    &-with-document &-resizer {
+      order: 1;
+    }
+
+    &-resizer {
+      display: flex;
+      margin: #{calc($webpage-padding-vertical - 1px)} 0;
+      cursor: pointer;
+    }
+
+    &.is-round {
+      .media-photo,
+      .media-video {
+        border-radius: 50%;
+      }
+    }
+  }
+
+  &-name,
+  &-footer,
+  .anchor-url {
+    color: var(--primary-color);
+  }
+
+  .anchor-url,
+  .mention {
+    position: relative;
+    z-index: 1;
+  }
+
+  &-name {
+    display: block;
+
+    // a site's name is no underlined link, until the mouse is over it (helpers/dom/linkPress.ts)
+    .anchor-url:not(.is-link-hovered) {
+      text-decoration: none !important;
+    }
+
+    &-tip {
+      background-color: rgba(var(--primary-color-rgb), .12);
+      border-radius: 13px;
+      height: 15px;
+      margin-inline-start: .4375rem;
+      padding: 1.25px 5px;
+      font-size: calc(var(--messages-text-size) - 5px);
+      // line-height: 15px;
+      pointer-events: all;
+      cursor: pointer;
+      position: relative;
+      z-index: 1;
+      vertical-align: top;
+      user-select: none;
+    }
+  }
+
+  &-text {
+    word-break: break-word;
+
+    // &-margin-top {
+    //   margin-top: .125rem;
+    // }
+
+    // &-first-element {
+    //   display: block;
+    //   margin-top: -.3125rem;
+    // }
+  }
+
+  &-quote {
+    max-width: 100%;
+    overflow: hidden;
+    width: 100%;
+    display: flex;
+    // cursor: pointer;
+  }
+
+  &-content {
+    flex: 1 1 auto;
+    overflow: hidden;
+    padding: $webpage-padding-vertical $webpage-padding;
+    padding-inline-start: #{calc($webpage-padding + 3px)};
+
+    &.min-content {
+      min-width: 15rem;
+      width: min-content;
+    }
+  }
+
+  &-footer {
+    $height: 2.25rem;
+    $margin: .375rem;
+    $border: .0625rem;
+    margin-top: $margin;
+    border-top: $border solid rgba(var(--primary-color-rgb, 0, 0, 0), .2);
+    // text-transform: uppercase;
+    position: relative;
+
+    &-icon {
+      position: absolute;
+      inset-inline-end: -.125rem;
+      top: .125rem;
+      display: block;
+    }
+
+    &.is-link .webpage-footer-icon {
+      transform: rotate(-45deg);
+    }
+
+    &.is-text {
+      font-size: calc(var(--messages-text-size) - 4px);
+      line-height: calc(var(--messages-text-size) - 1px);
+      white-space: pre-wrap;
+      padding: $margin 0 #{math.div($margin, 3)};
+      @include text-overflow(false);
+    }
+
+    // * The button reaches from the box's border line to its edge, past the content's padding, so a
+    // * press and its ripple take the whole width; the separator keeps to the text's width, as
+    // * tdesktop draws it (history_view_web_page.cpp, `inner.width()`). It is drawn inside the
+    // * padding, since the button's `overflow: hidden` would clip a border-box line
+    &.is-button {
+      margin-bottom: #{-$webpage-padding-vertical};
+      margin-inline: #{-$webpage-padding};
+      border-top: 0;
+      line-height: $height;
+      font-size: var(--messages-text-size);
+      text-align: center;
+      font-weight: var(--font-weight-bold);
+      height: #{$height + $margin + $border};
+      padding: #{math.div($margin, 2) + $border} #{$webpage-padding + .5rem} 0;
+      pointer-events: none;
+      // * below a square thumbnail floating beside short text: a box that clips its overflow would
+      // * otherwise narrow itself to sit next to the float
+      clear: both;
+      @include text-overflow(true);
+
+      &:before {
+        content: "";
+        position: absolute;
+        top: 0;
+        inset-inline: $webpage-padding;
+        height: $border;
+        background-color: rgba(var(--primary-color-rgb, 0, 0, 0), .2);
+      }
+
+      // * where it stood before the button reached past the padding and lost its border
+      #{$parent}-footer-icon {
+        top: #{.125rem + $border};
+        inset-inline-end: #{$webpage-padding - .125rem};
+      }
+    }
+
+    // * The same button, split into buttons of their own (a shared contact's MESSAGE | ADD): each
+    // * takes the caption's padding, so the press and its ripple reach the line above. Columns of
+    // * `1fr` are as wide as the widest button, and make the box wide enough for all of them
+    &.is-split {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+      padding: #{$border} 0 0;
+    }
+
+    &-button {
+      padding: #{math.div($margin, 2)} .5rem 0;
+      pointer-events: auto;
+      cursor: pointer;
+      // * above the box's own ripple, which would take the press otherwise
+      position: relative;
+      z-index: 1;
+      // * a <button> with the a11y layer
+      border: 0;
+      background: none;
+      color: inherit;
+      font: inherit;
+      @include text-overflow(true);
+    }
+  }
+
+  // * a round picture at the start, with the name and text beside it (a shared contact)
+  // * the picture keeps to the top, as tdesktop draws it, however many lines the text runs to
+  &-with-thumb {
+    display: flex;
+    align-items: flex-start;
+    gap: .625rem;
+    padding: .125rem 0;
+
+    &-texts {
+      flex: 1 1 auto;
+      min-width: 0;
+
+      #{$parent}-name,
+      #{$parent}-text {
+        @include text-overflow(true);
+      }
+
+      // * a line each (a contact's phones, emails, organization), every one cut short on its own
+      #{$parent}-text {
+        white-space: pre;
+      }
+    }
+  }
+
+  // * the picture is part of the box's own control: a photo avatar would take the press for the
+  // * peer it shows, and open the chat where the box opens the vCard
+  &-thumb {
+    flex: 0 0 auto;
+    pointer-events: none;
+  }
+}
+
+.timestamp {
+  text-decoration: underline;
+
+  &.is-disabled {
+    color: inherit;
+    text-decoration: none !important;
+    cursor: inherit;
+  }
+}
+
+.geo {
+  &-container {
+    width: 23.25rem; // 372
+    height: 16.375rem; // 262
+
+    &.is-expired {
+      .geo-live-pin {
+        &-avatar {
+          opacity: .5;
+        }
+
+        &-heading,
+        &:before {
+          display: none;
+        }
+      }
+    }
+
+    @include respond-to(handhelds) {
+      width: 277px;
+      height: 195px;
+    }
+  }
+
+  &-svg {
+    width: 100%;
+    height: 100%;
+    background-color: var(--message-background-color);
+
+    &-path {
+      fill: var(--dark-message-background-color);
+    }
+  }
+
+  &-svg,
+  &-image-container {
+    pointer-events: none;
+  }
+
+  &-image {
+    &-container {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
+    }
+  }
+
+  &-live-pin {
+    filter: drop-shadow(0 0 2px rgba(0, 0, 0, .15));
+    display: flex;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -100%);
+    z-index: 1;
+
+    &-avatar {
+      position: relative;
+      overflow: hidden;
+      margin-right: 0;
+      margin-bottom: 1.3125rem;
+    }
+
+    &-heading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, 0.3125rem) rotate(var(--heading));
+      transform-origin: bottom;
+      width: 1.5rem;
+      height: 2rem;
+      clip-path: polygon(50% 100%, 0 0, 100% 0);
+      background: radial-gradient(circle, var(--primary-color) -100%, transparent 100%);
+      border-radius: 40%;
+
+      @include animation-level(2) {
+        transition: transform var(--transition-standard-in);
+      }
+    }
+
+    &-svg {
+      fill: #fff;
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      transform: translate(-50%, 0);
+      width: 5rem;
+
+      bottom: 0.5rem;
+    }
+
+    &:before,
+    &:after {
+      content: "";
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translate(-50%, 50%);
+      border-radius: 50%;
+    }
+
+    &:before {
+      width: var(--accuracy-size);
+      height: var(--accuracy-size);
+
+      @include animation-level(2) {
+        animation: accuracy-wave 5s ease-out infinite forwards;
+      }
+
+      @keyframes accuracy-wave {
+        0% {
+          transform: translate(-50%, 50%) scale(0);
+          background-color: var(--primary-color);
+        }
+
+        100% {
+          transform: translate(-50%, 50%) scale(1);
+          background-color: transparent;
+        }
+      }
+    }
+
+    &:after {
+      border: 2px solid #fff;
+      background-color: var(--primary-color);
+      // z-index: 3;
+      width: 1rem;
+      height: 1rem;
+    }
+  }
+
+  &-pin {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 2;
+    margin-top: -1.625rem;
+    width: 2rem;
+    height: 3.25rem;
+  }
+
+  &-footer {
+    display: flex;
+    flex-direction: column;
+    min-height: 2.5rem;
+
+    &-title {
+      font-weight: var(--font-weight-bold);
+    }
+
+    &-address {
+      color: var(--message-time-color);
+      font-size: var(--messages-secondary-text-size);
+      line-height: var(--messages-secondary-line-height);
+    }
+
+    &-timer {
+      position: absolute;
+      top: 50%;
+      inset-inline-end: .1875rem;
+      transform: translateY(-50%);
+      width: 1.875rem;
+      height: 1.875rem;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--message-primary-color);
+      font-weight: var(--font-weight-bold);
+      font-size: calc(var(--messages-text-size) - 3px);
+      white-space: nowrap;
+
+      &-svg {
+        position: absolute;
+        top: 0;
+        left: 0;
+        fill: none;
+      }
+
+      &-circle {
+        stroke: var(--message-primary-color);
+        stroke-width: 2;
+        stroke-linecap: round;
+
+        &-shadow {
+          opacity: .2;
+        }
+      }
+    }
+
+    &.is-live {
+      position: relative;
+      padding-inline-end: 3rem;
+    }
+  }
+}
+
+@keyframes audio-dots-1 {
+  0% {
+    opacity: 0;
+  }
+
+  25%, 100% {
+    opacity: 1;
+  }
+}
+
+@keyframes audio-dots-2 {
+  0% {
+    opacity: 0;
+  }
+
+  50%, 100% {
+    opacity: 1;
+  }
+}
+
+@keyframes audio-dots-3 {
+  0% {
+    opacity: 0;
+  }
+
+  75%, 100% {
+    opacity: 1;
+  }
+}
+
+// @keyframes arrow-shake {
+//   0% {
+//     transform: translateX(0);
+//   }
+
+//   25% {
+//     transform: translateX(-.25rem);
+//   }
+
+//   75% {
+//     transform: translateX(.125rem);
+//   }
+
+//   100% {
+//     transform: translateX(0);
+//   }
+// }
+
+// * fix scroll with only 1 bubble
+.bubbles-group-last {
+  .bubble.is-group-last {
+    // margin-bottom: 0;
+
+    &:after,
+    .document-container.is-last .document-selection {
+      bottom: #{-$bubble-overflow};
+    }
+  }
+}
+
+// .bubble-content-wrapper,
+// .bubbles-group-avatar,
+.can-zoom-fade {
+  transform: scale(1) translateX(0);
+  transform-origin: center;
+  opacity: 1;
+
+  @include animation-level(2) {
+    transition: var(--bubble-transition-in) !important;
+  }
+
+  &.zoom-fade /* .bubble-content */ {
+    transform: scale3d(.8, .8, 1) translateX(0);
+    //transform: scale(.8) translateX(0);
+    opacity: 0;
+  }
+}
+
+.bubble-content-wrapper {
+  display: flex;
+  flex-direction: column;
+  max-width: string.unquote('min(var(--max-content-width, 100%), var(--max-width))');
+}
+
+.bubble.service {
+  align-self: center;
+  justify-content: center;
+
+  b {
+    color: inherit;
+  }
+
+  // * while selecting, a click anywhere on the pill must toggle it instead of firing the action
+  // * inside it (a gift button, a peer link, a story mention) — a date separator keeps its own
+  // * click, it opens the calendar rather than selecting anything
+  .bubbles.is-selecting &:not(.is-date) .bubble-content-wrapper {
+    pointer-events: none;
+  }
+
+  .bubble-content {
+    background-color: transparent;
+    border-radius: .875rem;
+
+    &-wrapper {
+      max-width: 100%;
+      padding: 0 2rem;
+    }
+  }
+}
+
+.bubble.service, .bubble.has-fake-service {
+  .service-msg {
+    --link-plate-color: #{$link-plate-service-color};
+
+    // * a chat theme change, which opens the theme picker
+    &.is-clickable {
+      cursor: pointer;
+    }
+
+    color: #fff;
+    //background-color: rgba(0, 0, 0, .24);
+    background-color: var(--message-highlighting-color);
+    font-size: var(--messages-service-text-size);
+    padding: .28125rem .625rem;
+    // padding: .1875rem .5rem;
+    // line-height: var(--line-height);
+    line-height: calc(var(--messages-service-text-size) + 5px);
+    // line-height: normal;
+    border-radius: inherit;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    word-break: break-word;
+    white-space: break-spaces;
+
+    .expired-story-icon {
+      margin-top: -4px;
+    }
+
+    i {
+      font-style: normal;
+    }
+
+    a {
+      color: #fff;
+    }
+
+    a,
+    .peer-title,
+    [data-saved-from] {
+      cursor: pointer;
+      font-weight: var(--font-weight-bold);
+
+      &:hover {
+        text-decoration: underline;
+      }
+    }
+
+    .emoji-image {
+      margin-bottom: 3px;
+    }
+  }
+
+  &.with-reply-markup .service-msg {
+    border-bottom-left-radius: #{$bubble-border-radius-medium};
+    border-bottom-right-radius: #{$bubble-border-radius-medium};
+  }
+
+  .reactions-like-block {
+    justify-content: center;
+  }
+}
+
+.message-action-icon {
+  margin-inline-end: 0.25rem;
+  margin-bottom: 2.5px;
+  vertical-align: bottom;
+  display: inline-block;
+}
+
+.bubble.has-fake-service, .bubble.has-chat-thread-separator {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+
+  gap: 0.5rem;
+
+  &.is-first-unread::before {
+    width: 200%;
+  }
+
+  &.is-out {
+    gap: 0.5rem;
+    flex-direction: column; // override the .bubble.is-out
+    align-items: flex-end;
+  }
+
+  &.service {
+    align-items: center;
+  }
+
+  .service-msg {
+    align-self: center;
+    max-width: 100%;
+    border-radius: #{$bubble-border-radius-big};
+
+    display: block;
+    text-align: center;
+    text-wrap: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.bubble.service.is-reply .service-msg {
+  cursor: pointer;
+}
+
+.bubble.is-in {
+  --border-start-start-radius: #{$bubble-border-radius-medium};
+  --border-start-end-radius: #{$bubble-border-radius-big};
+  --border-end-end-radius: #{$bubble-border-radius-big};
+  --border-end-start-radius: #{$bubble-border-radius-medium};
+
+  .bubble-content {
+    &-wrapper {
+      &.can-zoom-fade {
+        transform-origin: var(--transform-origin-left-center);
+      }
+    }
+  }
+
+  &.is-group-first, &.is-forced-rounded {
+    --border-start-start-radius: #{$bubble-border-radius-big};
+  }
+
+  &.is-group-last, &.is-forced-rounded {
+    &.can-have-tail {
+      --border-end-start-radius: 0 !important;
+
+      .bubble-tail {
+        margin-inline-start: -8.4px;
+      }
+
+      &.has-plain-media-tail {
+        .attachment {
+          border-end-start-radius: $bubble-border-radius-big;
+        }
+      }
+
+      /* .bubble-content:after {
+        margin-left: -8.4px;
+        background-image: url('assets/img/msg-tail-left.svg');
+      } */
+    }
+
+    &:not(.can-have-tail) {
+      --border-end-start-radius: #{$bubble-border-radius-big};
+    }
+  }
+
+  &.just-media {
+    .floating-part {
+      inset-inline-start: calc(100% + 10px);
+
+      @include respond-to(handhelds) {
+        inset-inline-start: calc(100% + 1px);
+      }
+    }
+  }
+
+  .reply-title {
+    color: var(--primary-color);
+  }
+
+  .time {
+    margin-inline-start: 5px;
+
+    // &-inner {
+    //   margin-bottom: -1px;
+    // }
+  }
+
+  .audio-subtitle,
+  .audio-time {
+    color: var(--secondary-text-color) !important;
+  }
+
+  /* .poll {
+    &-answer-selected {
+      &:before {
+        margin-left: -1px;
+      }
+    }
+  } */
+
+  .monospace-text {
+    color: rgb(var(--peer-color-rgb));
+  }
+}
+
+.bubble.is-out {
+  flex-direction: row-reverse;
+  --message-background-color: var(--message-out-background-color);
+  --light-message-background-color: var(--light-message-out-background-color);
+  --light-filled-message-background-color: var(--light-filled-message-out-background-color);
+  --dark-message-background-color: var(--dark-message-out-background-color);
+  --message-icon-text-color: var(--message-out-icon-text-color);
+  --message-primary-color: var(--message-out-primary-color);
+  --message-primary-color-rgb: var(--message-out-primary-color-rgb);
+  --light-filled-message-primary-color: var(--light-filled-message-out-primary-color);
+  --selection-background-color: var(--message-out-selection-background-color);
+  --message-time-color: var(--message-out-time-color);
+  --message-status-color: var(--message-out-status-color);
+  --peer-color-rgb: var(--message-primary-color-rgb);
+  --peer-border-background: var(--message-out-peer-border-background);
+  --message-reaction-tag-dot-color: var(--message-out-reaction-tag-dot-color);
+  --border-start-start-radius: #{$bubble-border-radius-big};
+  --border-start-end-radius: #{$bubble-border-radius-medium};
+  --border-end-end-radius: #{$bubble-border-radius-medium};
+  --border-end-start-radius: #{$bubble-border-radius-big};
+
+  .bubble-content {
+    margin-inline-start: auto;
+
+    &,
+    .poll-footer-button {
+      border-start-start-radius: var(--border-start-start-radius);
+      border-start-end-radius: var(--border-start-end-radius);
+      border-end-end-radius: var(--border-end-end-radius);
+      border-end-start-radius: var(--border-end-start-radius);
+    }
+
+    .name {
+      color: var(--message-out-primary-color);
+    }
+
+    /* html:not(.is-firefox) */ &-wrapper {
+      &.can-zoom-fade {
+        transform-origin: var(--transform-origin-right-center);
+      }
+    }
+  }
+
+  // * over what the bubble lays under its content (a background of its own, a document's selection's band), under the
+  // * content and what it lays under its text in turn (a custom emoji's canvas, under a spoiler; a found text's
+  // * highlight), which are a level up: they come before it, and were drawn over at the same level
+  .bubble-gradient {
+    display: var(--message-out-gradient-display, none);
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    border-radius: inherit;
+    clip-path: border-box;
+    pointer-events: none;
+  }
+
+  &:not(.just-media) .bubble-gradient {
+    @include message-out-gradient;
+  }
+
+  // * a bubble's own pieces are layers of their own from the start: one the main thread makes only as it comes into
+  // * sight was not there for a bubble a scroll of the compositor's brought in, which stood of one colour until the next
+  // * scroll. They are of the few bubbles not cut out of the chat's piece (`OutgoingGradientUnion`)
+  .bubble-gradient,
+  .bubble-gradient ~ .bubble-tail {
+    &::before,
+    &::after {
+      will-change: transform;
+    }
+  }
+
+  // * cut out of the chat's piece (`OutgoingGradientUnion`), which is the bubble's gradient, its colour and its tail's
+  &.is-gradient-joined {
+    @include message-out-gradient-hidden;
+
+    .bubble-tail {
+      background-color: transparent;
+    }
+  }
+
+  // * with a gradient the bubble's colour is painted under its piece, in the piece's clip, and not by the bubble
+  // * (`--message-out-gradient-content-background`): the compositor may cut the piece a pixel short of the bubble's edge
+  @supports (clip-path: border-box) {
+    &:not(.just-media) {
+      // * one the chat rendered with its piece (`has-gradient`): elsewhere a bubble is drawn without one (a message
+      // * prepared to be sent, an entry of the recent actions), and keeps its colour
+      .bubble-content.has-gradient {
+        background-color: var(--message-out-gradient-content-background, var(--message-background-color));
+      }
+
+      .bubble-gradient {
+        background-color: var(--message-out-gradient-under, var(--message-background-color));
+      }
+
+      // * a selected document's cover of its band, which is under the piece already and would cover the piece now
+      .bubble-content.has-gradient .document-wrapper::before {
+        background-color: var(--message-out-gradient-content-background, var(--message-background-color));
+      }
+    }
+  }
+
+  // * one that holds a widget is of one colour all over (widget-sandbox's SDK §5.1): the one the gradient shows most
+  // * (`--message-out-gradient-solid-color`), which the widget is told is its background. The gradient moves under the
+  // * bubble as the chat scrolls, and a widget that paints its own background stood out against it. Its content paints
+  // * the colour, so it is not cut out of the chat's piece (`OutgoingGradientUnion`); its pieces have no picture, so
+  // * nothing takes a colour of the gradient for it (`readOutgoingMessageGradient`), mid-change too (`.morphing`)
+  &.widget-message {
+    --message-background-color: var(--message-out-gradient-solid-color, var(--message-out-background-color));
+    @include message-out-gradient-hidden;
+
+    @each $phase in $message-out-gradient-phases {
+      --message-out-gradient-image-#{$phase}: none;
+    }
+
+    @supports (clip-path: border-box) {
+      &:not(.just-media) .bubble-content.has-gradient {
+        background-color: var(--message-background-color);
+      }
+    }
+  }
+
+  // * a reaction over a gradient is a see-through tint of the accent, as on iOS and Android
+  // * (`--message-out-gradient-light-primary-color`), and its avatars are cut out of each other rather than parted by a
+  // * ring of its colour: each is cut where the next one, on its inline start, lies over it with its ring
+  .message .reaction {
+    // * a chosen one is of its own colour, a tag's included
+    &:not(.is-chosen),
+    &.is-chosen.backwards {
+      --background-color: var(--message-out-gradient-light-primary-color, var(--light-filled-message-primary-color));
+
+      .stacked-avatars {
+        --border-color: var(--message-out-gradient-content-background, var(--background-color));
+      }
+    }
+
+    .stacked-avatars-avatar-container:not(.is-last) {
+      --cut-radius: calc(var(--avatar-total-size) / 2);
+      --cut-x: calc(-1 * var(--margin-right) - var(--cut-radius));
+      mask-image: radial-gradient(
+        circle at var(--cut-x) 50%,
+        var(--message-out-gradient-content-background, #000) var(--cut-radius),
+        #000 calc(var(--cut-radius) + .5px)
+      );
+
+      .is-rtl & {
+        --cut-x: calc(100% + var(--margin-right) + var(--cut-radius));
+      }
+    }
+  }
+
+  // * a transform on it takes the pieces of its gradient in, which are placed where the frame was read to be before
+  // * it (`holdOutgoingMessageGradient`): a swipe, a ladder's zoom, a move aside for a change of another
+  &.is-gesturing-reply,
+  &.is-gradient-held,
+  .can-zoom-fade {
+    --message-out-gradient-left: var(--message-out-gradient-held-left);
+    --message-out-gradient-top: var(--message-out-gradient-held-top);
+    --message-out-gradient-width: var(--message-out-gradient-held-width);
+    --message-out-gradient-height: var(--message-out-gradient-held-height);
+  }
+
+  /* .bubble-content-wrapper {
+    > .user-avatar {
+      left: auto;
+      right: -2.5rem;
+    }
+  } */
+
+  &.is-group-first, &.is-forced-rounded {
+    --border-start-end-radius: #{$bubble-border-radius-big};
+  }
+
+  &.is-group-last, &.is-forced-rounded {
+    &.can-have-tail {
+      --border-end-end-radius: 0 !important;
+
+      // * reflected by its shape, not by a transform, which would take its piece of the gradient in; at the whole pixel
+      // * the transform drew it at from its -8.4px, as what is not transformed is drawn where it lies (and a send
+      // * flight's copy lands on its pixels)
+      .bubble-tail {
+        inset-inline-end: -8px;
+        bottom: -1px;
+        transform: none;
+        clip-path: path("M8 19H2V2c.193 2.84.876 5.767 2.05 8.782.904 2.325 2.446 4.485 4.625 6.48A1 1 0 0 1 8 19z");
+
+        .is-rtl & {
+          clip-path: path("M3 19h6V2c-.193 2.84-.876 5.767-2.05 8.782-.904 2.325-2.446 4.485-4.625 6.48A1 1 0 0 0 3 19z");
+        }
+      }
+
+      // * of the gradient where the body is (a bubble of the chat's, not a layout of its own elsewhere)
+      .bubble-gradient ~ .bubble-tail {
+        @include message-out-gradient;
+      }
+
+      &.has-plain-media-tail {
+        .attachment {
+          border-end-end-radius: $bubble-border-radius-big;
+        }
+      }
+
+      /* .bubble-content:after {
+        right: -8.4px;
+        background-image: url('assets/img/msg-tail-right.svg');
+      } */
+    }
+
+    &:not(.can-have-tail) {
+      --border-end-end-radius: #{$bubble-border-radius-big};
+    }
+  }
+
+  &.just-media {
+    .floating-part {
+      inset-inline-end: calc(100% + 10px);
+    }
+  }
+
+  .time {
+    &-inner {
+      margin-inline-end: -2px;
+    }
+  }
+
+  &.forwarded {
+    .name {
+      color: var(--message-out-primary-color);
+    }
+  }
+
+  &.is-error {
+    .time-sending-status {
+      color: var(--message-error-color);
+    }
+  }
+
+  // * the dog-ear's corner is cut off the icon instead of being painted over in the bubble's colour, which a gradient is
+  // * not, and the cut opens with the ear
+  .document:not(.document-with-thumb) .document-ico {
+    --dog-ear: 1.125rem;
+    clip-path: polygon(0 0, calc(100% - var(--dog-ear)) 0, 100% var(--dog-ear), 100% 100%, 0 100%);
+
+    @include animation-level(2) {
+      transition: clip-path .2s ease-in-out;
+    }
+
+    &:after {
+      border-top-color: transparent;
+      border-right-color: transparent;
+    }
+  }
+
+  .document:not(.downloaded) {
+    @include hover() {
+      .document-ico {
+        --dog-ear: 0px;
+      }
+    }
+  }
+
+  .document.downloading .document-ico {
+    --dog-ear: 0px;
+  }
+
+  // * the media's frame shows the bubble's own background, a gradient's part included
+  &.photo,
+  &.video {
+    .attachment {
+      border-color: transparent;
+      background-clip: padding-box;
+    }
+  }
+
+  &.is-message-empty {
+    .reactions-like-block {
+      --margin-horizontal: .25rem;
+      justify-content: flex-end;
+      position: relative;
+      margin-top: unset;
+    }
+
+    .reactions-renderer {
+      inset: 0 !important;
+    }
+
+    .reaction-like-block {
+      &.is-chosen {
+        --chosen-background-color: var(--surface-color);
+        --counter-color: var(--primary-color);
+      }
+    }
+
+    &:not(.emoji-big) {
+      .reactions-like-block {
+        margin-inline-start: auto;
+      }
+    }
+  }
+
+  .bubble-call-arrow {
+    transform: rotate(-45deg);
+  }
+
+  poll-element {
+    .poll {
+      &-answer-selected {
+        color: var(--message-out-icon-text-color);
+      }
+
+      html.no-touch &-answer:hover {
+        .animation-ring {
+          background-color: var(--message-out-primary-color);
+          opacity: .08;
+        }
+      }
+
+      &-avatars {
+        .stacked-avatars {
+          --border-color: var(--message-background-color);
+        }
+      }
+    }
+
+    .progress-ring__circle {
+      stroke: var(--message-out-primary-color);
+    }
+
+    .c-ripple__circle {
+      background-color: var(--message-out-primary-color);
+
+      &:not(.hiding) {
+        opacity: .08;
+      }
+    }
+  }
+
+  &.is-sending poll-element {
+    pointer-events: none;
+  }
+
+  .audio {
+    .progress-line {
+      &:before,
+      &__loaded {
+        opacity: .1;
+        background-color: var(--primary-color);
+      }
+    }
+  }
+
+  .bubble-beside-button,
+  .summarize-container {
+    inset-inline: var(--message-beside-button-margin) auto;
+  }
+
+  .bubble-beside-button {
+    //transform: scaleX(-1);
+
+    &.goto-original {
+      transform: rotate(180deg);
+    }
+  }
+
+  &.is-multiple-documents {
+    .document-container {
+      .bubble-select-checkbox {
+        background-color: var(--message-background-color);
+
+        &:before {
+          border-color: var(--dark-message-background-color);
+        }
+
+        .checkbox-box-border {
+          border-color: var(--message-background-color);
+        }
+      }
+
+      /* &:after {
+        left: -50vw;
+      } */
+    }
+  }
+
+  .bubble-hover-reaction {
+    inset-inline: var(--offset) auto;
+  }
+
+  .code {
+    .night & {
+      --primary-color-rgb: var(--message-out-background-color-rgb);
+      --primary-color: #fff;
+    }
+  }
+
+  .monospace-text {
+    color: var(--message-time-color);
+  }
+}
+
+.reply-markup {
+  width: 100%;
+  margin-top: $reply-markup-margin-top;
+
+  .bubble:not(.is-group-last) & {
+    margin-bottom: $bubble-margin;
+  }
+
+  &-row {
+    margin-top: $bubble-margin;
+    overflow: hidden;
+    min-height: $reply-markup-row-min-height;
+    display: flex;
+    gap: $bubble-margin;
+  }
+
+  &-button {
+    padding: .5625rem 0;
+    border-radius: .375rem;
+    z-index: 2;
+    font-size: var(--messages-secondary-text-size);
+    user-select: none;
+    text-align: center;
+    color: #fff !important;
+    outline: none;
+    border: none;
+    width: 100%;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    //line-height: var(--line-height);
+    background: var(--message-highlighting-color);
+    font-weight: var(--font-weight-bold);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    &.is-first {
+      border-end-start-radius: $border-radius-big;
+    }
+
+    &.is-last {
+      border-end-end-radius: $border-radius-big;
+    }
+
+    &-text {
+      position: relative;
+      pointer-events: none;
+    }
+
+    &.anchor-url {
+      text-decoration: none !important;
+    }
+
+    &-icon {
+      position: absolute;
+      inset-inline-end: .125rem;
+      top: .125rem;
+      display: block;
+    }
+
+    &.is-link .reply-markup-button-icon {
+      transform: rotate(-45deg);
+    }
+
+    // inlineButtonTypeDisabled (layer 229) — shown, but inert
+    &.is-disabled {
+      opacity: .5;
+      pointer-events: none;
+    }
+
+    // * a bubble's and the bot keyboard's under the input (`.reply-keyboard`) alike
+    &-bg {
+      color: #fff !important;
+      background-color: rgba(var(--background-color-rgb), .8) !important;
+
+      @include hover() {
+        background-color: rgb(var(--background-color-rgb)) !important;
+      }
+
+      &-success {
+        --background-color-rgb: var(--green-color-rgb);
+      }
+
+      &-danger {
+        --background-color-rgb: var(--danger-color-rgb);
+      }
+
+      &-primary {
+        --background-color-rgb: var(--primary-color-rgb);
+      }
+    }
+
+    .custom-emoji {
+      line-height: 1;
+      vertical-align: middle;
+    }
+  }
+
+  &-suggested-action {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.25rem;
+    white-space: nowrap;
+    min-width: 100px;
+
+    .tgico {
+      font-size: 1rem;
+    }
+  }
+}
+
+.reply-markup-button,
+.bubble-beside-button,
+.bubble-service-button {
+  // &:after {
+  //   display: block;
+  //   position: absolute;
+  //   top: 0;
+  //   right: 0;
+  //   bottom: 0;
+  //   left: 0;
+  //   border-radius: inherit;
+  //   opacity: 0;
+  //   z-index: -1;
+  //   background-color: #fff;
+  // }
+
+  @include hover() {
+    background-color: var(--message-highlighting-hover-color);
+    // &:after {
+    //   content: " ";
+    //   opacity: var(--hover-alpha);
+    // }
+  }
+}
+
+.bubble-primary-color {
+  color: var(--message-primary-color);
+  font-weight: var(--font-weight-bold);
+}
+
+.inline-stars {
+  display: inline-flex;
+  align-items: center;
+
+  &-icon {
+    line-height: unset;
+  }
+}
+
+.bubble-meta-inline-stars {
+  margin-inline-end: 6px;
+}
+
+.unknown-user-bubble {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  margin: 0;
+
+  .bubble-content,
+  .bubble-content-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+  }
+}
+
+.bubble .bubble.is-sponsored {
+  margin-top: 0.25rem;
+  --border-end-start-radius: 0;
+}
+
+.botforum-new-topic-bubble {
+  --border-start-start-radius: #{$bubble-border-radius-big};
+  --border-start-end-radius: #{$bubble-border-radius-big};
+  --border-end-end-radius: #{$bubble-border-radius-big};
+  --border-end-start-radius: #{$bubble-border-radius-big};
+  order: 1000000;
+  margin-top: 1.5rem;
+  justify-content: center;
+  align-items: center;
+  max-width: 100%;
+
+  pointer-events: none;
+
+  .bubble-content-wrapper {
+    max-width: unset;
+  }
+
+  .bubble-content {
+    background-color: var(--message-highlighting-color);
+    box-shadow: none;
+  }
+
+  .message {
+    color: white;
+  }
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: -0.75rem;
+    width: 100vw;
+    height: 2px;
+
+    opacity: 0.075;
+    background-image: url('/assets/img/chat-thread-separator-dash-black.svg');
+  }
+
+  .night &::before {
+    opacity: 0.15;
+    background-image: url('/assets/img/chat-thread-separator-dash.svg');
+  }
+}
+
+.empty-bubble-placeholder {
+  position: absolute;
+  top: 50%;
+  // transform: translateY(-50%);
+  left: 50%;
+  transform: translate(-50%, -50%);
+
+  @include animation-level(1) {
+    .bubble-content-wrapper {
+      transition: var(--bubble-transition-in);
+    }
+  }
+
+  .bubbles.has-groups &,
+  .bubbles.is-temporary-thread & {
+    pointer-events: none;
+
+    .bubble-content-wrapper {
+      transform: translateX(0) scale3d(.8, .8, 1);
+      //transform: scale(.8) translateX(0);
+      opacity: 0;
+
+      // reduced: it fades where it stands
+      @include animation-level-only(1) {
+        transform: none;
+      }
+    }
+  }
+
+  &-line {
+    color: #fff;
+
+    & + & {
+      margin-top: .5rem;
+    }
+  }
+
+  &-list {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    align-self: center;
+    text-align: initial;
+
+    &-check {
+      margin-inline-end: .25rem;
+      font-size: 1.25rem;
+      vertical-align: bottom;
+      // logical, not `margin-left`: the build lowers `margin-inline-end` into a
+      // higher-specificity `:lang()` rule that sets `margin-left` in RTL, which
+      // would swallow this optical nudge instead of mirroring it
+      margin-inline-start: -.1875rem;
+    }
+
+    &-bullet {
+      margin-inline-end: .3125rem;
+    }
+  }
+
+  &-group {
+    .empty-bubble-placeholder-list-item {
+      margin-top: .4375rem !important;
+    }
+  }
+
+  &-greeting {
+    &.wider {
+      .service-msg {
+        max-width: 272px;
+      }
+    }
+
+    .service-msg {
+      max-width: 232px;
+    }
+
+    .has-service-before {
+      // `.bubble.service .bubble-content` outranks this and sets `margin: 0 auto`
+      margin-top: .5rem !important;
+      border-radius: .875rem !important;
+
+      .service-msg {
+        max-width: 252px !important;
+        padding: 0.28125rem 0.625rem !important;
+      }
+    }
+
+    .empty-bubble-placeholder-subtitle {
+      margin-top: .25rem !important;
+    }
+  }
+
+  &-topic {
+    .empty-bubble-placeholder-sticker {
+      --parent-size: 4rem;
+      width: var(--parent-size) !important;
+      height: var(--parent-size) !important;
+      margin-left: auto;
+      margin-right: auto;
+      font-size: var(--parent-size);
+      border-radius: 50%;
+
+      .topic-icon {
+        --size: var(--parent-size);
+      }
+    }
+
+    &-title {
+      font-weight: var(--font-weight-bold);
+      align-self: center;
+      font-size: var(--messages-text-size);
+      text-align: center;
+    }
+
+    &-subtitle {
+      margin: 0.25rem 1rem;
+      max-width: 160px;
+      text-align: center;
+    }
+  }
+
+  &-logs {
+    &-subtitle {
+      max-width: 240px;
+      text-align: center;
+    }
+  }
+
+  &-premiumRequired,
+  &-paidMessages {
+    .service-msg {
+      max-width: 200px;
+    }
+  }
+
+  &-premiumRequired,
+  &-paidMessages,
+  &-directChannelMessages,
+  &-logs {
+    .empty-bubble-placeholder-sticker {
+      width: 8rem !important;
+      height: 8rem !important;
+      margin-left: auto;
+      margin-right: auto;
+      font-size: 128px;
+      border-radius: 50%;
+      background-color: rgba(var(--message-highlighting-color-rgb), 0.8);
+    }
+
+    .bubble-service-button {
+      margin: 0 auto;
+    }
+
+    .empty-bubble-placeholder-stars {
+      display: inline-flex;
+      align-items: center;
+      vertical-align: -0.2em;
+      font-weight: 600;
+      // line-height: 1em;
+      height: 1em;
+    }
+    .empty-bubble-placeholder-star-icon {
+      font-size: 16px;
+    }
+  }
+
+  &-directChannelMessages,
+  &-logs {
+    .empty-bubble-placeholder-sticker {
+      font-size: 80px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+  }
+
+  &-sticker {
+    margin-top: .75rem !important;
+    margin-inline: auto;
+    position: relative;
+    width: 200px;
+    height: 200px;
+    cursor: pointer;
+  }
+}

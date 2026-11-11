@@ -1,0 +1,9 @@
+.popup {
+  --popup-min-width: 26.25rem;
+  --popup-max-width: 26.25rem;
+}
+
+.container {
+  padding: 0;
+  max-height: min(800px,100%);
+}

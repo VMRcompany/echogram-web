@@ -1,0 +1,166 @@
+import {Accessor, createEffect, createSignal, on, Show} from 'solid-js';
+import Modes from '@config/modes';
+import {AppManagers} from '@lib/managers';
+import {NULL_PEER_ID} from '@appManagers/constants';
+import Chat from '@components/chat/chat';
+import ChatTopbar from '@components/chat/topbar';
+import {SponsoredMessage} from '@layer';
+import classNames from '@helpers/string/classNames';
+
+import styles from '@components/chat/topbarSponsored.module.scss';
+import {I18nTsx} from '@helpers/solid/i18n';
+import wrapRichText from '@lib/richTextProcessor/wrapRichText';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import PhotoTsx from '@components/wrappers/photoTsx';
+import {MyPhoto} from '@appManagers/appPhotosManager';
+import createContextMenu from '@helpers/dom/createContextMenu';
+import {copyTextToClipboard} from '@helpers/clipboard';
+import {getSponsoredMessageButtons} from '@components/chat/contextMenu';
+import {showAdReport} from '@components/popups/reportAd';
+import createMiddleware from '@helpers/solid/createMiddleware';
+import Button from '@components/buttonTsx';
+import RippleElement from '@components/rippleElement';
+import {createTopbarPlate, TopbarPlateController} from '@components/chat/topbarPlate';
+import I18n from '@lib/langPack';
+import A11yButton from '@components/a11yButton';
+import {hotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
+import rootScope from '@lib/rootScope';
+import {subscribeOn} from '@helpers/solid/subscribeOn';
+
+export type ChatSponsoredPlate = TopbarPlateController & {
+  setPeerId: (peerId: PeerId) => void
+};
+
+function SponsoredPlateBody(props: {
+  peerId: Accessor<PeerId>,
+  chat: Chat,
+  managers: AppManagers,
+  setHidden: (hidden: boolean) => void
+}) {
+  const [message, setMessage] = createSignal<SponsoredMessage>();
+  // * a toggle of Do Not Hide Ads outdates an answer on its way
+  let generation = 0;
+
+  const hide = () => {
+    setMessage(undefined);
+    props.setHidden(true);
+  };
+
+  // * turned off, the bot's ad goes at once, as a channel's do (`ChatBubbles`); turned on, the next chat asks again
+  subscribeOn(rootScope)('sponsored_messages_toggle', (enabled) => {
+    ++generation;
+    if(!enabled) hide();
+  });
+
+  createEffect(on(props.peerId, (peerId$) => {
+    hide();
+    if(peerId$ === NULL_PEER_ID || !peerId$.isUser()) return;
+    if(!props.chat.isBot) return;
+
+    const requestGeneration = ++generation;
+    props.managers.appMessagesManager.getSponsoredMessage(peerId$)
+    .then((m) => {
+      if(props.peerId() !== peerId$ || generation !== requestGeneration) return;
+
+      if(m._ === 'messages.sponsoredMessages' && m.messages.length) {
+        setMessage(m.messages[0]);
+        props.setHidden(false);
+      }
+    });
+  }));
+
+  const photo = () => {
+    const m = message();
+    if(m.photo) return m.photo as MyPhoto;
+    if(m.media && m.media._ === 'messageMediaPhoto') return m.media.photo as MyPhoto;
+    return undefined;
+  };
+
+  return (
+    <Show when={message()}>
+      <RippleElement
+        component="div"
+        class={/* @once */ classNames(styles.container, 'quote-like-hoverable', 'overflow-hidden')}
+        onClick={() => hotReloadGuard.appImManager.onSponsoredMessageClick(message())}
+        ref={(el) => {
+          createContextMenu({
+            listenTo: el,
+            buttons: getSponsoredMessageButtons({
+              message: message(),
+              handleReportAd: () => {
+                showAdReport(message(), () => props.setHidden(false));
+              },
+              handleCopy: () => {
+                copyTextToClipboard(message().message);
+              }
+            }),
+            // * the menu lives as long as this element, which goes with every next message: one
+            // * middleware for the plate's whole life kept each old menu and its element on destroy
+            middleware: createMiddleware().get()
+          });
+        }}
+      >
+        <Show when={photo()}>
+          <div class={/* @once */ classNames(styles.photoWrap, 'disable-hover')}>
+            <PhotoTsx
+              class={/* @once */ styles.photo}
+              photo={photo()}
+              boxWidth={32}
+              boxHeight={32}
+              withoutPreloader
+            />
+          </div>
+        </Show>
+        <div class={/* @once */ classNames(styles.content, 'disable-hover')}>
+          {/* a native button only with the keyboard layer: it is inline-block, keeps its own line height and takes the focus on click */}
+          <A11yButton
+            class="text-bold"
+            style={Modes.a11y ? {color: 'inherit', 'text-align': 'inherit'} : undefined}
+          >
+            <I18nTsx class="primary" key="SponsoredMessageAd" />
+            {' '}
+            <span dir="auto">{wrapEmojiText(message().title)}</span>
+          </A11yButton>
+          <div class="pre-wrap" dir="auto">
+            {wrapRichText(message().message, {entities: message().entities})}
+          </div>
+        </div>
+      </RippleElement>
+      <Button.Icon
+        icon="close"
+        aria-label={I18n.format('Premium.Boarding.NoAds.Action', true)}
+        onClick={(e) => {
+          e.stopPropagation();
+          hotReloadGuard.showPremiumPopup({feature: 'no_ads'});
+        }}
+      />
+    </Show>
+  );
+}
+
+export default function createChatSponsoredPlate(
+  topbar: ChatTopbar,
+  chat: Chat,
+  managers: AppManagers
+): ChatSponsoredPlate {
+  const [peerId, setPeerIdSignal] = createSignal<PeerId>(NULL_PEER_ID);
+
+  const plate = createTopbarPlate({
+    modifier: 'sponsored',
+    height: 'auto',
+    onVisibilityChange: () => topbar.setFloating(),
+    render: ({setHidden}) => (
+      <SponsoredPlateBody
+        peerId={peerId}
+        chat={chat}
+        managers={managers}
+        setHidden={setHidden}
+      />
+    )
+  });
+
+  return {
+    ...plate,
+    setPeerId: (next) => setPeerIdSignal(next)
+  };
+}

@@ -1,0 +1,183 @@
+
+import PopupElement, {createPopup} from '@components/popups/indexTsx';
+import {StarsRating, User, UserFull} from '@layer';
+import {i18n} from '@lib/langPack';
+import bigInt from 'big-integer';
+import {LimitLineTsx} from '@components/limitLineTsx';
+import {I18nTsx} from '@helpers/solid/i18n';
+import FeatureRows from '@components/featureRows';
+import MediaHeader from '@components/mediaHeader';
+import classNames from '@helpers/string/classNames';
+import styles from '@components/popups/starsRating.module.scss';
+import {createMemo, createSignal, Show, Switch} from 'solid-js';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import rootScope from '@lib/rootScope';
+import formatDuration from '@helpers/formatDuration';
+import {wrapFormattedDuration} from '@components/wrappers/wrapDuration';
+import {Transition} from 'solid-transition-group';
+import {IconTsx} from '@components/iconTsx';
+import formatNumber from '@helpers/number/formatNumber';
+import A11yButton from '@components/a11yButton';
+
+function Badge(props: {
+  active: boolean
+}) {
+  return (
+    <I18nTsx
+      key={props.active ? 'StarsRating.BadgeAdded' : 'StarsRating.BadgeDeducted'}
+      class={classNames(styles.badge, props.active && styles.active)}
+    />
+  );
+}
+
+export default function showStarsRatingPopup(props: {
+  user: User.user
+  userFull: UserFull.userFull
+}) {
+  const {
+    stars_rating: currentRating,
+    stars_my_pending_rating: futureRating,
+    stars_my_pending_rating_date: futureRatingDate
+  } = props.userFull;
+
+  const isPersonal = props.user.id === rootScope.myId;
+  const pendingStars = Number(futureRating?.stars ?? 0) - Number(currentRating.stars);
+
+  const [isFuture, setIsFuture] = createSignal(false);
+  const rating = () => isFuture() ? futureRating : currentRating;
+  const isNegativeLevel = () => rating().level < 0;
+
+  createPopup(() => {
+    const progress = createMemo(() => {
+      const rating$ = rating();
+      const isMaxLevel = rating$.next_level_stars === undefined;
+      const isNegativeLevel = rating$.level < 0;
+      if(isNegativeLevel) {
+        return 0.5;
+      } else if(isMaxLevel) {
+        return 1;
+      } else {
+        return (Number(rating$.stars) - Number(rating$.current_level_stars)) /
+          (Number(rating$.next_level_stars) - Number(rating$.current_level_stars));
+      }
+    });
+
+    return (
+      <PopupElement class={styles.popup} containerClass={styles.popupContainer} old>
+        <PopupElement.Header floating>
+          <PopupElement.CloseButton />
+        </PopupElement.Header>
+        <PopupElement.Body>
+          <LimitLineTsx
+            class={classNames(styles.limitLine, isNegativeLevel() && styles.limitLineNegative)}
+            progress={progress()}
+            progressFrom={isNegativeLevel() ? i18n('StarsRating.Negative') : i18n('StarsRating.Level', [rating().level])}
+            progressTo={isNegativeLevel() ? <div /> : i18n('StarsRating.Level', [rating().level + 1])}
+            reverse={isNegativeLevel()}
+            hint={isNegativeLevel() && !isPersonal ? undefined : (
+              <div class={styles.hint}>
+                {formatNumber(Number(rating().stars))}
+                {rating().next_level_stars && !isNegativeLevel() && (
+                  <span class={styles.nextLevelStars}>
+                    {' '}
+                    / {formatNumber(Number(rating().next_level_stars))}
+                  </span>
+                )}
+              </div>
+            )}
+            hintIcon={isNegativeLevel() ? 'warning_filled' : 'crownalt_filled'}
+            hintJustIcon={true}
+          />
+
+          <Show when={isNegativeLevel() && !futureRating}>
+            <MediaHeader.Subtitle color="danger" class={styles.description}>
+              <I18nTsx
+                key={isPersonal ? 'StarsRating.NegativeDescriptionMy' : 'StarsRating.NegativeDescription'}
+                args={isPersonal ?
+                  [Math.abs(Number(rating().stars)).toString()] :
+                  [wrapEmojiText(props.user.first_name)]
+                }
+              />
+            </MediaHeader.Subtitle>
+          </Show>
+
+          <Show when={futureRating}>
+            <MediaHeader.Subtitle color="secondary" class={styles.description}>
+              <Transition mode="outin">
+                <Show when={!isFuture()}>
+                  <div>
+                    <I18nTsx
+                      key="StarsRating.PendingDescription"
+                      args={[
+                        wrapFormattedDuration(formatDuration(futureRatingDate - Date.now() / 1000, 1)),
+                        pendingStars.toString()
+                      ]}
+                    />
+                    <A11yButton as="a" class={styles.previewButton} onClick={() => setIsFuture(true)}>
+                      <I18nTsx key="StarsRating.Preview" />
+                      <IconTsx icon="next" />
+                    </A11yButton>
+                  </div>
+                </Show>
+                <Show when={isFuture()}>
+                  <div>
+                    <I18nTsx
+                      key="StarsRating.FutureDescription"
+                      args={[
+                        wrapFormattedDuration(formatDuration(futureRatingDate - Date.now() / 1000, 1)),
+                        pendingStars.toString()
+                      ]}
+                    />
+                    <A11yButton as="a" class={styles.previewButton} onClick={() => setIsFuture(false)}>
+                      <I18nTsx key="StarsRating.Back" />
+                      <IconTsx icon="next" />
+                    </A11yButton>
+                  </div>
+                </Show>
+              </Transition>
+            </MediaHeader.Subtitle>
+          </Show>
+
+          <MediaHeader>
+            <MediaHeader.Title>
+              <I18nTsx key="StarsRating.Title" />
+            </MediaHeader.Title>
+            <MediaHeader.Subtitle>
+              <I18nTsx
+                key={isPersonal ? 'StarsRating.SubtitleMy' : 'StarsRating.Subtitle'}
+                args={[wrapEmojiText(props.user.first_name)]}
+              />
+            </MediaHeader.Subtitle>
+          </MediaHeader>
+
+          <div>
+            <FeatureRows
+              rows={/* @once */ [
+                {
+                  icon: 'gift_filled',
+                  title: <I18nTsx key="StarsRating.Row1Title" />,
+                  subtitle: <><Badge active={true} /><I18nTsx key="StarsRating.Row1Subtitle" /></>
+                },
+                {
+                  icon: 'group_star',
+                  title: <I18nTsx key="StarsRating.Row2Title" />,
+                  subtitle: <><Badge active={true} /><I18nTsx key="StarsRating.Row2Subtitle" /></>
+                },
+                {
+                  icon: 'reload_star',
+                  title: <I18nTsx key="StarsRating.Row3Title" />,
+                  subtitle: <><Badge active={false} /><I18nTsx key="StarsRating.Row3Subtitle" /></>
+                }
+              ]}
+            />
+          </div>
+        </PopupElement.Body>
+        <PopupElement.FooterButton
+          class={styles.popupButton}
+          iconLeft="okay_filled"
+          langKey="StarsRating.Understood"
+        />
+      </PopupElement>
+    );
+  })
+}

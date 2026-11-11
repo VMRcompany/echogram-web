@@ -1,0 +1,472 @@
+import {isIpRevealingExtension, isIpRevealingMimeType} from '@environment/ipRevealingDocuments';
+import MEDIA_MIME_TYPES_SUPPORTED from '@environment/mediaMimeTypesSupport';
+import {CancellablePromise} from '@helpers/cancellablePromise';
+import {clearBadCharsAndTrim} from '@helpers/cleanSearchText';
+import {formatFullSentTime} from '@helpers/date';
+import {simulateClickEvent, attachClickEvent} from '@helpers/dom/clickEvent';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import formatBytes from '@helpers/formatBytes';
+import liteMode from '@helpers/liteMode';
+import {MediaSizeType} from '@helpers/mediaSizes';
+import noop from '@helpers/noop';
+import {Message, MessageMedia, WebPage} from '@layer';
+import {MyDocument} from '@appManagers/appDocsManager';
+import appDownloadManager, {Progress} from '@lib/appDownloadManager';
+import {ReadingManagers} from '@lib/managers';
+import getDownloadMediaDetails from '@appManagers/utils/download/getDownloadMediaDetails';
+import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
+import I18n, {joinElementsWith} from '@lib/langPack';
+import Button from '@components/button';
+import Modes from '@config/modes';
+import {MAX_FILE_SAVE_SIZE} from '@appManagers/constants';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import wrapPlainText from '@lib/richTextProcessor/wrapPlainText';
+import rootScope from '@lib/rootScope';
+import type {ThumbCache} from '@lib/storages/thumbs';
+import {MediaSearchContext} from '@components/appMediaPlaybackController';
+import createAudioElement, {AudioElement} from '@components/audio';
+import {emptyMediaListLoaderFactory} from '@components/emptyMediaListLoader';
+import confirmationPopup from '@components/confirmationPopup';
+import LazyLoadQueue from '@components/lazyLoadQueue';
+import {MiddleEllipsisElement} from '@components/middleEllipsis';
+import ProgressivePreloader from '@components/preloader';
+import wrapPhoto from '@components/wrappers/photo';
+import wrapSenderToPeer from '@components/wrappers/senderToPeer';
+import wrapSentTime from '@components/wrappers/sentTime';
+import {Middleware} from '@helpers/middleware';
+import readBlobAsText from '@helpers/blob/readBlobAsText';
+import SolidJSHotReloadGuardProvider, {hotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
+import {openMarkdownInstantView} from '@components/markdownInstantView';
+import isPlayableDocument from '@appManagers/utils/docs/isPlayableDocument';
+import {hotListen} from '@helpers/hotModule';
+
+// * a file shown in more than one place (another message, shared media, another tab) shows a download of it started
+// * in one of them everywhere: the other rows join it and never start one
+const attachToDownloadOfRow: WeakMap<HTMLElement, () => void> = new WeakMap();
+
+hotListen(import.meta.hot, rootScope, 'document_downloading', (docId) => {
+  const elements = Array.from(document.querySelectorAll(`.document[data-doc-id="${docId}"]`)) as HTMLElement[];
+  elements.forEach((element) => attachToDownloadOfRow.get(element)?.());
+});
+
+export default async function wrapDocument({
+  message,
+  middleware,
+  withTime,
+  fontWeight,
+  voiceAsMusic,
+  showSender,
+  searchContext,
+  loadPromises,
+  autoDownloadSize,
+  lazyLoadQueue,
+  sizeType,
+  managers = rootScope.managers,
+  cacheContext,
+  fontSize,
+  getSize,
+  canTranscribeVoice,
+  isOut,
+  clickable,
+  uploadingFileName,
+  shouldWrapAsVoice,
+  customAudioToTextButton,
+  globalMedia,
+  doc: docOverride,
+  slot,
+  draft,
+  cover
+}: {
+  message: Message.message,
+  middleware: Middleware,
+  withTime?: boolean,
+  fontWeight?: number,
+  voiceAsMusic?: boolean,
+  showSender?: boolean,
+  searchContext?: MediaSearchContext,
+  loadPromises?: Promise<any>[],
+  autoDownloadSize?: number,
+  lazyLoadQueue?: LazyLoadQueue,
+  sizeType?: MediaSizeType,
+  managers?: ReadingManagers,
+  cacheContext?: ThumbCache,
+  fontSize?: number,
+  getSize?: () => number,
+  canTranscribeVoice?: boolean,
+  isOut?: boolean,
+  /** Keep the duration out of the subtitle until the row plays. See `AudioElementOptions`. */
+  /** Give an audio row the hover of a clickable Row. See `AudioElementOptions`. */
+  clickable?: boolean,
+  uploadingFileName?: string,
+  customAudioToTextButton?: HTMLElement,
+  shouldWrapAsVoice?: boolean,
+  globalMedia?: HTMLMediaElement,
+  /**
+   * Optional pre-extracted document. When provided, it overrides the
+   * default extraction from `message.media` (or its webpage). Useful when
+   * the document lives in a sibling field of the message (e.g. poll
+   * `solution_media` / `attached_media`).
+   */
+  doc?: MyDocument,
+  /**
+   * Optional storage-key disambiguator forwarded to the underlying
+   * AudioElement / `appMediaPlaybackController.addMedia`. See
+   * `AddMediaArgs.slot`.
+   */
+  slot?: number,
+  /**
+   * A file of a draft, as the composer shows one: the user's own, not sent yet. Its upload shows and
+   * cancels as an outgoing message's does; nothing else opens or downloads it.
+   */
+  draft?: boolean,
+  /** A track's cover before it is sent (an object URL). See `AudioElementOptions`. */
+  cover?: string
+}): Promise<HTMLElement> {
+  fontWeight ??= 500;
+  sizeType ??= '' as any;
+  fontSize ??= 16;
+  const noAutoDownload = autoDownloadSize === 0;
+
+  const doc = docOverride ?? (((message.media as MessageMedia.messageMediaDocument).document || ((message.media as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage).document) as MyDocument);
+  uploadingFileName ??= message?.uploadingFileName?.[0];
+  if(isPlayableDocument(doc)) {
+    return createAudioElement({
+      message,
+      middleware,
+      doc: docOverride,
+      // Slotted audio (e.g. poll description / explanation) should not participate in any chat-wide
+      // playlist. Use an empty list loader so next/previous navigation is a no-op.
+      ...(slot !== undefined ? {mediaSlot: slot, listLoaderFactory: emptyMediaListLoaderFactory} : {}),
+      withTime,
+      voiceAsMusic,
+      searchContext,
+      showSender,
+      noAutoDownload,
+      clickable,
+      lazyLoadQueue,
+      loadPromises,
+      uploadingFileName,
+      shouldWrapAsVoice,
+      customAudioToTextButton,
+      globalMedia,
+      isOut,
+      canTranscribe: canTranscribeVoice && doc.type === 'voice',
+      fontWeight,
+      fontSize,
+      sizeType,
+      getSize,
+      cover
+    });
+  }
+
+  const extSplitted = doc.file_name ? doc.file_name.split('.') : '';
+  let ext = '';
+  ext = extSplitted.length > 1 && Array.isArray(extSplitted) ?
+    clearBadCharsAndTrim(extSplitted.pop().split(' ', 1)[0].toLowerCase()) :
+    'file';
+
+  const docDiv = document.createElement('div');
+  docDiv.classList.add('document', `ext-${ext}`);
+  docDiv.dataset.docId = '' + doc.id;
+  (docDiv as any).doc = doc;
+
+  // return docDiv;
+
+  const canActivate = !(!uploadingFileName && message.pFlags.is_outgoing && !message.mid);
+  const canOpen = canActivate && !draft;
+  // * what a click does with the file (`load` takes the same turns): a Markdown one opens in Instant View, a
+  // * medium the viewer plays is kept for the bubble to open it there, and any other is downloaded to the disk
+  const canSaveToCache = doc.size <= MAX_FILE_SAVE_SIZE;
+  const isMarkdown = (doc: MyDocument) => ext === 'md' || ext === 'markdown' || /^text\/(x-)?markdown\b/i.test(doc.mime_type || '');
+  const isViewable = (doc: MyDocument) => MEDIA_MIME_TYPES_SUPPORTED.has(doc.mime_type) && !!doc.thumbs?.length && canSaveToCache;
+  const icoDiv = canOpen && Modes.a11y ? Button('', {noRipple: true}) : document.createElement('div');
+  if(canOpen && Modes.a11y) {
+    const opens = isMarkdown(doc) || isViewable(doc);
+    icoDiv.setAttribute('aria-label', I18n.format(opens ? 'AccDescr.OpenDocument' : 'AccDescr.DownloadDocument', true, [doc.file_name || 'Unknown.file']));
+  }
+  icoDiv.classList.add('document-ico');
+  let icoTextEl: HTMLElement;
+
+  const hadContext = !!cacheContext;
+  const getCacheContext = () => {
+    return hadContext ? cacheContext : apiManagerProxy.getCacheContext(doc);
+  };
+
+  cacheContext = getCacheContext();
+  let hasThumb = false;
+  if((doc.thumbs?.length || (message.pFlags.is_outgoing && cacheContext.url && doc.type === 'photo'))/*  && doc.mime_type !== 'image/gif' */) {
+    docDiv.classList.add('document-with-thumb');
+    hasThumb = true;
+
+    const imgs: (HTMLImageElement | HTMLCanvasElement | HTMLVideoElement)[] = [];
+    // ! WARNING, use thumbs for check when thumb will be generated for media
+    if(message.pFlags.is_outgoing && ['photo', 'video'].includes(doc.type) && cacheContext.url) {
+      const image = document.createElement('img');
+      image.src = cacheContext.url;
+      image.alt = '';
+      icoDiv.append(image);
+      imgs.push(image);
+    } else {
+      const perf = performance.now();
+      const wrapped = await wrapPhoto({
+        photo: doc,
+        message: null,
+        container: icoDiv,
+        boxWidth: 54,
+        boxHeight: 54,
+        loadPromises,
+        withoutPreloader: true,
+        lazyLoadQueue,
+        size: choosePhotoSize(doc, 54, 54, true),
+        managers
+      });
+      // console.log('was wrapping photo', performance.now() - perf);
+      icoDiv.style.width = icoDiv.style.height = '';
+      if(wrapped.images.thumb) imgs.push(wrapped.images.thumb);
+      if(wrapped.images.full) imgs.push(wrapped.images.full);
+    }
+
+    imgs.forEach((img) => img.classList.add('document-thumb'));
+  } else {
+    icoTextEl = document.createElement('span');
+    icoTextEl.classList.add('document-ico-text');
+    icoTextEl.innerText = ext;
+    icoDiv.append(icoTextEl);
+  }
+
+  // let fileName = stringMiddleOverflow(doc.file_name || 'Unknown.file', 26);
+  const fileName = doc.file_name ? wrapPlainText(doc.file_name) : 'Unknown.file';
+  const descriptionEl = document.createElement('div');
+  descriptionEl.classList.add('document-description');
+  const bytesContainer = document.createElement('span');
+  const bytesEl = formatBytes(doc.size);
+  const bytesJoiner = ' / ';
+
+  const descriptionParts: (HTMLElement | string | DocumentFragment)[] = [bytesEl];
+
+  if(withTime) {
+    descriptionParts.push(formatFullSentTime(message.date));
+  }
+
+  if(showSender) {
+    descriptionParts.push(await wrapSenderToPeer(message));
+  }
+
+  // the room the download's progress takes ("1 MB / 2 MB") kept when nothing follows the size: after
+  // the parts rather than one of them, or their separator stood before an empty place
+  let progressRoom: HTMLElement;
+  if(!withTime && !showSender) {
+    progressRoom = document.createElement('span');
+    progressRoom.append(bytesJoiner, formatBytes(doc.size));
+    progressRoom.style.visibility = 'hidden';
+  }
+
+  docDiv.innerHTML = `
+  ${(cacheContext.downloaded && !uploadingFileName) || !message.mid || !hasThumb ? '' : `<div class="document-download"></div>`}
+  <div class="document-name"></div>
+  <div class="document-size"></div>
+  `;
+
+  const nameDiv = docDiv.querySelector('.document-name') as HTMLElement;
+  const middleEllipsisEl = MiddleEllipsisElement.create();
+  middleEllipsisEl.dataset.fontWeight = '' + fontWeight;
+  middleEllipsisEl.dataset.fontSize = '' + fontSize;
+  middleEllipsisEl.dataset.sizeType = sizeType;
+  (middleEllipsisEl as any).getSize = getSize;
+  middleEllipsisEl.textContent = fileName;
+  // setInnerHTML(middleEllipsisEl, fileName);
+
+  // * new media popup
+  if(!message.mid) {
+    docDiv.classList.add('downloaded');
+  }
+
+  nameDiv.append(middleEllipsisEl);
+
+  if(showSender) {
+    nameDiv.append(wrapSentTime(message));
+  }
+
+  const sizeDiv = docDiv.querySelector('.document-size') as HTMLElement;
+  bytesContainer.append(...joinElementsWith(descriptionParts, ' · '));
+  if(progressRoom) bytesContainer.append(progressRoom);
+  sizeDiv.append(bytesContainer);
+
+  docDiv.prepend(icoDiv);
+
+  if(!canActivate) {
+    return docDiv;
+  }
+
+  let downloadDiv: HTMLElement, preloader: ProgressivePreloader = null;
+  const onLoad = () => {
+    docDiv.classList.remove('downloading');
+
+    if(/* !hasThumb ||  */(doc.size > MAX_FILE_SAVE_SIZE && !uploadingFileName)) {
+      preloader.setManual();
+      preloader.attach(downloadDiv);
+      preloader.preloader.classList.add('manual');
+      preloader.setDownloadFunction(load);
+      return;
+    }
+
+    if(canSaveToCache) {
+      docDiv.classList.add('downloaded');
+    }
+
+    if(downloadDiv) {
+      if(downloadDiv !== icoDiv) {
+        const _downloadDiv = downloadDiv;
+        setTimeout(() => {
+          _downloadDiv.remove();
+        }, 200);
+      }
+
+      downloadDiv = null;
+    }
+
+    if(preloader) {
+      preloader = null;
+    }
+  };
+
+  const addByteProgress = (promise: CancellablePromise<any>) => {
+    docDiv.classList.add('downloading');
+
+    const sizeContainer = document.createElement('span');
+    const _bytesContainer = formatBytes(doc.size);
+    sizeContainer.style.position = 'absolute';
+    sizeContainer.style.insetInlineStart = '0';
+    // a transfer that failed or was cancelled leaves the row as it was, as a failed download does; one
+    // that is done shows the file once its progress has come round to the end
+    promise.then(() => preloader?.whenCaughtUp()).then(onLoad, () => docDiv.classList.remove('downloading')).finally(() => {
+      // sizeContainer.replaceWith(bytesContainer);
+      bytesContainer.style.visibility = '';
+      sizeContainer.remove();
+      // b && b.classList.remove('hide');
+    });
+
+    // b && b.classList.add('hide');
+
+    const format = (bytes: number) => formatBytes(bytes);
+    let d = format(0);
+    bytesContainer.style.visibility = 'hidden';
+    // bytesContainer.replaceWith(sizeContainer);
+    sizeContainer.append(d, bytesJoiner, _bytesContainer);
+    bytesContainer.parentElement.append(sizeContainer);
+    promise.addNotifyListener((progress: Progress) => {
+      const _d = format(progress.done);
+      d.replaceWith(_d);
+      d = _d;
+    });
+  };
+
+  // ! DO NOT USE ASYNC/AWAIT HERE ! SAFARI WON'T LET DOWNLOAD THE FILE BECAUSE OF ASYNC
+  const load = (e?: Event, onlyAttach?: boolean) => {
+    const save = !e || e.isTrusted;
+    const doc = (docDiv as any).doc;
+    // const doc = await managers.appDocsManager.getDoc(docDiv.dataset.docId);
+    let download: CancellablePromise<any>;
+    const queueId = hotReloadGuard.appImManager.chat?.bubbles?.lazyLoadQueue.queueId;
+    if(onlyAttach) {
+      download = appDownloadManager.attachToDownloadToDisc(doc);
+    } else if(!save) {
+      download = appDownloadManager.downloadToDisc({media: doc, queueId}, true);
+    } else if(isMarkdown(doc)) {
+      download = appDownloadManager.downloadMedia({media: doc, queueId});
+      download.then(readBlobAsText).then((raw) => {
+        openMarkdownInstantView({
+          raw,
+          HotReloadGuardProvider: SolidJSHotReloadGuardProvider
+        });
+      }).catch(noop);
+    } else if(doc.type === 'pdf' && false) {
+      const canOpenAfter = /* managers.appDocsManager.downloading.has(doc.id) ||  */!preloader || preloader.detached;
+      download = appDownloadManager.downloadMediaURL({media: doc, queueId});
+      if(canOpenAfter) {
+        download.then(() => {
+          setTimeout(async() => { // wait for preloader animation end
+            const url = (getCacheContext()).url;
+            window.open(url);
+          }, liteMode.isAvailable('animations') ? 250 : 0);
+        });
+      }
+    } else if(isViewable(doc)) {
+      download = appDownloadManager.downloadMediaURL({media: doc, queueId});
+    } else {
+      download = appDownloadManager.downloadToDisc({media: doc, queueId});
+
+      if(isIpRevealingMimeType(doc.mime_type) || isIpRevealingExtension(ext)) {
+        confirmationPopup({
+          descriptionLangKey: 'Chat.File.QuickLook.Svg',
+          button: {
+            langKey: 'OK',
+            isCancel: true
+          }
+        });
+      }
+    }
+
+    download.catch(() => {
+      docDiv.classList.remove('downloading');
+    });
+
+    if(downloadDiv) {
+      preloader.attach(downloadDiv, true, download);
+      addByteProgress(download);
+    }
+  };
+
+  const {fileName: downloadFileName} = getDownloadMediaDetails({media: doc, downloadId: '1'});
+  if(await managers.apiFileManager.isDownloading(downloadFileName)) {
+    downloadDiv = docDiv.querySelector('.document-download') || icoDiv;
+    // * the save may be over by the time this reaches it: then the file waits for a click
+    const promise = appDownloadManager.attachToDownloadToDisc(doc);
+
+    preloader = new ProgressivePreloader();
+    preloader.attach(downloadDiv, false, promise);
+    preloader.setDownloadFunction(load);
+    addByteProgress(promise);
+  } else if(!cacheContext.downloaded || uploadingFileName) {
+    downloadDiv = docDiv.querySelector('.document-download') || icoDiv;
+    preloader = new ProgressivePreloader({
+      isUpload: !!uploadingFileName
+    });
+
+    if(!uploadingFileName) {
+      preloader.construct();
+      preloader.setManual();
+      preloader.attach(downloadDiv);
+      preloader.setDownloadFunction(load);
+
+      if(autoDownloadSize !== undefined && autoDownloadSize >= doc.size) {
+        simulateClickEvent(preloader.preloader);
+      }
+    } else {
+      const uploadPromise = appDownloadManager.getUpload(uploadingFileName);
+      preloader.attachPromise(uploadPromise);
+      preloader.attach(downloadDiv);
+      addByteProgress(uploadPromise);
+    }
+  }
+
+  attachClickEvent(docDiv, (e) => {
+    if(findUpClassName(e.target, 'time')) { // prevent downloading by clicking on time
+      return;
+    }
+
+    if(preloader) {
+      preloader.onClick(e);
+    } else if(canOpen) {
+      load(e);
+    }
+  });
+
+  attachToDownloadOfRow.set(docDiv, () => {
+    if(preloader?.preloader.classList.contains('manual')) {
+      load(undefined, true);
+    }
+  });
+
+  return docDiv;
+}

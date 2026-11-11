@@ -1,0 +1,134 @@
+@use "../shared" as *;
+
+.simple-message-input {
+  &-container {
+    --height: 3rem;
+    --max-height: 8.375rem;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin: var(--section-padding-bottom) var(--section-padding-inline);
+    border-radius: $section-rounded-border-radius;
+    background-color: var(--surface-color);
+    min-height: var(--height);
+    max-height: var(--max-height);
+    position: relative;
+    flex: 0 0 auto;
+    overflow: hidden;
+    box-shadow: var(--section-box-shadow);
+
+    // * the AI button stands over Send from the third line, where the field alone is too short for the two
+    &.has-ai-editor-button {
+      min-height: 5.75rem;
+    }
+
+    // &:before {
+    //   content: " ";
+    //   position: absolute;
+    //   height: 1px;
+    //   top: 0;
+    //   left: 0;
+    //   right: 0;
+    //   background-color: var(--border-color);
+    //   opacity: 0;
+
+    //   @include animation-level(2) {
+    //     transition: opacity var(--transition-standard-in);
+    //   }
+    // }
+
+    // &.has-border-top:before {
+    //   opacity: 1;
+    // }
+  }
+
+  &-inputs {
+    --imc-padding-inline-start: .125rem;
+    --imc-padding-inline-end: .125rem;
+    // * not the container's: grown for the AI button, it would keep the field tall enough to keep it
+    min-height: var(--height);
+    max-height: inherit;
+  }
+
+  &-input {
+    max-height: inherit !important;
+  }
+
+  // * a signed count, `(-8)`: it reads left to right in any layout
+  &-limit {
+    direction: ltr;
+    unicode-bidi: isolate;
+    align-self: flex-end;
+    color: var(--secondary-text-color);
+    flex: 0 0 auto;
+    font-size: .75rem;
+    line-height: 1rem;
+    margin: 0 .25rem calc((var(--height) - 1rem) / 2);
+    pointer-events: none;
+
+    &:empty {
+      display: none;
+    }
+
+    &.error {
+      color: var(--danger-color);
+    }
+  }
+
+  // * round, as the chat's Send; a price widens it into a pill
+  &-confirm {
+    --size: 2.5rem;
+    flex: 0 0 auto;
+    width: auto;
+    min-width: var(--size);
+    padding: 0 .5rem;
+    height: var(--size);
+    line-height: var(--size);
+    text-transform: uppercase;
+    margin-block: 0 .25rem;
+    margin-inline: 0 .25rem;
+    overflow: unset;
+    border-radius: calc(var(--size) / 2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    &-content {
+      display: grid;
+      place-items: center;
+      pointer-events: none;
+
+      &-item {
+        grid-area: 1 / 1;
+      }
+    }
+
+    // * the chat's Send plane: its size and the nudge that centres it by eye
+    &-icon {
+      font-size: 1.375rem;
+      margin-inline-start: -3px;
+      margin-bottom: -1px;
+    }
+
+    &-inner {
+      display: flex;
+      align-items: center;
+      gap: 0.125rem;
+
+      &-star {
+        font-size: 1.125rem;
+      }
+    }
+  }
+
+  &-emoji {
+    margin-bottom: .25rem;
+    margin-inline-start: .25rem;
+  }
+
+  // * in the corner, over Send
+  &-ai-button {
+    top: .25rem;
+    inset-inline-end: .25rem;
+  }
+}

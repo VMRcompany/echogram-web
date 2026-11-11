@@ -1,0 +1,621 @@
+/*
+ * The rest: composer popups, invites, mini apps, verification.
+ *
+ * Popup modules are imported inside `open()` — see the note in `confirmations.ts`.
+ */
+
+import noop from '@helpers/noop';
+import browserStyles from '@components/browser.module.scss';
+import type {AiSendStyle} from '@components/chat/aiSendStyles';
+import {defineStories, PopupStory} from '../registry';
+import type {PopupStoryContext} from '../context';
+
+import {
+  EMBEDDED_PAGE_URL,
+  channelChat,
+  checkedGiftCode,
+  myBoosts,
+  passwordState,
+  premiumGiftOptions,
+  selfUser,
+  starsGiveawayOptions,
+  stickerDocument,
+  storyItem,
+  userFullWithRating
+} from '../fixtures';
+
+// * the AI editor on a draft, as the composer's button opens it; with `savedSendStyle`, the request the chat keeps
+async function openAiEditorStory(ctx: PopupStoryContext, savedSendStyle?: AiSendStyle) {
+  const [{openAiEditorPopup}, {default: HotReloadGuard}] = await Promise.all([
+    import('@components/popups/aiEditorPopup'),
+    import('@lib/solidjs/hotReloadGuardProvider')
+  ]);
+
+  openAiEditorPopup({
+    peerId: ctx.peer('private'),
+    text: {_: 'textWithEntities', text: 'a draft the editor will rewrite', entities: []},
+    onApply: noop,
+    onSend: () => true,
+    savedSendStyle,
+    onSaveSendStyle: () => true
+  }, HotReloadGuard);
+}
+
+// * a real photo: a real preview size also exercises the edit/spoiler/delete controls
+async function loadSandboxPhoto(name: string) {
+  const {CHAT_INPUT_EDITOR_TEST_MEDIA_URL} = await import('@components/chat/inputEditor/testData');
+  const response = await fetch(CHAT_INPUT_EDITOR_TEST_MEDIA_URL);
+  if(!response.ok) throw new Error('Sandbox media fixture could not be loaded');
+  return new File([await response.blob()], name, {type: 'image/jpeg'});
+}
+
+defineStories('Live streams', [false, true].map((active) => ({
+  id: `rtmp/${active ? 'active' : 'start'}`,
+  fixtureOnly: true,
+  title: active ? 'Live stream settings' : 'Start a live stream',
+  managers: {
+    appGroupCallsManager: {
+      fetchRtmpUrl: (_peerId: PeerId, revoke: boolean) => ({
+        url: 'rtmp://localhost/sandbox',
+        key: revoke ? 'sandbox-revoked-key' : 'sandbox-stream-key'
+      })
+    }
+  },
+  open: async(ctx) => {
+    const {showRtmpStartStreamPopup} = await import('@components/rtmp/adminPopup');
+    showRtmpStartStreamPopup({peerId: ctx.peer('channel'), active, onEndStream: noop});
+  }
+})));
+
+defineStories('Composer & bots', [
+  {
+    id: 'checklist',
+    title: 'New checklist',
+    open: async(ctx) => {
+      const {default: showChecklistPopup} = await import('@components/popups/checklist');
+      showChecklistPopup({chat: ctx.chat()});
+    }
+  },
+  {
+    id: 'musicSearch',
+    title: 'Music picker',
+    managers: {
+      appSavedMusicManager: {getSavedMusic: () => ({documents: [] as any[], count: 0, isEnd: true})}
+    },
+    open: async(ctx) => {
+      const {default: showMusicSearchPopup} = await import('@components/popups/musicSearch');
+      showMusicSearchPopup({chat: ctx.chat()});
+    }
+  },
+  {
+    id: 'newMedia',
+    fixtureOnly: true,
+    title: 'Attach media',
+    open: async(ctx) => {
+      const {default: showNewMediaPopup} = await import('@components/popups/newMedia');
+      showNewMediaPopup(ctx.chat(), [await loadSandboxPhoto('sandbox-photo.jpg')], 'media');
+    }
+  },
+  {
+    // an empty file is left out of what is sent, named in a toast (tdesktop's FileIsEmpty)
+    id: 'newMedia/empty',
+    fixtureOnly: true,
+    title: 'Attach media with an empty file',
+    open: async(ctx) => {
+      const {default: showNewMediaPopup} = await import('@components/popups/newMedia');
+      showNewMediaPopup(ctx.chat(), [await loadSandboxPhoto('sandbox-photo.jpg'), new File([], 'empty.txt', {type: 'text/plain'})], 'media');
+    }
+  },
+  {
+    // a track is named, and shows its cover, by its own tags
+    id: 'newMedia/music',
+    fixtureOnly: true,
+    title: 'Attach a tagged track',
+    open: async(ctx) => {
+      const {default: showNewMediaPopup} = await import('@components/popups/newMedia');
+      const {makeMp3, id3TextFrame, id3PictureFrame} = await import('@/tests/fixtures/taggedMp3');
+      const {default: canvasToBlob} = await import('@helpers/canvas/canvasToBlob');
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 64;
+      const context = canvas.getContext('2d');
+      const gradient = context.createLinearGradient(0, 0, 64, 64);
+      gradient.addColorStop(0, '#ff8a00');
+      gradient.addColorStop(1, '#5b2ee5');
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, 64, 64);
+      const cover = await canvasToBlob(canvas, 'image/png');
+      const mp3 = makeMp3([
+        // long enough to be cut short before the row's delete button
+        id3TextFrame('TIT2', 'Sandbox Song With a Name Too Long for One Row', 1),
+        id3TextFrame('TPE1', 'Sandbox Artist', 0),
+        id3PictureFrame('image/png', new Uint8Array(await cover.arrayBuffer()))
+      ]);
+      showNewMediaPopup(ctx.chat(), [new File([mp3], 'sandbox-track.mp3', {type: 'audio/mpeg'})], 'document');
+    }
+  },
+  {
+    id: 'newMedia/video',
+    fixtureOnly: true,
+    title: 'Attach video',
+    open: async(ctx) => {
+      const {default: showNewMediaPopup} = await import('@components/popups/newMedia');
+      const {default: url} = await import('@/tests/fixtures/ephemeralBot/media/video.mp4?url');
+      const blob = await (await fetch(url)).blob();
+      const file = new File([blob], 'sandbox-video.mp4', {type: 'video/mp4'});
+      showNewMediaPopup(ctx.chat(), [file], 'media');
+    }
+  },
+  // the ⋮ menu offers Archive for an added set; an archived one is offered to be added back
+  ...(['new', 'added', 'archived'] as const).map((state): Omit<PopupStory, 'group'> => ({
+    id: state === 'new' ? 'stickers' : `stickers/${state}`,
+    fixtureOnly: true,
+    title: {new: 'Sticker set preview', added: 'Added sticker set', archived: 'Archived sticker set'}[state],
+    managers: {
+      appStickersManager: {
+        getStickerSet: () => ({
+          set: {
+            _: 'stickerSet',
+            pFlags: state === 'archived' ? {archived: true} : {},
+            id: '8001',
+            access_hash: '8001',
+            title: 'Sandbox Stickers',
+            short_name: 'sandbox_stickers',
+            count: 1,
+            hash: 0,
+            // an archived set keeps its installed_date
+            installed_date: state === 'new' ? undefined : 1700000000
+          },
+          documents: [stickerDocument],
+          packs: []
+        })
+      }
+    },
+    open: async() => {
+      const {default: showStickersPopup} = await import('@components/popups/stickers');
+      showStickersPopup({_: 'inputStickerSetShortName', short_name: 'sandbox_stickers'});
+    }
+  })),
+  // a chat that forbids copying shows the text with nothing to copy it by
+  ...[false, true].map((noForwards): Omit<PopupStory, 'group'> => ({
+    id: noForwards ? 'translate/noForwards' : 'translate',
+    title: noForwards ? 'Translate a message that cannot be copied' : 'Translate a message',
+    managers: {
+      appTranslationsManager: {
+        translateText: () => ({_: 'textWithEntities', text: 'Переведённый текст', entities: []})
+      }
+    },
+    open: async(ctx) => {
+      const [{openTranslatePopup}, {default: HotReloadGuard}] = await Promise.all([
+        import('@components/popups/translate'),
+        import('@lib/solidjs/hotReloadGuardProvider')
+      ]);
+
+      openTranslatePopup({
+        peerId: ctx.peer('private'),
+        message: ctx.message('private'),
+        detectedLanguage: 'en',
+        noForwards
+      }, HotReloadGuard);
+    }
+  })),
+  {
+    // layer 229 in a page: rows of buttons, buttons inside the text, a folded quote, a compact
+    // table. Read outside a message, only links, copying and profiles act; a callback is inert.
+    id: 'instantView/layer229',
+    title: 'Instant View — buttons and folded quotes',
+    // a page opens in the in-app browser, not in a popup; the page itself is made up
+    surface: `.${browserStyles.Browser}`,
+    fixtureOnly: true,
+    open: async() => {
+      const [{openInstantViewInAppBrowser, closeInAppBrowser}, {default: HotReloadGuard}] = await Promise.all([
+        import('@components/browser'),
+        import('@lib/solidjs/hotReloadGuardProvider')
+      ]);
+      const text = (value: string) => ({_: 'textPlain' as const, text: value});
+      const cell = (value: string) => ({_: 'pageTableCell' as const, pFlags: {}, text: text(value)});
+      openInstantViewInAppBrowser({
+        cachedPage: {
+          _: 'page',
+          pFlags: {},
+          url: 'https://telegram.org/sandbox',
+          photos: [],
+          documents: [],
+          views: 0,
+          blocks: [
+            {_: 'pageBlockTitle', text: text('Buttons in a page')},
+            {_: 'pageBlockParagraph', text: {_: 'textConcat', texts: [
+              text('Read '),
+              {_: 'textButton', text: text('the docs'), type: {_: 'inlineButtonTypeUrl', url: 'https://core.telegram.org'}},
+              text(' or '),
+              {
+                _: 'textButton',
+                text: text('copy the code'),
+                type: {_: 'inlineButtonTypeCopy', copy_text: 'TELEGRAM'},
+                style: {_: 'richButtonStyle', pFlags: {link: true}}
+              },
+              text(' — both work anywhere.')
+            ]}},
+            {_: 'pageBlockButtonRow', pFlags: {}, buttons: [
+              {
+                _: 'pageButton',
+                text: text('Open site'),
+                type: {_: 'inlineButtonTypeUrl', url: 'https://telegram.org'},
+                style: {_: 'richButtonStyle', pFlags: {bg_primary: true}}
+              },
+              {_: 'pageButton', text: text('Copy'), type: {_: 'inlineButtonTypeCopy', copy_text: 'TELEGRAM'}},
+              {_: 'pageButton', text: text('Vote'), type: {_: 'inlineButtonTypeCallback', pFlags: {}, data: new Uint8Array([1])}}
+            ]},
+            {_: 'pageBlockButtonRow', pFlags: {align_right: true}, buttons: [
+              {
+                _: 'pageButton',
+                text: text('Accept'),
+                type: {_: 'inlineButtonTypeDisabled'},
+                style: {_: 'richButtonStyle', pFlags: {bg_success: true}}
+              },
+              {
+                _: 'pageButton',
+                text: text('Decline'),
+                type: {_: 'inlineButtonTypeCopy', copy_text: 'no'},
+                style: {_: 'richButtonStyle', pFlags: {bg_danger: true}}
+              }
+            ]},
+            {
+              _: 'pageBlockBlockquote',
+              pFlags: {collapsed: true},
+              text: text('A folded quote keeps a few lines in sight.\nThe rest waits for a click.\nLine three.\nLine four.\nLine five.'),
+              caption: text('Author')
+            },
+            {_: 'pageBlockTable', pFlags: {bordered: true, compact: true}, title: text('Compact table'), rows: [
+              {_: 'pageTableRow', cells: [cell('One'), cell('Two')]},
+              {_: 'pageTableRow', cells: [cell('Three'), cell('Four')]}
+            ]}
+          ]
+        },
+        HotReloadGuardProvider: HotReloadGuard
+      });
+      return closeInAppBrowser;
+    }
+  },
+  {
+    id: 'aiEditor',
+    title: 'AI editor',
+    open: (ctx) => openAiEditorStory(ctx)
+  },
+  {
+    // * opened with a request kept for the chat: on its tab, made on the draft, with "Always use in this chat" on
+    id: 'aiEditor/applyOnSend',
+    title: 'AI editor — applied on send',
+    managers: {
+      aiTonesManager: {
+        composeMessageWithAi: () => ({ok: true, data: {
+          resultText: {_: 'textWithEntities', text: 'A draft the editor will rewrite.', entities: []}
+        }})
+      }
+    },
+    open: (ctx) => openAiEditorStory(ctx, {proofRead: true})
+  },
+  {
+    // A local document tests the iframe chrome without booting another Telegram client.
+    id: 'webApp/miniApp',
+    fixtureOnly: true,
+    title: 'Mini app',
+    managers: (ctx) => ({
+      appProfileManager: {
+        getProfile: () => ({
+          _: 'userFull',
+          pFlags: {},
+          id: ctx.peer('bot'),
+          settings: {_: 'peerSettings', pFlags: {}},
+          bot_info: {_: 'botInfo', pFlags: {}, user_id: ctx.peer('bot'), description: 'A sandbox mini app'}
+        })
+      }
+    }),
+    open: async(ctx) => {
+      const {default: showWebAppPopup} = await import('@components/popups/webApp');
+      showWebAppPopup({
+        webViewResultUrl: {_: 'webViewResultUrl', pFlags: {}, query_id: '1', url: EMBEDDED_PAGE_URL},
+        webViewOptions: {botId: ctx.peer('bot').toUserId(), peerId: ctx.peer('private')}
+      });
+    }
+  },
+  {
+    id: 'payment/verification',
+    fixtureOnly: true,
+    title: 'Payment verification (3-D Secure)',
+    open: async(ctx) => {
+      const {default: showPaymentVerificationPopup} = await import('@components/popups/paymentVerification');
+      showPaymentVerificationPopup({url: EMBEDDED_PAGE_URL});
+    }
+  },
+  {
+    id: 'webApp/preparedMessage',
+    fixtureOnly: true,
+    title: 'Mini app wants to share a message',
+    open: async(ctx) => {
+      const {default: showWebAppPreparedMessagePopup} = await import('@components/popups/webAppPreparedMessage');
+      showWebAppPreparedMessagePopup({
+        botId: ctx.peer('bot').toUserId(),
+        message: {
+          _: 'messages.preparedInlineMessage',
+          query_id: '1',
+          result: {
+            _: 'botInlineResult',
+            id: '1',
+            type: 'article',
+            title: 'A prepared message',
+            description: 'sent on the bot’s behalf',
+            send_message: {
+              _: 'botInlineMessageText',
+              pFlags: {},
+              message: 'Sent from a mini app'
+            }
+          },
+          peer_types: [{_: 'inlineQueryPeerTypePM'}],
+          cache_time: 300,
+          users: []
+        }
+      });
+    }
+  },
+  {
+    id: 'webApp/emojiStatusAccess',
+    fixtureOnly: true,
+    title: 'Mini app wants to set your emoji status',
+    open: async(ctx) => {
+      const {default: showWebAppEmojiStatusAccessPopup} = await import('@components/popups/webAppEmojiStatusAccess');
+      showWebAppEmojiStatusAccessPopup({
+        botId: ctx.peer('bot'),
+        sticker: stickerDocument,
+        period: 3600,
+        onFinish: noop
+      });
+    }
+  }
+]);
+
+defineStories('Boosts & invites', [
+  {
+    id: 'giftLink',
+    fixtureOnly: true,
+    title: 'Gift code link',
+    managers: {
+      appPaymentsManager: {checkGiftCode: () => checkedGiftCode}
+    },
+    open: async(ctx) => {
+      const {default: showGiftLinkPopup} = await import('@components/popups/giftLink');
+      showGiftLinkPopup('sandbox-gift-code');
+    }
+  },
+  {
+    id: 'reassignBoost',
+    fixtureOnly: true,
+    title: 'Reassign a boost',
+    open: async(ctx) => {
+      const [{default: showReassignBoostPopup}, {mockAppConfig}] = await Promise.all([
+        import('@components/popups/reassignBoost'),
+        import('../mockManagers')
+      ]);
+
+      showReassignBoostPopup(ctx.peer('channel'), myBoosts, mockAppConfig);
+    }
+  },
+  {
+    id: 'boostsViaGifts',
+    title: 'Boost via a giveaway',
+    managers: {
+      appPaymentsManager: {
+        getPremiumGiftCodeOptions: () => premiumGiftOptions,
+        getStarsGiveawayOptions: () => starsGiveawayOptions
+      },
+      appProfileManager: {getChannelFull: () => ({_: 'channelFull', pFlags: {}, id: channelChat.id})}
+    },
+    open: async(ctx) => {
+      const {default: showBoostsViaGiftsPopup} = await import('@components/popups/boostsViaGifts');
+      showBoostsViaGiftsPopup(ctx.peer('channel'));
+    }
+  },
+  {
+    id: 'chooseStory',
+    title: 'Choose a story for an album',
+    managers: {
+      appStoriesManager: {
+        getStoriesArchive: () => ({count: 1, stories: [storyItem], pinnedToTop: undefined as any[]}),
+        getPinnedStories: () => ({count: 1, stories: [storyItem], pinnedToTop: undefined as any[]}),
+        cantPinDeleteStories: () => ({cantPin: false, cantDelete: false}),
+        getAlbums: () => [] as any[],
+        hasRights: () => true,
+        hasRightsMany: () => true
+      }
+    },
+    open: async(ctx) => {
+      const {default: showChooseStoryPopup} = await import('@components/popups/chooseStoryPopup');
+      showChooseStoryPopup({peerId: ctx.peer('self'), albumId: 1, onFinish: noop});
+    }
+  }
+]);
+
+defineStories('Stars & payments (more)', [
+  {
+    id: 'starsRating',
+    fixtureOnly: true,
+    title: 'Stars rating',
+    open: async(ctx) => {
+      const {default: showStarsRatingPopup} = await import('@components/popups/starsRating');
+      showStarsRatingPopup({user: selfUser, userFull: userFullWithRating});
+    }
+  },
+  {
+    id: 'starReaction',
+    title: 'Send a paid (star) reaction',
+    open: async(ctx) => {
+      const {default: showStarReactionPopup} = await import('@components/popups/starReaction');
+      showStarReactionPopup(ctx.peer('channel'), ctx.mid('channel'), ctx.chat());
+    }
+  },
+  {
+    // `createPaymentPopup` is the real entry: it resolves the form, then picks the card popup or
+    // the Stars one from its type. Both stories go through it so that choice is exercised too.
+    id: 'payment/invoice',
+    fixtureOnly: true,
+    title: 'Invoice checkout',
+    open: async(ctx) => {
+      const [{createPaymentPopup}, {paymentForm}] = await Promise.all([
+        import('@components/popups/payment'),
+        import('../fixtures')
+      ]);
+
+      await createPaymentPopup({
+        paymentForm,
+        inputInvoice: {_: 'inputInvoiceMessage', peer: {_: 'inputPeerSelf'}, msg_id: ctx.mid('private')}
+      });
+    }
+  },
+  {
+    // Saved shipping information on the account: the rows come filled, and validating them — which
+    // is what hands them to the bot — waits for the user to press Pay.
+    id: 'payment/invoiceSavedInfo',
+    fixtureOnly: true,
+    title: 'Invoice checkout with saved information',
+    open: async(ctx) => {
+      const [{createPaymentPopup}, {paymentForm, savedPaymentInfo}] = await Promise.all([
+        import('@components/popups/payment'),
+        import('../fixtures')
+      ]);
+
+      await createPaymentPopup({
+        paymentForm: {...paymentForm, saved_info: savedPaymentInfo},
+        inputInvoice: {_: 'inputInvoiceMessage', peer: {_: 'inputPeerSelf'}, msg_id: ctx.mid('private')}
+      });
+    }
+  },
+  {
+    id: 'payment/starsPay',
+    fixtureOnly: true,
+    title: 'Pay with Stars',
+    open: async(ctx) => {
+      const [{createPaymentPopup}, {starsPaymentForm}] = await Promise.all([
+        import('@components/popups/payment'),
+        import('../fixtures')
+      ]);
+
+      await createPaymentPopup({
+        paymentForm: starsPaymentForm,
+        inputInvoice: {_: 'inputInvoiceMessage', peer: {_: 'inputPeerSelf'}, msg_id: ctx.mid('private')}
+      });
+    }
+  },
+  {
+    id: 'payment/cardConfirmation',
+    fixtureOnly: true,
+    title: 'Confirm a saved card',
+    open: async(ctx) => {
+      const {default: showPaymentCardConfirmationPopup} = await import('@components/popups/paymentCardConfirmation');
+      showPaymentCardConfirmationPopup({card: 'Visa •••• 4242', passwordState});
+    }
+  },
+  {
+    id: 'emailSetup',
+    fixtureOnly: true,
+    title: 'Add a login email',
+    open: async(ctx) => {
+      const {showEmailSetupPopup} = await import('@components/popups/emailSetup');
+      showEmailSetupPopup({purpose: {_: 'emailVerifyPurposeLoginChange'}, noskip: false});
+    }
+  }
+]);
+
+// fixture-only: the purchase is made up, and there is no telling which username or number of a
+// live session's peers was bought on Fragment
+defineStories('Profile', (['username', 'phone'] as const).map((type) => ({
+  id: `collectibleInfo/${type}`,
+  fixtureOnly: true,
+  title: type === 'username' ? 'Collectible username' : 'Collectible phone number',
+  managers: {
+    appProfileManager: {
+      getCollectibleInfo: () => ({
+        _: 'fragment.collectibleInfo',
+        purchase_date: 1667260800,
+        currency: 'USD',
+        amount: 1290000,
+        crypto_currency: 'TON',
+        crypto_amount: '5000000000000',
+        url: 'https://fragment.com'
+      })
+    }
+  },
+  open: async(ctx) => {
+    const {default: showCollectibleInfoPopup} = await import('@components/popups/collectibleInfo');
+    const peerId = ctx.peer('private');
+    showCollectibleInfoPopup(type === 'username' ? {peerId, username: 'sandbox'} : {peerId, phone: '88800809944'});
+  }
+})));
+
+// the profile a click on a sender's avatar shows: its full peer, and the stories it looks up for the
+// photo (none); the rest of it is the default manager answers
+// * the profile is the sidebar's tab, shared media included: nothing in it, no stories, no channels
+// * like this one
+const peerProfileManagers = (getProfileByPeerId: (peerId: PeerId) => object) => ({
+  appProfileManager: {
+    getProfileByPeerId,
+    getProfile: (userId: UserId) => getProfileByPeerId(userId.toPeerId(false))
+  },
+  appMessagesManager: {
+    getSearchCounters: (peerId: PeerId, filters: {_: string}[]) => filters.map((filter) => ({
+      _: 'messages.searchCounter',
+      pFlags: {},
+      filter,
+      count: 0
+    }))
+  },
+  appChatsManager: {
+    getChannelRecommendations: () => ({_: 'messages.chats', chats: [] as any[]})
+  },
+  appStoriesManager: {
+    getPeerStories: (peerId: PeerId) => ({
+      _: 'peerStories',
+      pFlags: {},
+      peer: peerId.isUser() ?
+        {_: 'peerUser', user_id: peerId.toUserId()} :
+        {_: 'peerChannel', channel_id: peerId.toChatId()},
+      stories: [] as any[]
+    }),
+    getPinnedStories: () => ({count: 0, stories: [] as any[]}),
+    getStoriesArchive: () => ({count: 0, stories: [] as any[]})
+  }
+});
+
+defineStories('Profile', [
+  {
+    id: 'peerProfile/user',
+    title: 'Profile — a user',
+    managers: peerProfileManagers((peerId) => ({
+      _: 'userFull',
+      pFlags: {},
+      id: peerId.toUserId(),
+      about: 'Writes the sandbox stories',
+      settings: {_: 'peerSettings', pFlags: {}}
+    })),
+    open: async(ctx) => {
+      const {default: showPeerProfilePopup} = await import('@components/popups/peerProfile');
+      await showPeerProfilePopup({peerId: ctx.peer('private')});
+    }
+  },
+  {
+    id: 'peerProfile/channel',
+    title: 'Profile — a channel',
+    managers: peerProfileManagers((peerId) => ({
+      _: 'channelFull',
+      pFlags: {},
+      id: peerId.toChatId(),
+      about: 'News of the sandbox'
+    })),
+    open: async(ctx) => {
+      const {default: showPeerProfilePopup} = await import('@components/popups/peerProfile');
+      await showPeerProfilePopup({peerId: ctx.peer('channel')});
+    }
+  }
+]);
+
+// The sandbox reloads on an edit anyway (watchForEdits). Accepting here keeps an edit of a popup this story imports
+// from climbing through the story to the app's root once the sandbox has been opened on the dev server.
+if(import.meta.hot) import.meta.hot.accept();

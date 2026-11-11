@@ -1,0 +1,215 @@
+import {createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount} from 'solid-js';
+
+import {doubleRaf} from '@helpers/schedulers';
+import {hexToRgb} from '@helpers/color';
+import I18n from '@lib/langPack';
+import Modes from '@config/modes';
+import _ColorPicker from '@components/colorPicker';
+import ripple from '@components/ripple';
+
+import {useMediaEditorContext} from '@components/mediaEditor/context';
+import {delay} from '@components/mediaEditor/utils';
+import A11yButton from '@components/a11yButton';
+
+
+export const colorPickerSwatches = [
+  '#ffffff',
+  '#fe4438',
+  '#ff8901',
+  '#ffd60a',
+  '#33c759',
+  '#62e5e0',
+  '#0a84ff',
+  '#bd5cf3'
+];
+
+const normalPickerWidth = 200;
+const pickerHeight = 120;
+const normalSliderWidth = 304;
+const normalContainerSize = 384;
+
+
+export default function ColorPicker(props: {
+  value: string;
+  onChange: (value: string) => void;
+  colorKey?: string; // Just for reaction, not used to access anything
+  previousColor?: string;
+}) {
+  const {actions} = useMediaEditorContext();
+
+  const [collapsed, setCollapsed] = createSignal(colorPickerSwatches.includes(props.value));
+  const [collapsing, setCollapsing] = createSignal(false);
+  const swatchGroup = createUniqueId();
+
+  const [containerSize, setContainerSize] = createSignal(normalContainerSize);
+
+  const pickerBoxWidth = createMemo(() => Math.max(0, normalPickerWidth + containerSize() - normalContainerSize));
+  const sliderWidth = createMemo(() => Math.max(0, normalSliderWidth + containerSize() - normalContainerSize));
+
+  let sizeContainer: HTMLDivElement;
+
+  const anySwatchActive = createMemo(() => collapsed() && colorPickerSwatches.includes(props.value));
+
+  const swatch = (hexColor: string, i: number) => {
+    const isActive = () => props.value === hexColor && collapsed();
+    if(!Modes.a11y) return (
+      <div
+        class="media-editor__color-picker-swatch"
+        classList={{'media-editor__color-picker-swatch--active': isActive()}}
+        style={{
+          '--color-rgb': hexToRgb(hexColor).join(' '),
+          '--i': i
+        }}
+        onClick={() => props.onChange(hexColor)}
+      >
+        <div class="media-editor__color-picker-swatch-color" />
+      </div>
+    );
+
+    // Roving tabindex: the checked swatch is tabbable; when none is checked,
+    // the first swatch is the group's tab stop.
+    const isTabbable = () => isActive() || (!anySwatchActive() && i === 0);
+    return (
+      <label
+        class="media-editor__color-picker-swatch"
+        classList={{'media-editor__color-picker-swatch--active': isActive()}}
+        style={{
+          '--color-rgb': hexToRgb(hexColor).join(' '),
+          '--i': i
+        }}
+        aria-hidden={!collapsed()}
+      >
+        <input
+          class="media-editor__color-picker-swatch-input"
+          type="radio"
+          name={swatchGroup}
+          value={hexColor}
+          checked={isActive()}
+          disabled={!collapsed()}
+          aria-label={hexColor}
+          tabindex={isTabbable() ? 0 : -1}
+          onChange={(event) => event.currentTarget.checked && props.onChange(hexColor)}
+        />
+        <div class="media-editor__color-picker-swatch-color" />
+      </label>
+    );
+  };
+
+  const onCollapseToggle = async() => {
+    setCollapsed((prev) => !prev);
+    if(collapsed()) {
+      setCollapsing(true);
+      props.onChange(props.previousColor || colorPickerSwatches[0]);
+      await delay(200);
+      setCollapsing(false);
+    }
+  };
+
+  const colorPicker = new _ColorPicker({
+    buildLayout: (parts) => {
+      return (
+        <div
+          class="media-editor__color-picker"
+          classList={{'media-editor__color-picker--collapsed': collapsed()}}
+          style={{'--picker-height': pickerHeight + 'px'}}
+        >
+          <div
+            class="media-editor__color-picker-swatches"
+            role="group"
+            aria-label={I18n.format('SetColor', true)}
+          >
+            {colorPickerSwatches.map(swatch)}
+            <A11yButton
+              class="media-editor__color-picker-swatch media-editor__color-picker-swatch--gradient"
+              classList={{'media-editor__color-picker-swatch--active': !collapsed()}}
+              aria-label={I18n.format('MediaEditor.CustomColor', true)}
+              aria-expanded={!collapsed()}
+              aria-pressed={!collapsed()}
+              onClick={onCollapseToggle}
+            >
+              <div class="media-editor__color-picker-swatch-color" />
+            </A11yButton>
+
+            <div class="media-editor__color-picker-slider" inert={Modes.a11y && collapsed()} aria-hidden={collapsed()}>{parts.slider}</div>
+          </div>
+
+          <div class="media-editor__color-picker-layout-wrapper" inert={Modes.a11y && collapsed()} aria-hidden={collapsed()}>
+            <div class="media-editor__color-picker-layout">
+              <div class="media-editor__color-picker-box">{parts.pickerBox}</div>
+              <div class="media-editor__color-picker-inputs">
+                {parts.hexInput}
+                {parts.rgbInput}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) as HTMLDivElement;
+    },
+    pickerBoxWidth: pickerBoxWidth(),
+    pickerBoxHeight: pickerHeight,
+    sliderWidth: sliderWidth(),
+    thickSlider: true
+  });
+
+  colorPicker.onChange = (color) => {
+    if(color.hex !== props.value) props.onChange(color.hex);
+    actions.abortDrawerSlide();
+  };
+
+  colorPicker.container.querySelectorAll('.media-editor__color-picker-swatch').forEach((element) => {
+    ripple(element as HTMLElement);
+  });
+
+  onMount(() => {
+    setContainerSize(sizeContainer.clientWidth);
+
+    const observer = new ResizeObserver(() => {
+      setContainerSize(sizeContainer.clientWidth);
+    });
+
+    observer.observe(sizeContainer);
+
+    onCleanup(() => {
+      observer.disconnect();
+    });
+  });
+
+  createEffect(() => {
+    colorPicker.adjustSize({
+      pickerBoxWidth: pickerBoxWidth(),
+      pickerBoxHeight: pickerHeight,
+      sliderWidth: sliderWidth()
+    });
+  });
+
+  createEffect(
+    on(
+      () => props.colorKey,
+      async() => {
+        await delay(0);
+        const newCollapsed = colorPickerSwatches.includes(props.value);
+        if(newCollapsed !== collapsed()) {
+          setCollapsed(newCollapsed);
+          if(newCollapsed) {
+            setCollapsing(true);
+            delay(200).then(() => setCollapsing(false));
+          }
+        }
+      }
+    )
+  );
+
+  createEffect(
+    on(
+      () => [collapsing(), props.value],
+      async() => {
+        await doubleRaf();
+        if(!collapsing() && props.value !== colorPicker.getCurrentColor().hex) {
+          colorPicker.setColor(props.value);
+        }
+      }
+    )
+  );
+
+  return <div ref={sizeContainer}>{colorPicker.container}</div>;
+}

@@ -1,0 +1,274 @@
+import contextMenuController from '@helpers/contextMenuController';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import {AttachClickOptions, attachClickEvent, hasMouseMovedSinceDown} from '@helpers/dom/clickEvent';
+import ListenerSetter from '@helpers/listenerSetter';
+import ButtonIcon from '@components/buttonIcon';
+import ButtonMenu, {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
+import filterAsync from '@helpers/array/filterAsync';
+import {doubleRaf} from '@helpers/schedulers';
+import callbackify from '@helpers/callbackify';
+import {
+  DEFAULT_MENU_WINDOW_MARGIN,
+  FloatingMenuDirection,
+  MenuPositionPadding,
+  positionFloatingMenu,
+  positionMenuTrigger
+} from '@helpers/positionMenu';
+import {getAppWindow, getOverlayRoot} from '@helpers/appWindow';
+import {getFullScreenElement} from '@helpers/dom/fullScreen';
+import I18n from '@lib/langPack';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import ensureButtonSemantics from '@helpers/dom/ensureButtonSemantics';
+import Modes from '@config/modes';
+import verifyMenuItem from '@helpers/verifyMenuItem';
+
+// TODO: refactor for attachClickEvent, because if move finger after touchstart, it will start anyway
+export function ButtonMenuToggleHandler({
+  el,
+  onOpen,
+  options,
+  onClose
+}: {
+  el: HTMLElement,
+  onOpen?: (e: Event) => any,
+  options?: AttachClickOptions,
+  onClose?: () => void
+}) {
+  // a11y: announce this trigger opens a menu and reflect its open/closed state.
+  ensureButtonSemantics(el);
+
+  el.setAttribute('aria-haspopup', 'menu');
+  el.setAttribute('aria-expanded', 'false');
+
+  return attachClickEvent(el, (e) => {
+    if(!el.classList.contains('btn-menu-toggle') || hasMouseMovedSinceDown(e)) return false;
+
+    cancelEvent(e);
+
+    if(el.classList.contains('menu-open')) {
+      if(e.target && (e.target as HTMLElement).classList.contains('btn-menu')) {
+        return;
+      }
+
+      contextMenuController.close();
+    } else {
+      const result = onOpen?.(e);
+      const open = (element?: HTMLElement) => {
+        const openedMenu = element ?? el.querySelector('.btn-menu') as HTMLDivElement;
+        if(!openedMenu) {
+          return;
+        }
+
+        el.setAttribute('aria-expanded', 'true');
+        const activatedWithKeyboard = e.type === 'click' && (e as MouseEvent).detail === 0;
+        contextMenuController.openBtnMenu(openedMenu, () => {
+          el.setAttribute('aria-expanded', 'false');
+          onClose?.();
+        }, el, activatedWithKeyboard || !IS_TOUCH_SUPPORTED);
+      };
+
+      callbackify(result, open);
+    }
+  }, options);
+}
+
+export function filterButtonMenuItems(buttons: ButtonMenuItemOptionsVerifiable[]) {
+  return filterAsync(buttons, verifyMenuItem);
+}
+
+/**
+ * A menu whose every item fails its verify has nothing to open, so hide its trigger.
+ * Returns a function to call whenever something the verifies depend on has changed.
+ */
+export function createButtonMenuVisibility(
+  button: HTMLElement,
+  buttons: ButtonMenuItemOptionsVerifiable[],
+  hide?: () => boolean
+) {
+  let changeId = 0;
+  return () => {
+    const id = ++changeId;
+    void filterButtonMenuItems(buttons).then((items) => {
+      if(id === changeId) {
+        button.classList.toggle('hide', (hide?.() ?? false) || !items.length);
+      }
+    });
+  };
+}
+
+export type ButtonMenuDirection = 'bottom-left' | 'bottom-right' | 'bottom-center' | 'top-left' | 'top-right'
+
+export default function ButtonMenuToggle({
+  buttonOptions,
+  listenerSetter: attachListenerSetter,
+  container,
+  direction,
+  buttons,
+  onOpenBefore,
+  onOpen,
+  onClose,
+  onCloseAfter,
+  noIcon,
+  icon = 'more',
+  appendTo,
+  floatingDirection,
+  positionPadding,
+  canOpen
+}: {
+  buttonOptions?: Parameters<typeof ButtonIcon>[1],
+  listenerSetter?: ListenerSetter,
+  container?: HTMLElement
+  appendTo?: HTMLElement,
+  direction: ButtonMenuDirection,
+  floatingDirection?: FloatingMenuDirection,
+  buttons: ButtonMenuItemOptionsVerifiable[],
+  onOpenBefore?: (e: Event) => any,
+  onOpen?: (e: Event, element: HTMLElement) => any,
+  onClose?: () => void,
+  onCloseAfter?: () => void,
+  noIcon?: boolean,
+  icon?: (string & {}) | Icon,
+  positionPadding?: MenuPositionPadding,
+  // * asked once more right before the menu shows: false drops an open its trigger outlived
+  canOpen?: () => boolean
+}) {
+  const resolvedButtonOptions = buttonOptions ? {...buttonOptions} : {};
+  // Without the a11y layer a toggle given button options is a <div>, as it was
+  // before the layer; `ariaLabel` alone does not count, callers added it for
+  // the layer only, and an explicit `asDiv` wins.
+  if(
+    !Modes.a11y &&
+    buttonOptions &&
+    buttonOptions.asDiv === undefined &&
+    Object.keys(buttonOptions).some((key) => key !== 'ariaLabel')
+  ) {
+    resolvedButtonOptions.asDiv = true;
+  }
+  if(!container && !resolvedButtonOptions.ariaLabel) {
+    resolvedButtonOptions.ariaLabel = 'MultiAccount.More';
+  }
+
+  const button = container ?? ButtonIcon(noIcon ? undefined : icon, resolvedButtonOptions);
+  if(container && buttonOptions?.ariaLabel) {
+    button.setAttribute('aria-label', I18n.format(buttonOptions.ariaLabel, true));
+  }
+
+  const autoPosition = !appendTo;
+  button.classList.add('btn-menu-toggle');
+
+  const listenerSetter = new ListenerSetter();
+
+  const clearCloseTimeout = () => {
+    clearTimeout(closeTimeout);
+    closeTimeout = undefined;
+  };
+
+  // * fix translation by deleting text elements on close
+  const canDeleteTextElementsOnClose = buttons.filter((button) => !button.textElement);
+  const previousButtons = buttons.slice();
+
+  let element: HTMLElement, closeTimeout: number, tempId = 0;
+  ButtonMenuToggleHandler({
+    el: button,
+    onOpen: async(e) => {
+      const _tempId = ++tempId;
+      await onOpenBefore?.(e);
+      if(_tempId !== tempId) return;
+      if(closeTimeout) {
+        clearCloseTimeout();
+        if(element?.isConnected) {
+          return element;
+        }
+      }
+
+      const filteredButtons = await filterButtonMenuItems(buttons);
+      if(_tempId !== tempId) return;
+      if(!filteredButtons.length) {
+        return;
+      }
+
+      const newButtons = filteredButtons.slice().filter((button) => !previousButtons.includes(button));
+      previousButtons.push(...newButtons);
+      canDeleteTextElementsOnClose.push(...newButtons.filter((button) => !button.textElement));
+
+      const _element = element = await ButtonMenu({
+        buttons: filteredButtons,
+        listenerSetter
+      });
+      if(_tempId !== tempId) return;
+      _element.classList.add(direction);
+      if(direction === 'bottom-center') {
+        _element.style.setProperty('--parent-half-width', ((container ?? button).clientWidth / 2) + 'px');
+      }
+
+      await onOpen?.(e, _element);
+      if(_tempId !== tempId) return;
+
+      // Resolve the mount lazily so a menu opened while the client is popped out lands in the active
+      // window's body (the Document PiP window), not the background tab. While an element is fullscreen
+      // the browser paints ONLY the fullscreen subtree (its top layer), so a menu mounted on document.body
+      // would be invisible — mount it inside the fullscreen element when the trigger lives there (e.g. the
+      // video player's playback-rate / quality / live menus).
+      const fullScreenElement = getFullScreenElement();
+      const mountTarget = appendTo ??
+        (fullScreenElement?.contains(button) ? fullScreenElement : getOverlayRoot());
+      mountTarget.append(_element);
+      if(autoPosition) {
+        if(floatingDirection) {
+          const appWindow = getAppWindow();
+          const margin = DEFAULT_MENU_WINDOW_MARGIN * 2;
+          _element.style.inset = 'auto';
+          _element.style.maxHeight = `${Math.max(0, appWindow.innerHeight - margin)}px`;
+          _element.style.maxWidth = `${Math.max(0, appWindow.innerWidth - margin)}px`;
+          _element.style.overflowY = 'auto';
+          positionFloatingMenu(
+            button.getBoundingClientRect(),
+            _element,
+            floatingDirection,
+            [0, 8]
+          );
+        } else {
+          positionMenuTrigger(
+            button,
+            _element,
+            direction,
+            positionPadding ?? {top: 8, bottom: 8}
+          );
+        }
+      }
+      await doubleRaf();
+      if(_tempId !== tempId) {
+        _element.remove();
+      }
+
+      if(canOpen && !canOpen()) {
+        _element.remove();
+        return;
+      }
+
+      return _element
+    },
+    options: {
+      listenerSetter: attachListenerSetter
+    },
+    onClose: () => {
+      ++tempId;
+      clearCloseTimeout();
+      onClose?.();
+
+      closeTimeout = window.setTimeout(() => {
+        onCloseAfter?.();
+        closeTimeout = undefined;
+        listenerSetter.removeAll();
+        buttons.forEach((button) => {
+          try {button.dispose?.();} catch{}
+          button.element = undefined;
+        });
+        canDeleteTextElementsOnClose.forEach((button) => delete button.textElement);
+        element.remove();
+      }, 300);
+    }
+  });
+
+  return button;
+}

@@ -1,0 +1,87 @@
+@use "../shared" as *;
+@use "chatVariables" as *;
+
+.bot-commands {
+  --offset: .5rem;
+  position: absolute !important;
+  bottom: calc(100% - var(--chat-input-height) / 2);
+  right: calc(var(--offset) * -1);
+  left: calc(var(--offset) * -1);
+  width: auto !important;
+  max-height: 20rem;
+  max-width: none;
+  border-radius: $border-radius-big $border-radius-big 0 0 !important;
+  background-color: transparent !important;
+  pointer-events: none;
+  overflow: hidden;
+  padding: var(--offset) var(--offset) 0 !important;
+  box-shadow: none;
+
+  // * the list rises out of the input on full animations; below them it takes
+  // * the fade every autocomplete helper has
+  @include animation-level(2) {
+    display: flex !important;
+    animation: none !important;
+    visibility: visible !important;
+    transition: none !important;
+  }
+
+  .scrollable {
+    background-color: var(--surface-color);
+    box-shadow: $chat-input-box-shadow;
+    border-radius: inherit;
+    height: auto;
+    // max-height: 20rem;
+    max-height: 207px !important;
+
+    @include animation-level(2) {
+      opacity: 0;
+      transform: translateY(var(--height));
+    }
+  }
+
+  &.is-visible {
+    &.animating {
+      .scrollable {
+        transition: transform var(--transition-standard-in), opacity var(--transition-standard-in);
+      }
+    }
+
+    // * only the list that is shown takes the pointer: a hidden one is put away by where it stands alone (below the
+    // * input, cut off), and wherever that fails it would hold the chat's clicks unseen
+    &.forwards {
+      .scrollable {
+        transform: translateY(0);
+        opacity: 1;
+        pointer-events: auto;
+      }
+    }
+  }
+
+  &-list {
+    border-radius: inherit;
+    width: 100%;
+    height: var(--height);
+    padding-bottom: 0;
+
+    &-element {
+      border-radius: 0 !important;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      padding-inline-start: 3.375rem;
+
+      &-avatar {
+        position: absolute;
+        inset-inline-start: .75rem;
+      }
+
+      &-name,
+      &-description {
+        margin-inline-start: 0;
+        font-size: .875rem;
+        line-height: var(--line-height-14);
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+name: Deploy Echogram to GitHub Pages
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gh-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.16.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare env file
+        run: cp .env.example .env
+
+      - name: Build
+        env:
+          REACT_APP_TELEGRAM_API_ID: ${{ secrets.REACT_APP_TELEGRAM_API_ID }}
+          REACT_APP_TELEGRAM_API_HASH: ${{ secrets.REACT_APP_TELEGRAM_API_HASH }}
+          VITE_API_ID: ${{ secrets.REACT_APP_TELEGRAM_API_ID }}
+          VITE_API_HASH: ${{ secrets.REACT_APP_TELEGRAM_API_HASH }}
+        run: pnpm run build:gh-pages
+
+      - name: Publish gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages

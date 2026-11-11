@@ -1,0 +1,1284 @@
+import {SITE_HASHTAGS} from '.';
+import buildURLHash from '@helpers/buildURLHash';
+import copy from '@helpers/object/copy';
+import encodeEntities from '@helpers/string/encodeEntities';
+import {MessageEntity} from '@layer';
+import encodeSpoiler from '@lib/richTextProcessor/encodeSpoiler';
+import parseEntities from '@lib/richTextProcessor/parseEntities';
+import setBlankToAnchor from '@lib/richTextProcessor/setBlankToAnchor';
+import setExternalToAnchor, {getElectronHelpers} from '@helpers/electronHelpers';
+import wrapUrl from '@lib/richTextProcessor/wrapUrl';
+import {getEmojiImageUrl, isEmojiNative} from '@lib/richTextProcessor/emojiImage';
+import {CLICK_EVENT_NAME} from '@helpers/dom/clickEvent';
+import IS_CUSTOM_EMOJI_SUPPORTED from '@environment/customEmojiSupport';
+import BOM from '@helpers/string/bom';
+import wrapTelegramUrlToAnchor from '@lib/richTextProcessor/wrapTelegramUrlToAnchor';
+import {IS_FIREFOX} from '@environment/userAgent';
+import CustomEmojiElement, {CustomEmojiElements} from '@lib/customEmoji/element';
+import {CustomEmojiRendererElementOptions, CustomEmojiRendererElement} from '@lib/customEmoji/renderer';
+import {setDirection} from '@helpers/dom/setInnerHTML';
+import I18n, {i18n} from '@lib/langPack';
+import {createCodeHeaderButton} from '@helpers/dom/codeBlockClick';
+import {CodeLanguageAliases, highlightCode, highlightCodeAuto} from '@/codeLanguages';
+import callbackify from '@helpers/callbackify';
+import findIndexFrom from '@helpers/array/findIndexFrom';
+import {observeResize} from '@components/resizeObserver';
+import DotRenderer from '@components/dotRenderer';
+import Icon from '@components/icon';
+import isSuspiciousUrl from '@helpers/string/isSuspiciousUrl';
+import isWhitelistedUrl, {isMaskedUrlTrusted} from '@lib/richTextProcessor/isWhitelistedUrl';
+import {createRoot, createSignal, createEffect, onCleanup} from 'solid-js';
+import formatFormattedDate from '@helpers/date/formatFormattedDate';
+import formatRelativeTime from '@helpers/date/formatRelativeTime';
+import tsNow from '@helpers/tsNow';
+import filterDisabledEntities, {markMessageLinkEntity} from '@lib/richTextProcessor/filterDisabledEntities';
+import {RICH_TEXT_BUTTON_SELECTOR, setRichTextButton} from '@lib/richTextProcessor/richTextButtons';
+import {TEXT_LINK_ATTRIBUTE} from '@helpers/dom/linkPress';
+import type {Middleware} from '@helpers/middleware';
+import replaceNonNumber from '@helpers/string/replaceNonNumber';
+
+export type WrapRichTextOptions = Partial<{
+  entities: MessageEntity[],
+  contextSite: string,
+  highlightUsername: string,
+  /** Render navigation entities as ordinary text and disable rich-surface navigation. */
+  noLinks: boolean,
+  /** Disable navigation owned by a rich surface without broadening the entity filter. */
+  noNavigation: boolean,
+  noLinebreaks: boolean,
+  noCommands: boolean,
+  /** Keep streamed code blocks formatted without scheduling syntax work per reveal frame. */
+  noCodeHighlight: boolean,
+  wrappingDraft: boolean,
+  // mustWrapEmoji: boolean,
+  fromBot: boolean,
+  noTextFormat: boolean,
+  passEntities: Partial<{
+    [_ in MessageEntity['_']]: boolean
+  }>,
+  maxMediaTimestamp: number,
+  noEncoding: boolean,
+  isSelectable: boolean,
+  whitelistedDomains?: string[],
+  passMaskedLinks?: boolean,
+  disabledEntities?: ReadonlySet<MessageEntity['_']>,
+  onEntitiesDisabled?: () => void,
+
+  contextHashtag?: string,
+
+  // ! recursive, do not provide
+  nasty?: {
+    i: number,
+    usedLength: number,
+    text: string,
+    lastEntity?: MessageEntity
+  },
+  voodoo?: boolean,
+  customEmojis?: Map<DocId, CustomEmojiElements>,
+  customWraps?: Set<HTMLElement>,
+  ignoreNextIndex?: number,
+  doubleLinebreak?: number
+  textColor?: WrapSomethingOptions['textColor'],
+  // a rich button whose custom emoji are drawn on a canvas of its own (in the button's colour
+  // rather than the text's): that renderer, already placed in the button, or nothing for the text's
+  richButtonCustomEmojiRenderer?: (button: HTMLElement, middleware: Middleware) => CustomEmojiRendererElement | undefined,
+  // the custom emoji the text being replaced drew, by document: one of the same document on the
+  // same renderer is moved into the new text instead of a new one, already drawn - a new element
+  // loads, attaches and fades in anew, leaving its place blank for a few frames. Taken ones are
+  // removed from the lists.
+  reuseCustomEmojis?: Map<DocId, CustomEmojiElement[]>
+}> & CustomEmojiRendererElementOptions;
+
+export const ENTITY_ELEMENT_MAP: WeakMap<HTMLElement, MessageEntity> = new WeakMap();
+
+// * Text that always runs left to right — a link, an address, a number, a command, a @username — is
+// * isolated as such, so a right-to-left line around it does not carry its punctuation off to the
+// * wrong end ("@name" read as "name@"); a hashtag runs by its own letters.
+const ENTITY_DIRECTIONS: {[type in MessageEntity['_']]?: 'ltr' | 'auto'} = {
+  messageEntityUrl: 'ltr',
+  messageEntityEmail: 'ltr',
+  messageEntityPhone: 'ltr',
+  messageEntityBankCard: 'ltr',
+  messageEntityBotCommand: 'ltr',
+  messageEntityMention: 'ltr',
+  messageEntityCashtag: 'ltr',
+  messageEntityHashtag: 'auto'
+};
+
+// a custom emoji (and a rich text's picture) is drawn as an image, its text only standing for it; a
+// spoiler's text is drawn hidden
+const UNDRAWN_TEXT_ENTITY_TYPES: ReadonlySet<MessageEntity['_']> = new Set(['messageEntityCustomEmoji', 'messageEntitySpoiler']);
+
+/**
+ * Whether some of the text of the entity at `index` (ending at `end`) is not drawn as itself: a link made
+ * of that text goes somewhere else than it reads. What is inside an entity follows it in the sorted list.
+ */
+function hasUndrawnText(entities: MessageEntity[], index: number, end: number) {
+  for(let i = index + 1; i < entities.length && entities[i].offset < end; ++i) {
+    if(UNDRAWN_TEXT_ENTITY_TYPES.has(entities[i]._)) return true;
+  }
+
+  return false;
+}
+
+function createMarkupFormatting(formatting: string, element = document.createElement('span')) {
+  const str = 'markup-' + formatting;
+  element.style.fontFamily = str;
+  element.classList.add('is-markup');
+  element.dataset.markup = str;
+  return element;
+}
+
+function onQuoteResize(entry: ResizeObserverEntry) {
+  const target = entry.target as HTMLElement;
+  if((target as any).ignoreQuoteResize) {
+    if(Date.now() < (target as any).ignoreQuoteResize) {
+      return;
+    }
+
+    delete (target as any).ignoreQuoteResize;
+  }
+
+  const scrollHeight = target.scrollHeight;
+  if(!scrollHeight) {
+    return;
+  }
+
+  const padding = entry.contentRect.bottom - entry.contentRect.height + entry.contentRect.top;
+  // const margin = (entry.borderBoxSize[0].blockSize - entry.contentBoxSize[0].blockSize) * 2;
+  const margin = 0;
+  const diff = scrollHeight - padding - margin - Math.floor(entry.contentRect.height);
+  const isExpanded = diff <= 1;
+
+  // console.log('quote resize', entry, scrollHeight, entry.contentRect.height, isExpanded, diff);
+  target.style.setProperty('--quote-max-height', scrollHeight + 'px');
+  target.classList.toggle('is-truncated', !isExpanded);
+}
+
+export function makeQuoteCollapsable(element: HTMLElement) {
+  element.classList.add('quote-like-collapsable');
+
+  // A disclosure button, so the keyboard and screen readers reach it too. It only has to take
+  // the press: the host's click on the quote (`onQuoteClick`) folds and unfolds it.
+  const collapseButton = document.createElement('button');
+  collapseButton.type = 'button';
+  collapseButton.classList.add('quote-like-icon', 'quote-like-collapse');
+  collapseButton.setAttribute('aria-label', I18n.format('Chat.Quote.FullText', true));
+  collapseButton.setAttribute('aria-expanded', 'false');
+  element.append(collapseButton);
+
+  return observeResize(element, onQuoteResize);
+}
+
+/**
+ * * Expecting correctly sorted nested entities (RichTextProcessor.sortEntities)
+ */
+export default function wrapRichText(text: string, options: WrapRichTextOptions = {}) {
+  const fragment = document.createDocumentFragment();
+  if(!text) {
+    return fragment;
+  }
+
+  const disabledEntities = options.disabledEntities;
+  if(disabledEntities && !options.nasty) {
+    const entities = options.entities ?? parseEntities(text);
+    options.entities = filterDisabledEntities(entities, disabledEntities);
+    if(options.entities.length !== entities.length) {
+      options.onEntitiesDisabled?.();
+    }
+  }
+
+  const nasty = options.nasty ??= {
+    i: 0,
+    usedLength: 0,
+    text
+  };
+
+  // * a link that is not to what it reads shows where it goes before it goes there (not in a draft, nor where told not to)
+  const askBeforeOpening = (element: HTMLElement, masked: boolean) => {
+    if(masked && !options.passMaskedLinks && !options.wrappingDraft) {
+      element.setAttribute('onclick', 'showMaskedAlert(this)');
+    }
+  };
+
+  const wrapSomething = (wrapElement: HTMLElement, noFiller?: boolean) => {
+    const element = document.createElement('span');
+    // element.append(BOM, a, BOM);
+    if(options.wrappingDraft) {
+      element.contentEditable = 'false';
+    }
+    // element.style.display = 'inline-block';
+    element.classList.add('input-something');
+    element.append(/* BOM,  */wrapElement);
+
+    (lastElement || fragment).append(element);
+
+    wrapElement.classList.add('input-selectable');
+    // if(wrapElement instanceof HTMLImageElement) {
+    //   element.prepend(f());
+    // } else {
+    !noFiller && wrapElement.append(createCustomFiller(true));
+    // }
+
+    customWraps.add(element);
+
+    return element;
+  };
+
+  options.isSelectable ||= options.wrappingDraft;
+
+  const customEmojis = options.customEmojis ??= new Map() as Map<DocId, CustomEmojiElements>;
+  const customWraps = options.customWraps ??= new Set();
+
+  const entities = options.entities ??= parseEntities(nasty.text);
+
+  const passEntities = options.passEntities ??= {};
+  const contextSite = options.contextSite ??= 'Telegram';
+  const contextExternal = contextSite !== 'Telegram';
+
+  // an element standing for its whole text draws the emoji parsed inside it too: passes them by
+  const skipEmojiInside = (endOffset: number) => {
+    let nextEntity = entities[nasty.i + 1];
+    while(nextEntity?._ === 'messageEntityEmoji' && nextEntity.offset < endOffset) {
+      ++nasty.i;
+      nasty.lastEntity = nextEntity;
+      nasty.usedLength += nextEntity.length;
+      nextEntity = entities[nasty.i + 1];
+    }
+
+    return nextEntity;
+  };
+
+  const textLength = nasty.text.length;
+  const length = entities.length;
+  let lastElement: HTMLElement | DocumentFragment;
+  for(; nasty.i < length; ++nasty.i) {
+    let entity = entities[nasty.i];
+
+    // * check whether text was sliced
+    // TODO: consider about moving it to other function
+    if(entity.offset >= textLength) {
+      if(entity._ !== 'messageEntityCaret') { // * can set caret to the end
+        continue;
+      }
+    } else if((entity.offset + entity.length) > textLength) {
+      entity = copy(entity);
+      // entity.length = entity.offset + entity.length - textLength;
+      entity.length = textLength - entity.offset;
+    }
+
+    if(entity.length) {
+      nasty.lastEntity = entity;
+    }
+
+    let nextEntity = entities[nasty.i + 1];
+
+    const startOffset = entity.offset;
+    const endOffset = startOffset + entity.length;
+    const endPartOffset = Math.min(endOffset, nextEntity?.offset ?? 0xFFFF);
+    const fullEntityText = nasty.text.slice(startOffset, endOffset);
+    const sliced = nasty.text.slice(startOffset, endPartOffset);
+    let partText = sliced;
+
+    if(nasty.usedLength < startOffset) {
+      (lastElement || fragment).append(nasty.text.slice(nasty.usedLength, startOffset));
+    }
+
+    if(lastElement) {
+      lastElement = fragment;
+    }
+
+    nasty.usedLength = endPartOffset;
+
+    let element: HTMLElement,
+      property: 'alt',
+      usedText = false,
+      processingBlockElement = false;
+    switch(entity._) {
+      case 'messageEntityBold': {
+        if(!options.noTextFormat) {
+          if(options.wrappingDraft) {
+            element = createMarkupFormatting('bold');
+          } else {
+            element = document.createElement('strong');
+          }
+        }
+
+        break;
+      }
+
+      case 'messageEntityItalic': {
+        if(!options.noTextFormat) {
+          if(options.wrappingDraft) {
+            element = createMarkupFormatting('italic');
+          } else {
+            element = document.createElement('em');
+          }
+        }
+
+        break;
+      }
+
+      case 'messageEntityStrike': {
+        if(options.wrappingDraft) {
+          element = createMarkupFormatting('strikethrough');
+          // element = document.createElement('span');
+          // const styleName = IS_SAFARI ? 'text-decoration' : 'text-decoration-line';
+          // element.style.cssText = `${styleName}: line-through;`;
+          // element.style.fontFamily = 'markup-strikethrough';
+        } else/*  if(!options.noTextFormat) */ {
+          element = document.createElement('del');
+        }
+
+        break;
+      }
+
+      case 'messageEntityUnderline': {
+        if(options.wrappingDraft) {
+          element = createMarkupFormatting('underline');
+          // element = document.createElement('span');
+          // const styleName = IS_SAFARI ? 'text-decoration' : 'text-decoration-line';
+          // element.style.cssText = `${styleName}: underline;`;
+          // element.style.fontFamily = 'markup-underline';
+        } else if(!options.noTextFormat) {
+          element = document.createElement('u');
+        }
+
+        break;
+      }
+
+      case 'messageEntityPre':
+      case 'messageEntityCode': {
+        const entityLanguage = (entity as MessageEntity.messageEntityPre).language;
+        if(options.wrappingDraft) {
+          element = createMarkupFormatting('monospace');
+          if(entityLanguage) {
+            element.dataset.language = entityLanguage;
+          }
+          // element = document.createElement('span');
+          // element.style.fontFamily = 'var(--font-monospace)';
+          // element.style.fontFamily = 'markup-monospace';
+        } else if(entity._ === 'messageEntityPre' && !options.noTextFormat) {
+          const container = document.createElement('pre');
+          const content = document.createElement('div');
+          content.classList.add('code-content');
+          // * code reads left to right in any language; the header and the stripe follow the UI
+          content.dir = 'ltr';
+          element = document.createElement('code');
+          element.classList.add('code-code');
+          fragment.append(container);
+          content.append(element);
+
+          container.classList.add('quote-like', 'quote-like-border', 'code');
+
+          const languageName = CodeLanguageAliases[entityLanguage.toLowerCase()];
+
+          const header = document.createElement('div');
+          header.classList.add('code-header');
+          const headerName = document.createElement('span');
+          headerName.classList.add('code-header-name');
+          headerName.append(languageName || i18n('CopyCode'));
+          const headerWrapButton = createCodeHeaderButton(
+            'menu',
+            'code-header-toggle-wrap'
+          );
+          header.append(
+            headerName,
+            headerWrapButton,
+            createCodeHeaderButton('copy_alt', 'code-header-copy')
+          );
+
+          container.append(header, content);
+
+          const result = !options.noCodeHighlight && (languageName ?
+            highlightCode(fullEntityText, languageName) :
+            !entityLanguage ? highlightCodeAuto(fullEntityText).then((highlight) => highlight?.html) : undefined);
+          result && callbackify(result, (html) => {
+            if(html && (!options.middleware || options.middleware())) {
+              element.innerHTML = html;
+            }
+          });
+
+          usedText = true;
+          if(!result || result instanceof Promise) {
+            element.textContent = fullEntityText;
+          }
+
+          let lastInnerEntityIndex = findIndexFrom(entities, (n) => n.offset >= endOffset, nasty.i + 1);
+          if(lastInnerEntityIndex === -1) lastInnerEntityIndex = entities.length - 1;
+          else lastInnerEntityIndex -= 1;
+          nasty.i = lastInnerEntityIndex;
+          nasty.usedLength = endOffset;
+          nasty.lastEntity = entities[lastInnerEntityIndex];
+          nextEntity = undefined;
+          processingBlockElement = true;
+        } else if(!options.noTextFormat) {
+          element = document.createElement('code');
+          element.classList.add('monospace-text');
+        }
+
+        break;
+      }
+
+      // case 'messageEntityPre': {
+      //   if(options.wrappingDraft) {
+      //     element = document.createElement('span');
+      //     element.style.fontFamily = 'var(--font-monospace)';
+      //   } else if(!options.noTextFormat) {
+      //     element = document.createElement('pre');
+      //     const inner = document.createElement('code');
+      //     if(entity.language) {
+      //       inner.className = 'language-' + entity.language;
+      //       inner.textContent = entityText;
+      //       usedText = true;
+      //     }
+      //   }
+
+      //   break;
+      // }
+
+      case 'messageEntityHighlight': {
+        element = document.createElement('i');
+        element.className = 'text-highlight';
+        break;
+      }
+
+      case 'messageEntitySubscript': {
+        element = document.createElement('sub');
+        break;
+      }
+
+      case 'messageEntitySuperscript': {
+        element = document.createElement('sup');
+        break;
+      }
+
+      case 'messageEntityRichButton': {
+        element = document.createElement('span');
+        // a link button is the link it carries (the text url inside), one control rather than two
+        if(entity.button.type._ !== 'inlineButtonTypeUrl') {
+          element.setAttribute('role', 'button');
+        }
+        setRichTextButton(element, entity.button);
+        break;
+      }
+
+      // an icon drawn over the text it stands for, the way Android puts an image span over it: the
+      // text stays for a screen reader
+      case 'messageEntityIcon': {
+        nextEntity = skipEmojiInside(endOffset);
+        element = document.createElement('span');
+        const text = document.createElement('span');
+        text.className = 'sr-only';
+        text.textContent = fullEntityText;
+        element.append(Icon(entity.icon, 'inline-icon'), text);
+        usedText = true;
+        break;
+      }
+
+      case 'messageEntityAnchor': {
+        element = document.createElement('span');
+        element.id = entity.name;
+        if((entity as MessageEntity & {richTextReference?: boolean}).richTextReference) {
+          element.classList.add('tg-reference');
+        }
+        break;
+      }
+
+      case 'messageEntityPhone': {
+        if(!(options.noLinks && !passEntities[entity._])) {
+          const target = (entity as MessageEntity & {richTextTarget?: string}).richTextTarget || fullEntityText;
+          element = document.createElement('a');
+          element.classList.add('phone-url');
+          (element as HTMLAnchorElement).href = encodeEntities('tel:' + target);
+          // a rich text's phone has a number of its own: one that is not the number it reads asks first,
+          // showing the one it calls, as a link that is not its text does
+          askBeforeOpening(element, replaceNonNumber(target) !== replaceNonNumber(fullEntityText) || hasUndrawnText(entities, nasty.i, endOffset));
+        }
+        break;
+      }
+
+      // a click opens the card's menu: its number to copy, and what the server knows of it
+      // (`onBankCardClick`, tdesktop's BankCardClickHandler)
+      case 'messageEntityBankCard': {
+        if(!(options.noLinks && !passEntities[entity._]) && !options.wrappingDraft) {
+          element = document.createElement('a');
+          element.classList.add('bank-card');
+          (element as HTMLAnchorElement).href = '#';
+          element.dataset.bankCard = fullEntityText;
+          element.setAttribute('aria-haspopup', 'menu');
+          element.setAttribute('aria-expanded', 'false');
+          element.setAttribute('onclick', 'onBankCardClick(this, event)');
+        }
+        break;
+      }
+
+      // * a TON wallet address the server marked: a click opens what can be done with it (wallet/addressMenu);
+      // * the link itself starts a transfer to it, for wherever the menu is not. Plain text while nothing handles it:
+      // * the menu's handler is there only once the wallet is released (lib/wallet/release)
+      case 'messageEntityTonAddress': {
+        if(!options.noLinks && (window as any).openTonAddress) {
+          element = document.createElement('a');
+          element.classList.add('ton-address');
+          (element as HTMLAnchorElement).href = encodeEntities('tg://sendgrams?to=' + encodeURIComponent(fullEntityText));
+          if(!contextExternal) {
+            element.setAttribute('onclick', 'openTonAddress(this)');
+            element.setAttribute('aria-haspopup', 'menu');
+          }
+        }
+
+        break;
+      }
+
+      case 'messageEntityBotCommand': {
+        // if(!(options.noLinks || options.noCommands || contextExternal)/*  && !entity.unsafe */) {
+        // * a press sends the command in the user's name: never one that is not the text it shows
+        if(!options.noLinks && passEntities[entity._] && !hasUndrawnText(entities, nasty.i, endOffset)) {
+          let command = fullEntityText.slice(1);
+          let bot: string | boolean;
+          let atPos: number;
+          if((atPos = command.indexOf('@')) !== -1) {
+            bot = command.slice(atPos + 1);
+            command = command.slice(0, atPos);
+          } else {
+            bot = options.fromBot;
+          }
+
+          element = document.createElement('a');
+          (element as HTMLAnchorElement).href = encodeEntities('tg://bot_command?command=' + encodeURIComponent(command) + (bot ? '&bot=' + encodeURIComponent(bot) : ''));
+          if(!contextExternal) {
+            element.setAttribute('onclick', 'execBotCommand(this)');
+          }
+        }
+
+        break;
+      }
+
+      case 'messageEntityCustomEmoji': {
+        if(!IS_CUSTOM_EMOJI_SUPPORTED) {
+          break;
+        }
+
+        nextEntity = skipEmojiInside(endOffset);
+
+        const customEmojiElement = element = CustomEmojiElement.create(entity.document_id);
+        const {docId} = customEmojiElement;
+        let set = customEmojis.get(docId);
+        if(!set) customEmojis.set(docId, set = new Set());
+        set.add(customEmojiElement);
+        customEmojiElement.dataset.stickerEmoji = fullEntityText;
+
+        if(entity.w) {
+          customEmojiElement.classList.add('custom-emoji-custom-sized');
+          customEmojiElement.style.setProperty('--width', entity.w + 'px');
+          customEmojiElement.style.setProperty('--height', entity.h + 'px');
+        }
+
+        if(options.wrappingDraft) {
+          element = document.createElement('img');
+          (element as HTMLImageElement).alt = fullEntityText;
+          for(const i in customEmojiElement.dataset) {
+            element.dataset[i] = customEmojiElement.dataset[i];
+          }
+          (element as any).customEmojiElement = customEmojiElement;
+          customEmojiElement.placeholder = element as HTMLImageElement;
+          element.classList.add('custom-emoji-placeholder');
+          (element as HTMLImageElement).src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAAtJREFUGFdjYAACAAAFAAGq1chRAAAAAElFTkSuQmCC';
+          property = 'alt';
+          break;
+        }
+
+        if(options.isSelectable) {
+          // const s = document.createElement('span');
+          // s.append(fullEntityText);
+          // element.append(s);
+          // element.textContent = fullEntityText;
+          // element.textContent = 'a';
+          // element.contentEditable = 'false';
+
+          // const x = f();
+          // x.style.display = 'inline-block';
+          // x.contentEditable = 'false';
+          // (lastElement || fragment).append(BOM);
+          // (lastElement || fragment).append(x);
+
+          element = wrapSomething(element, !!options.customEmojiRenderer);
+
+          // const a = element;
+          // element = document.createElement('span');
+          // element.append(BOM, a, BOM);
+          // element.contentEditable = 'false';
+        }
+
+        property = 'alt';
+        break;
+      }
+
+      case 'messageEntityEmoji': {
+        const isSupported = isEmojiNative(entity.unicode);
+
+        // if(!(options.wrappingDraft && isSupported)) { // * fix safari emoji
+        if(!isSupported) { // no wrapping needed
+          // if(isSupported) { // ! contenteditable="false" нужен для поля ввода, иначе там будет меняться шрифт в Safari, или же рендерить смайлик напрямую, без контейнера
+          //   insertPart(entity, '<span class="emoji">', '</span>');
+          // } else {
+          element = document.createElement('img');
+          (element as HTMLImageElement).src = getEmojiImageUrl(entity.unicode);
+          property = 'alt';
+          element.className = 'emoji emoji-image';
+
+          // if(options.isSelectable) {
+          //   usedText = true;
+          //   (element as HTMLImageElement).alt = partText;
+          //   element = wrapSomething(element);
+          // }
+
+          // const a = element;
+          // a.contentEditable = 'false';
+          // element = document.createElement('span');
+          // element.append(a);
+          // element.contentEditable = 'false';
+          // }
+        // } else if(options.mustWrapEmoji) {
+        } else if(!options.wrappingDraft) {
+          element = document.createElement('span');
+          element.className = 'emoji emoji-native';
+        }/*  else if(!IS_SAFARI) {
+          insertPart(entity, '<span class="emoji" contenteditable="false">', '</span>');
+        } */
+        /* if(!isSupported) {
+          insertPart(entity, `<img src="assets/img/emoji/${entity.unicode}.png" alt="`, `" class="emoji">`);
+        } */
+
+        break;
+      }
+
+      case 'messageEntityCaret': {
+        element = document.createElement('span');
+        element.className = 'composer-sel';
+        break;
+      }
+
+      case 'messageEntityLinebreak': {
+        // The block boundary replaces one separator in drafts.
+        if(options.ignoreNextIndex === nasty.i || (options.wrappingDraft && !options.noTextFormat && nextEntity?._ === 'messageEntityBlockquote' && nextEntity.offset === endOffset)) {
+          usedText = true;
+        } else if(options.wrappingDraft && IS_FIREFOX) {
+          element = document.createElement('br');
+          usedText = true;
+        }
+
+        if(options.doubleLinebreak === nasty.i) {
+          options.doubleLinebreak = undefined;
+          (element || fragment).append('\n\n');
+          usedText = true;
+        }
+        // if(options.noLinebreaks) {
+        //   insertPart(entity, ' ');
+        // } else {
+        //   insertPart(entity, '<br/>');
+        // }
+
+        break;
+      }
+
+      case 'messageEntityUrl':
+      case 'messageEntityTextUrl': {
+        if(!(options.noLinks && !passEntities[entity._])) {
+          // let inner: string;
+          let url: string = (entity as MessageEntity.messageEntityTextUrl).url || fullEntityText;
+          let masked = false;
+          let onclick: string;
+
+          const wrapped = wrapUrl(url, (entity as MessageEntity.messageEntityTextUrl).safe);
+          url = wrapped.url;
+          onclick = wrapped.onclick;
+
+          if(options.whitelistedDomains && !isWhitelistedUrl(url, options.whitelistedDomains)) {
+            break;
+          }
+
+          if(entity._ === 'messageEntityTextUrl') {
+            if(nextEntity?._ === 'messageEntityUrl' &&
+              nextEntity.length === entity.length &&
+              nextEntity.offset === entity.offset) {
+              nasty.lastEntity = nextEntity;
+              ++nasty.i;
+            }
+
+            // a host the server vouches for opens at once, whatever text it hides under
+            if(url !== fullEntityText && !isMaskedUrlTrusted(url)) {
+              masked = true;
+            }
+          } else {
+            masked = isSuspiciousUrl(url);
+            // inner = encodeEntities(replaceUrlEncodings(entityText));
+          }
+
+          // * the address is the text, but not all of the text is drawn as such: what it reads is not where it goes
+          if(!masked && hasUndrawnText(entities, nasty.i, endOffset) && !isMaskedUrlTrusted(url)) {
+            masked = true;
+          }
+
+          const currentContext = !!onclick;
+          if(
+            !onclick &&
+            masked &&
+            !currentContext &&
+            !options.passMaskedLinks
+          ) {
+            onclick = 'showMaskedAlert';
+          }
+
+          if(options.wrappingDraft) {
+            onclick = undefined;
+          }
+
+          element = document.createElement('a');
+          element.className = 'anchor-url';
+          (element as HTMLAnchorElement).href = url;
+
+          if(!currentContext) {
+            // under Electron the link belongs to the system browser rather than the app window
+            (getElectronHelpers() ? setExternalToAnchor : setBlankToAnchor)(element as HTMLAnchorElement);
+          }
+
+          if(onclick) {
+            element.setAttribute('onclick', onclick + '(this)');
+          }
+        }
+
+        break;
+      }
+
+      case 'messageEntityEmail': {
+        if(!options.noLinks && !passEntities[entity._]) {
+          const target = (entity as MessageEntity & {richTextTarget?: string}).richTextTarget || fullEntityText;
+          element = document.createElement('a');
+          (element as HTMLAnchorElement).href = encodeEntities('mailto:' + target);
+          setBlankToAnchor(element as HTMLAnchorElement);
+          // a rich text's email has an address of its own: as with a phone, another than it reads asks first
+          askBeforeOpening(element, target.trim().toLowerCase() !== fullEntityText.trim().toLowerCase() || hasUndrawnText(entities, nasty.i, endOffset));
+        }
+
+        break;
+      }
+
+      case 'messageEntityCashtag':
+      case 'messageEntityHashtag': {
+        const contextUrl = !options.noLinks && SITE_HASHTAGS[contextSite];
+        if(contextUrl) {
+          const tag = fullEntityText.slice(1);
+          const linkTag = entity._ === 'messageEntityCashtag' ? '$' + tag : tag;
+          element = document.createElement('a');
+          element.className = 'anchor-hashtag';
+          (element as HTMLAnchorElement).href = contextUrl.replace('{1}', encodeURIComponent(linkTag));
+          if(contextExternal) {
+            setBlankToAnchor(element as HTMLAnchorElement);
+          } else {
+            element.setAttribute('onclick', 'searchByHashtag(this)');
+          }
+        }
+
+        break;
+      }
+
+      case 'messageEntityMentionName': {
+        if(!(options.noLinks && !passEntities[entity._])) {
+          element = document.createElement('a');
+          (element as HTMLAnchorElement).href = buildURLHash('' + entity.user_id);
+          element.className = 'follow';
+          element.dataset.follow = '' + entity.user_id;
+        }
+
+        break;
+      }
+
+      case 'messageEntityMention': {
+        // const contextUrl = !options.noLinks && siteMentions[contextSite];
+        // * a username is letters it reads: one partly drawn as an image or hidden is not the one it shows
+        if(!options.noLinks && !hasUndrawnText(entities, nasty.i, endOffset)) {
+          const username = fullEntityText.slice(1);
+
+          element = wrapTelegramUrlToAnchor('t.me/' + username);
+          element.className = 'mention';
+
+          // insertPart(entity, `<a class="mention" href="${contextUrl.replace('{1}', encodeURIComponent(username))}"${contextExternal ? ' target="_blank" rel="noopener noreferrer"' : ''}>`, '</a>');
+        }
+
+        break;
+      }
+
+      case 'messageEntitySpoiler': {
+        if(options.noTextFormat) {
+          const encoded = encodeSpoiler(nasty.text, entity);
+          nasty.text = encoded.text;
+          partText = encoded.entityText;
+          if(endPartOffset !== endOffset) {
+            nasty.usedLength += endOffset - endPartOffset;
+          }
+          let n: MessageEntity;
+          for(; n = entities[nasty.i + 1], n && n.offset < endOffset;) {
+            // nasty.usedLength += n.length;
+            ++nasty.i;
+            nasty.lastEntity = n;
+            nextEntity = entities[nasty.i + 1];
+          }
+
+          if(!IS_FIREFOX) { // Firefox has very poor performance when drawing on canvas
+            element = document.createElement('span');
+            element.className = 'bluff-spoiler';
+            element.append(...partText.split('').map((encodedLetter) => {
+              const letter = document.createElement('span');
+              letter.className = 'bluff-spoiler-letter';
+              letter.textContent = encodedLetter;
+              return letter;
+            }));
+
+            const canvas = document.createElement('canvas');
+            canvas.className = 'bluff-spoiler-canvas';
+            element.append(canvas);
+            fragment.append(element);
+
+            DotRenderer.attachBluffTextSpoilerTarget(element, options.textColor);
+
+            usedText = true;
+          }
+        } else if(options.wrappingDraft) {
+          element = createMarkupFormatting('spoiler');
+          // element = document.createElement('span');
+          // element.style.fontFamily = 'spoiler';
+          // element.style.fontFamily = 'markup-spoiler';
+        } else {
+          const container = document.createElement('span');
+          container.className = 'spoiler';
+          element = document.createElement('span');
+          element.className = 'spoiler-text';
+          element.textContent = partText;
+          usedText = true;
+          container.append(element);
+          fragment.append(container);
+
+          container[`on${CLICK_EVENT_NAME}`] = (window as any).onSpoilerClick;
+        }
+
+        break;
+      }
+
+      case 'messageEntityTimestamp': {
+        if(!options.maxMediaTimestamp || entity.time > options.maxMediaTimestamp) {
+          break;
+        }
+
+        element = document.createElement('a');
+        element.classList.add('timestamp');
+        element.dataset.timestamp = '' + entity.time;
+        (element as HTMLAnchorElement).href = '#';
+        element.setAttribute('onclick', 'setMediaTimestamp(this)');
+
+        if(options.maxMediaTimestamp === Infinity) {
+          element.classList.add('is-disabled');
+        }
+
+        break;
+      }
+
+      case 'messageEntityFormattedDate': {
+        if(options.noTextFormat) {
+          break;
+        }
+
+        element = document.createElement('span');
+        if(options.wrappingDraft) {
+          createMarkupFormatting('date', element);
+          element.dataset.date = '' + entity.date;
+        } else {
+          element.classList.add('formatted-date');
+          element.setAttribute('onclick', 'onFormattedDateClick(this, event)');
+          // pressed as a link is, and its menu lights it (helpers/dom/linkPress.ts)
+          element.setAttribute(TEXT_LINK_ATTRIBUTE, '');
+        }
+
+        ENTITY_ELEMENT_MAP.set(element, entity);
+
+        if(Object.keys(entity.pFlags).length && !options.wrappingDraft) {
+          usedText = true;
+          element.dataset.originalText = fullEntityText;
+          // a text node of its own, set anew: a relative date ticks while its menu may have lit it, and
+          // the plate in it (helpers/dom/linkPress.ts) must stay
+          const textNode = document.createTextNode('');
+          element.append(textNode);
+          const updateText = (text: string) => {
+            element.dataset.fakeText = text;
+            textNode.data = text;
+          };
+          if(entity.pFlags.relative) {
+            if(options.middleware) {
+              const dispose = createRoot((dispose) => {
+                const [now, setNow] = createSignal(tsNow(true));
+                let timerId: ReturnType<typeof setTimeout>;
+
+                const scheduleUpdate = (ms: number) => {
+                  clearTimeout(timerId);
+                  timerId = setTimeout(() => {
+                    setNow(tsNow(true));
+                  }, ms);
+                };
+
+                createEffect(() => {
+                  const result = formatRelativeTime(entity.date, now());
+                  updateText(I18n.format(result.key, true, result.args));
+                  scheduleUpdate(result.updateInterval);
+                });
+
+                onCleanup(() => clearTimeout(timerId));
+                return dispose;
+              });
+
+              options.middleware.onClean(dispose!);
+            } else {
+              const result = formatRelativeTime(entity.date, tsNow(true));
+              updateText(I18n.format(result.key, true, result.args));
+            }
+          } else {
+            // Static formatted date/time
+            updateText(formatFormattedDate(entity.date, entity.pFlags));
+          }
+        }
+
+        break;
+      }
+
+      case 'messageEntityBlockquote': {
+        if(options.noTextFormat) {
+          break;
+        }
+
+        if(options.wrappingDraft) {
+          element = createMarkupFormatting('quote');
+
+          // * ? because of layer migration
+          if(entity.pFlags?.collapsed) {
+            element.dataset.collapsed = '1';
+          }
+        } else {
+          element = document.createElement('blockquote');
+          element.classList.add('quote', 'quote-block');
+
+          // * ? because of layer migration
+          if(entity.pFlags?.collapsed/*  || true */) {
+            const dispose = makeQuoteCollapsable(element);
+            options.middleware.onClean(dispose);
+          }
+        }
+
+        element.classList.add(
+          'quote-like',
+          'quote-like-border',
+          'quote-like-icon',
+          'input-collapsible-quote'
+        );
+        setDirection(element);
+
+        processingBlockElement = true;
+        break;
+      }
+
+      case 'messageEntityDiffInsert':
+        element = document.createElement('span');
+        element.classList.add('markup-diff-insert');
+        break;
+
+      case 'messageEntityDiffDelete':
+        element = document.createElement('span');
+        element.classList.add('markup-diff-delete');
+        break;
+
+      case 'messageEntityDiffReplace': {
+        const container = document.createElement('span');
+        fragment.appendChild(container);
+
+        const deleted = document.createElement('span');
+        deleted.classList.add('markup-diff-delete');
+        deleted.textContent = entity.old_text;
+
+        const inserted = document.createElement('span');
+        inserted.classList.add('markup-diff-insert');
+
+        container.append(deleted, inserted);
+        element = inserted;
+        break;
+      }
+    }
+
+    if(element) markMessageLinkEntity(element, entity);
+
+    if(element && !options.wrappingDraft && ENTITY_DIRECTIONS[entity._]) {
+      element.dir = ENTITY_DIRECTIONS[entity._];
+    }
+
+    if(processingBlockElement) {
+      let foundNextLinebreakIndex = -1;
+      for(let i = nasty.i; i < length; ++i) {
+        const n = entities[i];
+        if(n._ === 'messageEntityLinebreak' && n.offset >= endOffset) {
+          foundNextLinebreakIndex = i;
+          break;
+        }
+      }
+
+      if(foundNextLinebreakIndex !== -1 && nasty.text.slice(endOffset, entities[foundNextLinebreakIndex].offset).trim()) {
+        foundNextLinebreakIndex = -1;
+      }
+
+      if(!options.wrappingDraft && endOffset < nasty.text.length) {
+        // * ignore inner linebreak if found and double next linebreak
+        if(!element.parentElement) {
+          const container = document.createElement('div');
+          container.append(element);
+          fragment.append(container);
+        }
+
+        if(nasty.text[endOffset - 1] === '\n') {
+          let lastInnerLinebreakIndex = -1;
+          for(let i = nasty.i; i < length; ++i) {
+            const n = entities[i];
+            if(n.offset >= endOffset) {
+              break;
+            }
+
+            if(n._ === 'messageEntityLinebreak') {
+              lastInnerLinebreakIndex = i;
+            }
+          }
+
+          if(lastInnerLinebreakIndex !== -1) {
+            options.ignoreNextIndex = lastInnerLinebreakIndex;
+          }
+        } else if(foundNextLinebreakIndex !== -1) {
+          options.ignoreNextIndex = foundNextLinebreakIndex;
+        }
+
+        // if(nasty.text[endOffset - 1] === '\n' &&
+        //   foundNextLinebreakIndex !== -1 &&
+        //   nasty.text[endPartOffset + 1] === '\n') {
+        //   options.ignoreNextIndex = foundNextLinebreakIndex - 1;
+        //   options.doubleLinebreak = foundNextLinebreakIndex;
+        // }
+      }
+
+      if(options.wrappingDraft && foundNextLinebreakIndex !== -1) {
+        options.ignoreNextIndex = foundNextLinebreakIndex;
+      }
+
+      // if(!options.wrappingDraft) {
+  //   const i = Icon('quote_filled', 'quote-icon');
+      //   element.textContent = partText;
+      //   usedText = true;
+      //   element.prepend(i);
+      // } else {
+      //   element.classList.add('quote-use-before');
+      // }
+    }
+
+    if(!usedText && partText) {
+      if(element) {
+        if(property) {
+          // @ts-ignore
+          element[property] = partText;
+        } else {
+          element.append(partText);
+        }
+      } else {
+        (element || fragment).append(partText);
+      }
+    }
+
+    if(element && !element.parentNode) {
+      (lastElement || fragment).append(element);
+    }
+
+    while(nextEntity && nextEntity.offset < endOffset) {
+      ++nasty.i;
+
+      (element || fragment).append(wrapRichText(nasty.text, {
+        ...options,
+        voodoo: true
+      }));
+
+      nextEntity = entities[nasty.i + 1];
+    }
+
+    // if(!element?.parentNode) {
+    //   (lastElement || fragment).append(element ?? partText);
+    // }
+
+    if(nasty.usedLength <= endOffset) {
+      if(nasty.usedLength < endOffset) {
+        (element || fragment).append(nasty.text.slice(nasty.usedLength, endOffset));
+        nasty.usedLength = endOffset;
+      }
+
+      lastElement = fragment;
+      nasty.lastEntity = undefined;
+    } else if(entity.length > partText.length && element) {
+      lastElement = element;
+    } else {
+      lastElement = fragment;
+    }
+
+    if(options.voodoo) {
+      return fragment;
+    }
+  }
+
+  if(nasty.lastEntity) {
+    nasty.usedLength = nasty.lastEntity.offset + nasty.lastEntity.length;
+  }
+
+  if(nasty.usedLength < textLength) {
+    (lastElement || fragment).append(nasty.text.slice(nasty.usedLength));
+  }
+
+  if(options.richButtonCustomEmojiRenderer && !options.wrappingDraft && customEmojis.size) {
+    takeRichButtonCustomEmojis(fragment, customEmojis, options);
+  }
+
+  // after the buttons took theirs: what is left goes to the text's renderer, the only one an old
+  // element can belong to
+  if(options.reuseCustomEmojis && options.customEmojiRenderer && !options.wrappingDraft && customEmojis.size) {
+    reuseCustomEmojis(customEmojis, options.reuseCustomEmojis, options.customEmojiRenderer);
+  }
+
+  if((!options.wrappingDraft || options.customEmojiRenderer) && customEmojis.size) {
+    let renderer = options.customEmojiRenderer;
+    if(!renderer) {
+      renderer = CustomEmojiRendererElement.create(options);
+      fragment.prepend(renderer);
+    }
+
+    // if(options.textColor) {
+    //   renderer.setTextColor(options.textColor);
+    // }
+
+    const loadPromise = renderer.add({
+      addCustomEmojis: customEmojis,
+      lazyLoadQueue: options.lazyLoadQueue,
+      onlyThumb: options.wrappingDraft
+    });
+    options.loadPromises?.push(loadPromise);
+    // recordPromise(loadPromise, 'render emojis: ' + docIds.length);
+  }
+
+  if(customWraps.size) {
+    insertCustomFillers(customWraps);
+  }
+
+  fragment.normalize();
+
+  return fragment;
+}
+
+/** Puts the old text's drawn custom emoji in place of the new text's of the same documents. */
+function reuseCustomEmojis(
+  customEmojis: Map<DocId, CustomEmojiElements>,
+  pool: Map<DocId, CustomEmojiElement[]>,
+  renderer: CustomEmojiRendererElement
+) {
+  customEmojis.forEach((elements, docId) => {
+    const candidates = pool.get(docId);
+    if(!candidates?.length) return;
+    Array.from(elements).forEach((element) => {
+      const index = candidates.findIndex((candidate) => candidate.renderer === renderer && !candidate.clean);
+      if(index === -1) return;
+      const [old] = candidates.splice(index, 1);
+      old.dataset.stickerEmoji = element.dataset.stickerEmoji;
+      old.classList.toggle('custom-emoji-custom-sized', element.classList.contains('custom-emoji-custom-sized'));
+      ['--width', '--height'].forEach((property) => {
+        const value = element.style.getPropertyValue(property);
+        if(value) old.style.setProperty(property, value);
+        else old.style.removeProperty(property);
+      });
+      element.replaceWith(old);
+      elements.delete(element);
+      elements.add(old);
+    });
+  });
+}
+
+/** Hands a rich button's custom emoji to the renderer its owner gave it, out of the text's. */
+function takeRichButtonCustomEmojis(
+  fragment: DocumentFragment,
+  customEmojis: Map<DocId, CustomEmojiElements>,
+  options: WrapRichTextOptions
+) {
+  fragment.querySelectorAll<HTMLElement>(RICH_TEXT_BUTTON_SELECTOR).forEach((button) => {
+    const elements = button.querySelectorAll<CustomEmojiElement>('custom-emoji-element');
+    if(!elements.length) return;
+    const renderer = options.richButtonCustomEmojiRenderer(button, options.middleware);
+    if(!renderer) return;
+
+    const own = new Map<DocId, CustomEmojiElements>();
+    elements.forEach((element) => {
+      const {docId} = element;
+      const set = customEmojis.get(docId);
+      set?.delete(element);
+      if(set && !set.size) customEmojis.delete(docId);
+      let ownSet = own.get(docId);
+      if(!ownSet) own.set(docId, ownSet = new Set());
+      ownSet.add(element);
+    });
+
+    const loadPromise = renderer.add({
+      addCustomEmojis: own,
+      lazyLoadQueue: options.lazyLoadQueue
+    });
+    options.loadPromises?.push(loadPromise);
+  });
+}
+
+export const createCustomFiller = (notFiller?: boolean) => {
+  const x = document.createElement('span');
+  x.classList.add(notFiller ? 'input-filler2' : 'input-filler');
+  x.textContent = BOM;
+  return x;
+};
+
+export function isCustomFillerNeededBySiblingNode(node: ChildNode) {
+  if(
+    // !node?.textContent ||
+    // node.textContent.endsWith('\n') ||
+    node?.textContent !== BOM ||
+    (node as HTMLElement)?.getAttribute?.('contenteditable') === 'false'
+  ) {
+    // if(!node || (node as HTMLElement).firstElementChild || node.textContent.endsWith('\n')) {
+    if(!node || node.textContent !== BOM || (node as HTMLElement).firstElementChild) {
+      return 2;
+    } else if(node.nodeType === node.ELEMENT_NODE) {
+      return 1;
+    }/*  else if(node.nodeType === node.TEXT_NODE && !node.nodeValue) {
+      (node as CharacterData).insertData(0, BOM);
+    } */
+  }
+
+  return 0;
+}
+
+export function insertCustomFillers(elements: Iterable<HTMLElement>) {
+  const check = (element: HTMLElement, node: ChildNode, method: 'before' | 'after') => {
+    const needed = isCustomFillerNeededBySiblingNode(node);
+    if(needed === 2) {
+      element[method](createCustomFiller());
+    } else if(needed === 1) {
+      node.appendChild(document.createTextNode(BOM));
+    }
+  };
+
+  for(const element of elements) {
+    const {previousSibling, nextSibling} = element;
+    check(element, previousSibling, 'before');
+    check(element, nextSibling, 'after');
+  }
+}
+
+(window as any).wrapRichText = wrapRichText;

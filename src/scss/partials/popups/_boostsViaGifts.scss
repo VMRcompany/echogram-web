@@ -1,0 +1,175 @@
+@use "sass:string";
+@use "../../shared" as *;
+
+.popup-boosts {
+  $parent: ".popup";
+  --popup-width: 26.25rem;
+  --popup-max-height: 43.5rem;
+
+  &-star {
+    width: 140px;
+    height: 128px;
+    margin-left: -4px;
+
+    &-container {
+      text-align: center;
+    }
+  }
+
+  &-type {
+    // the leading checkbox + media layout comes from `row-with-checkbox-and-media`
+    .row-title {
+      font-weight: var(--font-weight-bold);
+    }
+  }
+
+  &-specific {
+    &-next {
+      font-size: 1rem;
+      margin-inline-start: 1px;
+    }
+  }
+
+  &-badge {
+    display: flex;
+    align-items: center;
+    height: 2rem;
+    padding-inline: .5rem .75rem;
+    border-radius: 2rem;
+    background-color: rgba(var(--primary-color-rgb), #{$hover-alpha});
+    font-weight: var(--font-weight-bold);
+    font-size: var(--font-size-14);
+    color: var(--primary-color);
+    position: relative;
+    pointer-events: none;
+
+    &-icon {
+      font-size: 1.125rem;
+    }
+  }
+
+  &-channel {
+    .row-media {
+      inset-inline-start: .4375rem !important;
+    }
+  }
+
+  &-button {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+
+    &-badge {
+      margin-inline-start: .625rem;
+      background-color: #fff;
+      padding-inline: .125rem .25rem;
+      height: 1.125rem;
+      border-radius: .25rem;
+      display: flex;
+      color: var(--primary-color);
+      align-items: center;
+      font-size: var(--font-size-14);
+      font-weight: var(--font-weight-bold);
+
+      &-icon {
+        font-size: .8125rem;
+      }
+    }
+  }
+
+  &-additional-row {
+    height: 3rem;
+    padding: 0 1rem;
+    display: flex;
+    align-items: center;
+
+    &-count {
+      flex: 0 0 auto;
+      width: 2.5rem;
+    }
+
+    &-input {
+      flex: 1 1 auto;
+    }
+  }
+
+  &-stars {
+    &-row {
+      .row-right {
+        color: var(--secondary-text-color);
+      }
+
+      @include hover() {
+        .stars-stacked {
+          --star-background-color: var(--background-color);
+        }
+      }
+    }
+
+    &-amount {
+      .stars-stacked {
+        --star-background-color: var(--surface-color);
+        --background-offset: 11px;
+        display: inline-flex;
+        vertical-align: middle;
+        // * the pile is drawn left to right (`dir="ltr"`), so its own inline start is the left
+        margin-left: -.25rem;
+
+        :where(.is-rtl) & {
+          margin-left: 0;
+          margin-right: -.25rem;
+        }
+      }
+    }
+  }
+
+  .sidebar-left-section {
+    &-name-right {
+      height: 0;
+      margin-top: -3px;
+      margin-inline-end: -8px;
+    }
+  }
+
+  .range-steps-selector {
+    --option-width: .25rem;
+    --option-height: .5rem;
+    height: 5.25rem;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+    padding-top: 3.6875rem;
+
+    .progress-line {
+      --height: 3px;
+      --thumb-size: 1.5rem;
+    }
+  }
+
+  .range-setting-selector-option {
+    font-weight: var(--font-weight-bold);
+
+    &-text {
+      top: -2.625rem;
+      font-size: var(--font-size-13);
+    }
+
+    &.is-chosen {
+      color: var(--primary-color);
+    }
+  }
+
+  .popup-gift-premium {
+    &-options {
+      margin: 0;
+    }
+
+    &-option {
+      --primary-color: rgb(var(--primary-color-rgb)) !important;
+    }
+  }
+
+  .is-flex {
+    display: flex;
+    align-items: center;
+  }
+}

@@ -1,0 +1,454 @@
+import partition from '@helpers/array/partition';
+import assumeType from '@helpers/assumeType';
+import {formatDate} from '@helpers/date';
+import htmlToDocumentFragment from '@helpers/dom/htmlToDocumentFragment';
+import limitSymbols from '@helpers/string/limitSymbols';
+import {Message, MessageMedia, Document, Photo} from '@layer';
+import getAudioAttribute from '@appManagers/utils/docs/getAudioAttribute';
+import {MyDocument} from '@appManagers/appDocsManager';
+import {MyDraftMessage} from '@appManagers/appDraftsManager';
+import {MyMessage} from '@appManagers/appMessagesManager';
+import isMessageRestricted, {getMessageRestrictionReason} from '@appManagers/utils/messages/isMessageRestricted';
+import getPeerId from '@appManagers/utils/peers/getPeerId';
+import I18n, {LangPackKey, i18n, UNSUPPORTED_LANG_PACK_KEY, FormatterArguments} from '@lib/langPack';
+import getLoginCodeEntity from '@appManagers/utils/messages/getLoginCodeEntity';
+import parseEntities from '@lib/richTextProcessor/parseEntities';
+import sortEntities from '@lib/richTextProcessor/sortEntities';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import wrapPlainText from '@lib/richTextProcessor/wrapPlainText';
+import wrapRichText, {WrapRichTextOptions} from '@lib/richTextProcessor/wrapRichText';
+import wrapTextWithEntities from '@lib/richTextProcessor/wrapTextWithEntities';
+import rootScope from '@lib/rootScope';
+import {Modify} from '@types';
+import Icon from '@components/icon';
+import TranslatableMessage from '@components/translatableMessage';
+import wrapMessageActionTextNew, {WrapMessageActionTextOptions} from '@components/wrappers/messageActionTextNew';
+import {wrapMessageGiveawayResults} from '@components/wrappers/messageActionTextNewUnsafe';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import getMessagePreviewIcon from '@components/wrappers/messagePreviewIcon';
+import getMessageForReplyContent from '@components/wrappers/messageForReplyContent';
+import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
+
+export type WrapMessageForReplyOptions = Modify<WrapMessageActionTextOptions, {
+  message: MyMessage | MyDraftMessage
+}> & {
+  text?: string,
+  highlightWord?: string,
+  usingMids?: number[],
+  withoutMediaType?: boolean,
+  withoutMessageIcon?: boolean,
+  canTranslate?: boolean
+};
+
+export default async function wrapMessageForReply<T extends WrapMessageForReplyOptions>(
+  options: T
+): Promise<T['plain'] extends true ? string : DocumentFragment> {
+  const content = getMessageForReplyContent(options.message, options.text);
+  options.text = content.text;
+  if(!options.plain && options.highlightWord) {
+    options.highlightWord = options.highlightWord.trim();
+  }
+
+  const {message, usingMids, plain, withoutMediaType, withoutMessageIcon} = options;
+
+  const parts: (Node | string)[] = [];
+
+  let hasGroupedKey = false;
+  const addPart = (langKey: LangPackKey, part?: string | HTMLElement | DocumentFragment, args?: FormatterArguments) => {
+    if(langKey) {
+      if(part === undefined && hasGroupedKey) {
+        return;
+      }
+
+      part = plain ? I18n.format(langKey, true, args) : i18n(langKey, args);
+    }
+
+    if(plain) {
+      parts.push(part);
+    } else {
+      const el = document.createElement('span');
+      el.append(part); // * every rich part is already a node — a string here is plain text, never markup
+      parts.push(el);
+    }
+  };
+
+  const managers = options.managers || bindManagersToSession(rootScope.managers);
+  const appMessagesManager = managers.appMessagesManager;
+
+  const getMyId = () => options.managers ? options.managers.rootScope.getMyId() : rootScope.myId;
+
+  const isRestricted = isMessageRestricted(message as any);
+  const isSelfDestructingMedia = !!((message as Message.message).media as MessageMedia.messageMediaPhoto)?.ttl_seconds;
+
+  const someRichTextOptions: WrapRichTextOptions = {
+    ...options,
+    noLinebreaks: true,
+    noLinks: true,
+    noTextFormat: true
+  };
+
+  let entities = content.entities;
+  let isRichPreview = content.isRichPreview;
+  const applyRichMessageSummary = () => {
+    const richMessage = (message as Message.message).rich_message;
+    if(!richMessage) {
+      return false;
+    }
+
+    const summary = getMessageForReplyContent(message);
+    options.text = summary.text;
+    entities = summary.entities;
+    isRichPreview = summary.isRichPreview;
+    return true;
+  };
+
+  const previewIcon = !plain && !withoutMediaType && !withoutMessageIcon ?
+    getMessagePreviewIcon(message) :
+    undefined;
+
+  if((message as Message.message).media && !isRestricted) {
+    assumeType<Message.message>(message);
+    let usingFullGrouped = true;
+    if(message.grouped_id) {
+      if(usingMids) {
+        const mids = await appMessagesManager.getMidsByMessage(message);
+        if(usingMids.length === mids.length) {
+          for(const mid of mids) {
+            if(!usingMids.includes(mid)) {
+              usingFullGrouped = false;
+              break;
+            }
+          }
+        } else {
+          usingFullGrouped = false;
+        }
+      }
+
+      if(usingFullGrouped) {
+        const groupedText = await appMessagesManager.getGroupedText(message.grouped_id);
+        options.text = groupedText?.message || '';
+        entities = groupedText?.totalEntities || [];
+
+        if(!withoutMediaType) {
+          addPart('AttachAlbum');
+          hasGroupedKey = true;
+        }
+      }
+    } else {
+      usingFullGrouped = false;
+    }
+
+    async function addSelfDestructingMediaPart(
+      langPackKeyPart: 'Photo' | 'Video' | 'Voice' | 'Round',
+      media: Photo | Document
+    ) {
+      const {out} = (message as Message.message).pFlags;
+      addPart(
+        `SelfDestructingOnMobile.${langPackKeyPart}${!media ? '.Expired' : (out ? '.You' : '')}`,
+        undefined,
+        [!out && await wrapPeerTitle({peerId: (message as Message.message).fromId})]
+      );
+      options.text = '';
+      entities = [];
+    }
+
+    let i = 1;
+    if((!usingFullGrouped && !withoutMediaType) || !options.text || isSelfDestructingMedia) {
+      const media = message.media;
+      switch(media?._) {
+        case 'messageMediaPhoto':
+          if(isSelfDestructingMedia) {
+            await addSelfDestructingMediaPart('Photo', media.photo);
+          } else {
+            addPart('AttachPhoto');
+          }
+          break;
+        case 'messageMediaDice':
+          addPart(undefined, plain ? media.emoticon : wrapEmojiText(media.emoticon));
+          break;
+        case 'messageMediaVenue': {
+          options.text = media.title;
+          addPart('AttachLocation');
+          break;
+        }
+        case 'messageMediaGeo':
+          addPart('AttachLocation');
+          break;
+        case 'messageMediaGeoLive':
+          addPart('AttachLiveLocation');
+          break;
+        case 'messageMediaPoll':
+          if(plain) {
+            const f = '📊 ' + media.poll.question.text;
+            addPart(undefined, f);
+          } else {
+            const textWithEntities = wrapTextWithEntities(media.poll.question);
+            const fragment = wrapRichText(textWithEntities.text, {...someRichTextOptions, entities: textWithEntities.entities});
+            addPart(undefined, fragment);
+          }
+          break;
+        case 'messageMediaContact':
+          addPart('AttachContact');
+          break;
+        case 'messageMediaWidget':
+          // the caption is the preview of a widget; the stub only stands in for a missing one
+          if(!options.text) addPart('AttachWidget');
+          break;
+        case 'messageMediaGame': {
+          const f = '🎮' + ' ' + media.game.title;
+          addPart(undefined, plain ? f : wrapEmojiText(f));
+          break;
+        }
+        case 'messageMediaDocument': {
+          const document = media.document as MyDocument;
+
+          if(document?.type === 'video' || media.pFlags.video) {
+            if(isSelfDestructingMedia) {
+              await addSelfDestructingMediaPart('Video', document);
+            } else {
+              addPart('AttachVideo');
+            }
+          } else if(document?.type === 'voice' || media.pFlags.voice) {
+            if(isSelfDestructingMedia) {
+              await addSelfDestructingMediaPart('Voice', document);
+            } else {
+              addPart('AttachAudio');
+            }
+          } else if(document?.type === 'round' || media.pFlags.round) {
+            if(isSelfDestructingMedia) {
+              await addSelfDestructingMediaPart('Round', document);
+            } else {
+              addPart('AttachRound');
+            }
+          } else if(document.type === 'gif') {
+            addPart('AttachGif');
+          } else if(document.type === 'sticker') {
+            const i = parts.length;
+            if(document.stickerEmojiRaw) {
+              const f = document.stickerEmojiRaw + ' ';
+              addPart(undefined, plain ? f : wrapEmojiText(f));
+            }
+
+            addPart('AttachSticker');
+
+            // will combine two parts into one
+            const p = parts.splice(i, 2);
+            if(plain) parts.push((p[0] as string) + (p[1] ? p[1] as string : ''));
+            else {
+              const span = window.document.createElement('span');
+              span.append(...p);
+              parts.push(span);
+            }
+
+            options.text = '';
+          } else if(document.type === 'audio') {
+            const attribute = getAudioAttribute(document);
+            const names = [attribute?.title, attribute?.performer].filter(Boolean);
+            // The icon is drawn by `getMessagePreviewIcon` unless this is plain text.
+            const f = (plain ? '🎵 ' : '') + (names.length ? names.join(' - ') : document.file_name);
+            addPart(undefined, plain ? f : wrapEmojiText(f));
+          } else {
+            addPart(undefined, plain ? document.file_name : wrapEmojiText(document.file_name));
+          }
+
+          break;
+        }
+
+        case 'messageMediaInvoice': {
+          if(media.extended_media?._ === 'messageExtendedMediaPreview') {
+            addPart(undefined, plain ? media.description : wrapEmojiText(media.description));
+          } else {
+            addPart(undefined, plain ? media.title : wrapEmojiText(media.title));
+          }
+
+          break;
+        }
+
+        case 'messageMediaUnsupported': {
+          if(applyRichMessageSummary()) {
+            break;
+          }
+
+          addPart('UnsupportedMessageTitle');
+          break;
+        }
+
+        case 'messageMediaStory': {
+          if(media.pFlags.via_mention) {
+            const storyPeerId = getPeerId(media.peer);
+            const isMyStory = storyPeerId === await getMyId();
+            addPart(
+              isMyStory ? 'StoryMentionYou' : 'StoryMention',
+              undefined,
+              [await wrapPeerTitle({peerId: isMyStory ? message.peerId : storyPeerId, plainText: plain})]
+            )
+          } else {
+            addPart('Story');
+          }
+
+          break;
+        }
+
+        // @ts-ignore
+        case 'inputMediaWebPage':
+        case 'messageMediaPhotoExternal':
+        case 'messageMediaDocumentExternal':
+        case 'messageMediaWebPage': {
+          break;
+        }
+
+        case 'messageMediaGiveaway': {
+          const date = formatDate(new Date(media.until_date * 1000));
+          addPart('Giveaway.ToBeSelectedFull', undefined, [i18n('Giveaway.ToBeSelected', [media.quantity, plain ? date.textContent : date])]);
+          break;
+        }
+
+        case 'messageMediaGiveawayResults': {
+          const {langPackKey, args} = wrapMessageGiveawayResults(media, plain);
+          addPart(langPackKey, undefined, args);
+          break;
+        }
+
+        case 'messageMediaPaidMedia': {
+          const extendedMedia = media.extended_media;
+          const [photos, videos] = partition(extendedMedia, (media) => {
+            if(media._ === 'messageExtendedMediaPreview') {
+              return media.video_duration === undefined;
+            }
+
+            return media.media._ === 'messageMediaPhoto';
+          });
+
+          if(!plain) {
+            i += 2;
+            addPart(undefined, Icon('star', 'xtr-icon'));
+            addPart(undefined, ' ');
+          }
+
+          const length = photos.length + videos.length;
+          if(length < 2) {
+            addPart(photos.length ? 'AttachPhoto' : 'AttachVideo');
+            break;
+          }
+
+          addPart(
+            photos.length && videos.length ? 'Media' : photos.length ? 'Photos' : 'Videos', undefined,
+            [length]
+          );
+          break;
+        }
+
+        case 'messageMediaToDo': {
+          addPart(undefined, plain ? media.todo.title.text : wrapEmojiText(media.todo.title.text, false, media.todo.title.entities));
+          break;
+        }
+
+        default:
+          if(applyRichMessageSummary()) {
+            break;
+          }
+
+          addPart(UNSUPPORTED_LANG_PACK_KEY);
+          options.text = '';
+          // messageText += media._;
+          // /////appMessagesManager.log.warn('Got unknown media type!', message);
+          break;
+      }
+    }
+
+    const length = parts.length;
+    for(; i < length; i += 2) {
+      parts.splice(i, 0, ', ');
+    }
+
+    if(options.text && length) {
+      parts.push(', ');
+    }
+  }
+
+  if((message as Message.messageService).action) {
+    const actionWrapped = await wrapMessageActionTextNew({
+      ...(options as Modify<typeof options, {message: Message.messageService}>),
+      noLinks: true,
+      noTextFormat: true
+    });
+
+    if(actionWrapped) {
+      addPart(undefined, actionWrapped);
+    }
+  }
+
+  if(isRestricted) {
+    options.text = getMessageRestrictionReason(message as Message.message).text;
+    entities = [];
+    isRichPreview = false;
+  }
+
+  if(options.text) {
+    // a cut here would move no entity: the rich preview cuts itself, around its entities
+    if(!isRichPreview) options.text = limitSymbols(options.text, 100);
+
+    entities ??= parseEntities(options.text);
+
+    // the code stays hidden in a notification too, as in tdesktop
+    const {peerId: messagePeerId, fromId} = message as Message.message;
+    const loginCodeEntity = fromId === messagePeerId && getLoginCodeEntity(messagePeerId, options.text);
+    if(loginCodeEntity) {
+      entities = [...entities, loginCodeEntity];
+      sortEntities(entities);
+    }
+
+    if(plain) {
+      parts.push(wrapPlainText(options.text, entities));
+    } else {
+      // let entities = parseEntities(text.replace(/\n/g, ' '));
+
+      let what: DocumentFragment | HTMLElement;
+      if(options.canTranslate) {
+        const richMessage = (message as Message.message).rich_message;
+        what = TranslatableMessage({
+          peerId: (message as Message.message).peerId,
+          ...(richMessage ? {
+            textWithEntities: {
+              _: 'textWithEntities',
+              text: options.text,
+              entities
+            }
+          } : {
+            message: message as Message.message
+          }),
+          richTextOptions: someRichTextOptions,
+          middleware: options.middleware,
+          onTextWithEntities: isRichPreview ? undefined : (textWithEntities) => {
+            return {
+              ...textWithEntities,
+              text: limitSymbols(textWithEntities.text, 100)
+            };
+          }
+        });
+      } else {
+        what = wrapRichText(options.text, {
+          ...someRichTextOptions,
+          entities
+        });
+
+        what = htmlToDocumentFragment(what);
+      }
+
+      parts.push(what);
+    }
+  }
+
+  if(plain) {
+    return parts.join('') as any;
+  } else {
+    const fragment = document.createDocumentFragment();
+    fragment.append(
+      ...[
+        previewIcon && Icon(previewIcon, 'message-preview-icon', 'inline-icon', 'inline-icon-left'),
+        ...parts
+      ].filter(Boolean)
+    );
+    return fragment as any;
+  }
+}

@@ -1,0 +1,18 @@
+.popup {
+  --popup-width: 26.25rem;
+  --popup-max-height: calc(var(--100vh) - 6.5rem);
+
+  // the list wears `search-super` for its selection styles, and that class also sizes itself
+  // against the viewport — here the scroll viewport is the popup body, so its last row would
+  // sit in the strip that the body clips away under the footer
+  :global(.search-super) {
+    flex: 1;
+    min-height: 0;
+  }
+
+  // the profile rounds the grid because it sits inside a card; here it runs edge to edge
+  // between the popup's own corners
+  :global(.search-super-content-stories .grid) {
+    border-radius: 0;
+  }
+}

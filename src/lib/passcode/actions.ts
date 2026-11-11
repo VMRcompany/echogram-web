@@ -1,0 +1,175 @@
+import bytesCmpConstTime from '@helpers/bytes/bytesCmpConstTime';
+import {joinDeepPath} from '@helpers/object/setDeepProperty';
+import {useAppSettings} from '@stores/appSettings';
+
+import AccountController from '@lib/accounts/accountController';
+import commonStateStorage from '@lib/commonStateStorage';
+import CacheStorageController from '@lib/files/cacheStorage';
+import {useLockScreenHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
+
+import DeferredIsUsingPasscode from '@lib/passcode/deferredIsUsingPasscode';
+import EncryptionKeyStore, {exportEncryptionKey} from '@lib/passcode/keyStore';
+import {createEncryptionArtifactsForPasscode, deriveEncryptionKey, hashPasscode} from '@lib/passcode/utils';
+
+export type PasscodeActions = ReturnType<typeof usePasscodeActions>;
+
+export function usePasscodeActions() {
+  const {rootScope, apiManagerProxy} = useLockScreenHotReloadGuard();
+  // * the service worker is told what the tab and the worker are, when there is one (`serviceMessagePort?.`): the app
+  // * runs without it (none in the browser, ?noServiceWorker=1), and every step below has to go through all the same
+
+
+  async function disableCacheStorages() {
+    CacheStorageController.temporarilyToggle(false);
+    await apiManagerProxy.invoke('toggleCacheStorage', false);
+    await apiManagerProxy.serviceMessagePort?.invoke('toggleCacheStorage', false);
+  }
+
+  async function enableCacheStorages() {
+    CacheStorageController.temporarilyToggle(true);
+    await apiManagerProxy.invoke('toggleCacheStorage', true);
+    await apiManagerProxy.serviceMessagePort?.invoke('toggleCacheStorage', true);
+  }
+
+  async function clearCacheStorages() {
+    await CacheStorageController.clearEncryptableStorages();
+
+    CacheStorageController.resetOpenEncryptableCacheStorages();
+    await Promise.all([
+      apiManagerProxy.invoke('resetEncryptableCacheStorages', void 0),
+      apiManagerProxy.serviceMessagePort?.invoke('resetEncryptableCacheStorages', void 0)
+    ]);
+  }
+
+  async function enablePasscode(passcode: string) {
+    const {verificationHash, verificationSalt, encryptionSalt, encryptionKey} =
+      await createEncryptionArtifactsForPasscode(passcode);
+
+    passcode = ''; // forget
+
+    await commonStateStorage.set({
+      passcode: {
+        verificationHash,
+        verificationSalt,
+        encryptionSalt
+      }
+    });
+
+    const [, setAppSettings] = useAppSettings();
+    await setAppSettings('passcode', 'enabled', true);
+
+    await disableCacheStorages();
+    await clearCacheStorages();
+
+    await apiManagerProxy.invoke('toggleUsingPasscode', {
+      isUsingPasscode: true,
+      encryptionKey: await exportEncryptionKey(encryptionKey)
+    });
+
+    // The session storage should first get encrypted in the mtproto worker, then we can use start using the encrypted proxy here
+    DeferredIsUsingPasscode.resolveDeferred(true);
+    EncryptionKeyStore.save(encryptionKey);
+
+    // * the worker answers once the accounts are encrypted and written: the plain copy of their keys goes now, never
+    // * before - and not after a step below either, which may not finish (the tab closed, the service worker failed),
+    // * leaving it in localStorage, where nothing removes it with the passcode on until the next start
+    // * (`AccountController.removeLegacyCopyBehindPasscode`)
+    await AccountController.updateStorageForLegacy(null);
+
+    await apiManagerProxy.serviceMessagePort?.invoke('toggleUsingPasscode', {type: 'full', isUsingPasscode: true, encryptionKey});
+
+    rootScope.dispatchEvent('toggle_using_passcode', true);
+
+    await enableCacheStorages();
+  }
+
+  async function isMyPasscode(passcode: string) {
+    const passcodeData = await commonStateStorage.get('passcode', false);
+    if(!passcodeData?.verificationHash || !passcodeData?.verificationSalt) return false;
+
+    const hashed = await hashPasscode(passcode, passcodeData.verificationSalt);
+    passcode = ''; // forget
+
+    return bytesCmpConstTime(hashed, passcodeData.verificationHash);
+  }
+
+  async function disablePasscode() {
+    const [, setAppSettings] = useAppSettings();
+    await setAppSettings('passcode', 'enabled', false);
+    rootScope.dispatchEvent('toggle_using_passcode', false);
+
+    await disableCacheStorages();
+    await clearCacheStorages();
+
+    await apiManagerProxy.invoke('toggleUsingPasscode', {isUsingPasscode: false});
+    await apiManagerProxy.serviceMessagePort?.invoke('toggleUsingPasscode', {type: 'full', isUsingPasscode: false});
+
+    EncryptionKeyStore.save(null);
+    DeferredIsUsingPasscode.resolveDeferred(false);
+
+    await enableCacheStorages();
+
+    commonStateStorage.delete('passcode');
+
+    // * the reverse of the strip `enablePasscode` does
+    await AccountController.updateStorageForLegacy(await AccountController.get(1));
+  }
+
+  /**
+   * Note: Re-encrypts everything with a different hash even if the passcode is the same
+   */
+  async function changePasscode(passcode: string) {
+    const {verificationHash, verificationSalt, encryptionSalt, encryptionKey} =
+      await createEncryptionArtifactsForPasscode(passcode);
+    passcode = ''; // forget
+
+    const toStore = {
+      verificationHash,
+      verificationSalt,
+      encryptionSalt
+    }
+
+    await disableCacheStorages();
+    await clearCacheStorages();
+
+    await apiManagerProxy.invoke('changePasscode', {
+      toStore,
+      encryptionKey: await exportEncryptionKey(encryptionKey)
+    });
+    await apiManagerProxy.serviceMessagePort?.invoke('saveEncryptionKey', encryptionKey);
+
+    EncryptionKeyStore.save(encryptionKey);
+
+    await enableCacheStorages();
+    // Just to set local cache, not really needed)
+    await commonStateStorage.set({
+      passcode: toStore
+    }, true);
+  }
+
+  /**
+   * Warning! don't call on an unverified password
+   */
+  async function unlockWithPasscode(passcode: string) {
+    const passcodeData = await commonStateStorage.get('passcode', false);
+    if(!passcodeData?.encryptionSalt) throw new Error('No encryption salt found in storage');
+
+    const encryptionKey = await deriveEncryptionKey(passcode, passcodeData.encryptionSalt);
+    passcode = ''; // forget;
+
+    EncryptionKeyStore.save(encryptionKey);
+    await apiManagerProxy.invoke('saveEncryptionKey', await exportEncryptionKey(encryptionKey));
+    // Make sure we resolve the DeferredIsUsingPasscode as there is no storage available in SW to get the value
+    await apiManagerProxy.serviceMessagePort?.invoke('toggleUsingPasscode', {type: 'full', isUsingPasscode: true, encryptionKey});
+
+    apiManagerProxy.invokeVoid('toggleLockOthers', false);
+  }
+
+  return {
+    enablePasscode,
+    isMyPasscode,
+    disablePasscode,
+    changePasscode,
+    unlockWithPasscode
+  };
+}

@@ -1,0 +1,57 @@
+@use "../../scss/mixins" as *;
+
+.popup {
+  --popup-width: 26.25rem;
+  :global {
+    .popup-body {
+      align-items: center;
+      padding-bottom: .5rem;
+    }
+
+    .btn-transparent {
+      position: relative;
+    }
+  }
+}
+
+.sticker {
+  margin-top: 1.625rem;
+}
+
+.value {
+  background: var(--primary-button-color);
+  color: #fff;
+  padding: 0.5625rem 1rem;
+  border-radius: 9999px;
+  font-size: var(--font-size-24);
+  font-weight: var(--font-weight-bold);
+  font-family: var(--font-rounded);
+  margin-block: 1rem;
+}
+
+.table {
+  margin-top: 1.5rem;
+  padding-inline: 1rem;
+  width: 100%;
+
+  :global(.currency-star-icon) {
+    width: 16px;
+    height: 16px;
+    margin-inline-end: 0.125rem;
+    vertical-align: text-top;
+  }
+}
+
+.footer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+
+  // each label is "<count><sticker> on Telegram <chevron>" — the count and its sticker come as
+  // one i18n argument and have to sit on the text's baseline row
+  button span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+}
