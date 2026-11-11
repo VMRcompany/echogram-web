@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+function e(e){return e.slice(0,8)}var t=[`web.telegram.org`,`webk.telegram.org`],n=`pattern`,r=Math.min(4,navigator.hardwareConcurrency??4),i={id:39950349,hash:`b5a4ddc547823b56639f876f7bcdfe92`,pushServerKey:`BB3JzmQIBTl8ZdTmLzhkZVnoYxoSvUmCe1CqqF53u2j0WbEFo2m--mOBagroDFdqMeESfz3ue1Z1e5PTIxMYH_g`,version:`2.3`,versionFull:`2.3 (686)`,build:686,langPackVersion:378801,langPack:`webk`,langPackCode:`en`,domains:t,baseDcId:2,isMainDomain:t.includes(location.hostname),suffix:`K`,threads:r,lottieWorkers:r,cryptoWorkers:r,interclientBroadcastChannel:`tgweb`};function a(){return`Echogram Web${i.suffix} ${i.version} (${i.build})`}i.isMainDomain;export{e as i,n,a as r,i as t};
+//# sourceMappingURL=app-HZP4hxS0.js.map
