@@ -176,10 +176,4 @@ if(Modes.http) {
   Modes.transport = 'https';
 }
 
-// The WebSocket relay on kws*.web.telegram.org is the path that still opens
-// when a network blocks Telegram's datacenter addresses. HTTPS stays available.
-if(Modes.multipleTransports) {
-  Modes.transport = 'websocket';
-}
-
 export default Modes;

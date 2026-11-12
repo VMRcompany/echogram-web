@@ -9,6 +9,7 @@ import type MTTransport from '@lib/mtproto/transports/transport';
 import type {TimeManager} from '@lib/mtproto/timeManager';
 import type {DcConfigurator, TransportType} from '@lib/mtproto/dcConfigurator';
 import transportController from '@lib/mtproto/transports/controller';
+import {getGatewayChoice, whenGatewayReady} from '@lib/mtproto/proxyRoute';
 import {TLSerialization, TLDeserialization} from '@lib/mtproto/tl_utils';
 import rsaKeysManager from '@lib/mtproto/rsaKeysManager';
 import CryptoWorker from '@lib/crypto/cryptoMessagePort';
@@ -612,8 +613,8 @@ export class Authorizer {
     }
 
     if(this.getTransportTypePromise) return this.getTransportTypePromise;
-    return this.getTransportTypePromise = transportController.pingTransports().then(({websocket}) => {
-      this.transportType = websocket ? 'websocket' : 'https';
+    return this.getTransportTypePromise = whenGatewayReady().then(() => {
+      this.transportType = getGatewayChoice()?.transport || 'https';
       this.log('will use transport:', this.transportType);
     });
   };
@@ -622,17 +623,24 @@ export class Authorizer {
     await this.getTransportType();
 
     let error: ApiError;
-    let retries = 0;
-    while(++retries <= 3) {
+    const first = this.transportType || 'https';
+    const order: TransportType[] = [first, first === 'https' ? 'websocket' : 'https'];
+    for(const transportType of order) {
+      this.transportType = transportType;
       try {
-        return await this.sendReqPQ({
+        const attempt = this.sendReqPQ({
           dcId,
           temp: false,
-          transport: this.dcConfigurator.chooseServer(dcId, 'client', this.transportType),
+          transport: this.dcConfigurator.chooseServer(dcId, 'client', transportType, false),
           media: false
         });
+        return await Promise.race([
+          attempt,
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('GATEWAY_TIMEOUT')), 4000))
+        ]);
       } catch(err) {
         error = err as ApiError;
+        this.log('auth transport failed, trying the other', transportType, err);
       }
     }
 

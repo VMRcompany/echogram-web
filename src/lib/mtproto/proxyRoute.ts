@@ -3,10 +3,23 @@ export type EchogramProxyRoute = {
   port: number
 };
 
+export type GatewayTransport = 'websocket' | 'https';
+
+export type GatewayChoice = {
+  transport: GatewayTransport,
+  dcId: number
+};
+
 type RouteListener = () => void;
 
 let active: EchogramProxyRoute | null = null;
 const listeners = new Set<RouteListener>();
+
+let choice: GatewayChoice | null = null;
+let markReady = () => {};
+let ready = new Promise<void>((resolve) => {
+  markReady = resolve;
+});
 
 function sameRoute(a: EchogramProxyRoute | null, b: EchogramProxyRoute | null) {
   if(a === b) return true;
@@ -27,6 +40,26 @@ export function setActiveProxyRoute(route: EchogramProxyRoute | null) {
 export function subscribeProxyRoute(listener: RouteListener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+export function getGatewayChoice() {
+  return choice;
+}
+
+export function setGatewayChoice(next: GatewayChoice | null) {
+  choice = next;
+}
+
+export function finishGatewayProbe() {
+  markReady();
+}
+
+/** Resolves when this browser has finished testing gateways, or after 1.2s. */
+export function whenGatewayReady() {
+  return Promise.race([
+    ready,
+    new Promise<void>((resolve) => setTimeout(resolve, 1200))
+  ]);
 }
 
 /**

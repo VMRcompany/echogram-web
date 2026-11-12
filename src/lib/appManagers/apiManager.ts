@@ -12,6 +12,7 @@ import type TcpObfuscated from '@lib/mtproto/transports/tcpObfuscated';
 import sessionStorage from '@lib/sessionStorage';
 import MTPNetworker, {MTMessage} from '@lib/mtproto/networker';
 import {ConnectionType, constructTelegramWebSocketUrl, DcConfigurator, TransportType} from '@lib/mtproto/dcConfigurator';
+import {getGatewayChoice, whenGatewayReady} from '@lib/mtproto/proxyRoute';
 import isValidDcId from '@lib/mtproto/isValidDcId';
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import App from '@config/app';
@@ -247,7 +248,9 @@ export class ApiManager extends ApiManagerMethods {
       // * a DC no client connects to, kept before setBaseDcId refused one, gives way to the default: the slot's
       // * requests went nowhere until site data was cleared
       if(!isValidDcId(baseDcId, Modes.test)) {
-        this.setBaseDcId(App.baseDcId);
+        await whenGatewayReady();
+        const preferred = getGatewayChoice()?.dcId;
+        this.setBaseDcId(preferred && isValidDcId(preferred, Modes.test) ? preferred as TrueDcId : App.baseDcId);
       } else {
         this.baseDcId = baseDcId;
       }

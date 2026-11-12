@@ -5,6 +5,7 @@ import pause from '@helpers/schedulers/pause';
 import {TransportType, DcConfigurator} from '@lib/mtproto/dcConfigurator';
 import type HTTP from '@lib/mtproto/transports/http';
 import type TcpObfuscated from '@lib/mtproto/transports/tcpObfuscated';
+import {getGatewayChoice} from '@lib/mtproto/proxyRoute';
 import MTTransport from '@lib/mtproto/transports/transport';
 
 export class MTTransportController extends EventListenerBase<{
@@ -25,6 +26,12 @@ export class MTTransportController extends EventListenerBase<{
     }); */
 
     this.addEventListener('change', (opened) => {
+      const choice = getGatewayChoice();
+      if(choice) {
+        this.dispatchEvent('transport', choice.transport);
+        return;
+      }
+
       if(!opened.get('websocket')) {
         this.waitForWebSocket();
       }
@@ -86,12 +93,17 @@ export class MTTransportController extends EventListenerBase<{
     this.pinging = true;
 
     while(true) {
+      const choice = getGatewayChoice();
       const {https, websocket} = await this.pingTransports();
-      if(https || websocket) {
-        this.dispatchEvent('transport', websocket || !https ? 'websocket' : 'https');
+      if(choice) {
+        this.dispatchEvent('transport', choice.transport);
+      } else if(https || websocket) {
+        // A socket that only opens still drops API replies on some networks.
+        // HTTPS is used when it answered; the socket is the fallback.
+        this.dispatchEvent('transport', https ? 'https' : 'websocket');
       }
 
-      if(websocket) {
+      if(choice?.transport === 'websocket' ? websocket : choice ? https : websocket) {
         break;
       }
 
