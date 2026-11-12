@@ -112,9 +112,9 @@ export class MTTransportController extends EventListenerBase<{
       }
 
       if(https || websocket) {
-        // A socket that only opens still drops API replies on some networks.
-        // HTTPS is used when it answered; the socket is the fallback.
-        this.dispatchEvent('transport', https ? 'https' : 'websocket');
+        // The browser's HTTP POST to /apiw1 is a 404 even when the socket works,
+        // so an open WebSocket wins over an HTTP ping.
+        this.dispatchEvent('transport', websocket ? 'websocket' : 'https');
       }
 
       if(websocket) {

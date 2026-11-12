@@ -167,12 +167,13 @@ if(import.meta.env.VITE_MTPROTO_HAS_HTTP) {
   }
 }
 
-// * start with HTTP first
+// HTTP stays available, but the browser's POST to /apiw1 is a 404 from
+// Telegram's nginx, so it cannot be the transport that carries login.
+// The live socket is WebSocket. A front, when the direct host is blocked, is too.
 if(Modes.multipleTransports) {
   Modes.http = true;
-}
-
-if(Modes.http) {
+  Modes.transport = 'websocket';
+} else if(Modes.http) {
   Modes.transport = 'https';
 }
 

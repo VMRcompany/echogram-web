@@ -11,7 +11,7 @@ import transportController from '@lib/mtproto/transports/controller';
 import bytesToHex from '@helpers/bytes/bytesToHex';
 // import networkStats from '@lib/mtproto/networkStats';
 import ctx from '@environment/ctx';
-import {applySocketUrl, subscribeProxyRoute} from '@lib/mtproto/proxyRoute';
+import {applySocketUrl, getActiveFront, noteFrontFailed, subscribeProxyRoute} from '@lib/mtproto/proxyRoute';
 
 export default class TcpObfuscated implements MTTransport {
   private codec = abridgedPacketCodec;
@@ -35,6 +35,9 @@ export default class TcpObfuscated implements MTTransport {
   private reconnectTimeout: number;
   private releasingPending: boolean;
   private unsubscribeRoute: () => void;
+  private sawMessage = false;
+  private connectionGeneration = 0;
+  private onClose: () => void = () => {};
 
   // private debugPayloads: MTPNetworker['debugRequests'] = [];
 
@@ -84,6 +87,7 @@ export default class TcpObfuscated implements MTTransport {
 
   private onMessage = async(buffer: ArrayBuffer) => {
     // networkStats.addReceived(this.dcId, buffer.byteLength);
+    this.sawMessage = true;
 
     const time = Date.now();
     let data = await this.obfuscation.decode(new Uint8Array(buffer));
@@ -108,8 +112,12 @@ export default class TcpObfuscated implements MTTransport {
     pending.resolve(data);
   };
 
-  private onClose = () => {
+  private finishClose(openedUrl: string) {
+    const front = getActiveFront();
+    const frontDied = this.autoReconnect && !!front && !this.sawMessage && openedUrl.includes(`.${front}/`);
     this.clear();
+    if(frontDied) noteFrontFailed();
+    const replaced = !!this.connection;
 
     let needTimeout: number, retryAt: number;
     if(this.autoReconnect) {
@@ -124,13 +132,15 @@ export default class TcpObfuscated implements MTTransport {
       this.pending.length = 0;
     }
 
+    if(replaced) return;
+
     if(this.autoReconnect) {
       this.log('will try to reconnect after timeout:', needTimeout / 1000);
       this.reconnectTimeout = ctx.setTimeout(this.reconnect, needTimeout);
     } else {
       this.log('reconnect isn\'t needed');
     }
-  };
+  }
 
   public clear() {
     if(import.meta.env.VITE_MTPROTO_AUTO && Modes.multipleTransports) {
@@ -234,12 +244,20 @@ export default class TcpObfuscated implements MTTransport {
   }
 
   private connect() {
+    this.sawMessage = false;
     if(this.connection) {
       this.close();
     }
 
     const next = applySocketUrl(this.dcId, this.url);
     if(next) this.url = next;
+
+    const generation = ++this.connectionGeneration;
+    const openedUrl = this.url;
+    this.onClose = () => {
+      if(generation !== this.connectionGeneration) return;
+      this.finishClose(openedUrl);
+    };
 
     this.connection = new this.Connection(this.dcId, this.url, this.logSuffix);
     this.connection.addEventListener('open', this.onOpen);

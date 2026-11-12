@@ -103,6 +103,7 @@ export function setFrontOrder(fronts: string[]) {
   if(next === activeFront) return;
   activeFront = next;
   if(!next) onFrontsExhausted();
+  for(const listener of listeners) listener();
 }
 
 /**
@@ -126,10 +127,19 @@ export function noteFrontFailed() {
 }
 
 /**
- * WebSocket the transport should open. A chosen proxy replaces the direct
- * `kws*.web.telegram.org` host; otherwise the official URL is rebuilt.
+ * WebSocket the transport should open. A chosen front replaces the direct
+ * host. Cloudflare zones have no `kwsN-1` name, so media uses `kwsN` there.
+ * Otherwise the official URL is rebuilt.
  */
 export function applySocketUrl(dcId: number, currentUrl: string) {
+  const front = activeFront;
+  if(front) {
+    const media = currentUrl.includes('-1');
+    const suffix = media && front === 'web.telegram.org' ? '-1' : '';
+    const path = currentUrl.match(/\/(apiws[^/?]*)/)?.[1] || 'apiws';
+    return `wss://kws${dcId}${suffix}.${front}/${path}`;
+  }
+
   const route = active;
   if(route) {
     const port = route.port === 443 ? '' : `:${route.port}`;

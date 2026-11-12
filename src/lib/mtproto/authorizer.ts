@@ -614,7 +614,7 @@ export class Authorizer {
 
     if(this.getTransportTypePromise) return this.getTransportTypePromise;
     return this.getTransportTypePromise = whenGatewayReady().then(() => {
-      this.transportType = getGatewayChoice()?.transport || 'https';
+      this.transportType = getGatewayChoice()?.transport || 'websocket';
       this.log('will use transport:', this.transportType);
     });
   };
