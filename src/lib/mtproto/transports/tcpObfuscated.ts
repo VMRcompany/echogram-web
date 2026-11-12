@@ -36,8 +36,11 @@ export default class TcpObfuscated implements MTTransport {
   private releasingPending: boolean;
   private unsubscribeRoute: () => void;
   private sawMessage = false;
+  private handshakeSent = false;
   private connectionGeneration = 0;
+  private stallTimer: number;
   private onClose: () => void = () => {};
+  private readonly stallMs = 4000;
 
   // private debugPayloads: MTPNetworker['debugRequests'] = [];
 
@@ -62,6 +65,7 @@ export default class TcpObfuscated implements MTTransport {
   }
 
   private onOpen = async() => {
+    const generation = this.connectionGeneration;
     this.connected = true;
 
     if(import.meta.env.VITE_MTPROTO_AUTO && Modes.multipleTransports) {
@@ -69,11 +73,12 @@ export default class TcpObfuscated implements MTTransport {
     }
 
     const initPayload = await this.obfuscation.init(this.codec);
-    if(!this.connected) {
+    if(generation !== this.connectionGeneration || !this.connected) {
       return;
     }
 
     this.connection.send(initPayload);
+    this.handshakeSent = true;
 
     if(this.networker) {
       this.pending.length = 0; // ! clear queue and reformat messages to container, because if sending simultaneously 10+ messages, connection will die
@@ -88,6 +93,7 @@ export default class TcpObfuscated implements MTTransport {
   private onMessage = async(buffer: ArrayBuffer) => {
     // networkStats.addReceived(this.dcId, buffer.byteLength);
     this.sawMessage = true;
+    this.clearStall();
 
     const time = Date.now();
     let data = await this.obfuscation.decode(new Uint8Array(buffer));
@@ -112,11 +118,40 @@ export default class TcpObfuscated implements MTTransport {
     pending.resolve(data);
   };
 
-  private finishClose(openedUrl: string) {
+  private retireFront(openedUrl: string) {
+    // File sockets miss on purpose on some fronts. Only the chat socket retires one.
+    if(this.logSuffix || !this.autoReconnect) return;
     const front = getActiveFront();
-    const frontDied = this.autoReconnect && !!front && !this.sawMessage && openedUrl.includes(`.${front}/`);
+    if(front && openedUrl.includes(`.${front}/`)) noteFrontFailed();
+  }
+
+  private clearStall() {
+    if(this.stallTimer !== undefined) {
+      clearTimeout(this.stallTimer);
+      this.stallTimer = undefined;
+    }
+  }
+
+  /**
+   * A socket that never delivers a reply leaves the chat on "Reconnecting" /
+   * "Waiting for network" forever: the open timeout is cancelled once the
+   * socket opens, and a host that accepts the connection then stays silent.
+   */
+  private armStall(generation: number, openedUrl: string) {
+    this.clearStall();
+    this.stallTimer = ctx.setTimeout(() => {
+      this.stallTimer = undefined;
+      if(generation !== this.connectionGeneration || this.sawMessage) return;
+      if(this.handshakeSent || !this.connected) this.retireFront(openedUrl);
+      if(generation !== this.connectionGeneration || this.sawMessage) return;
+      if(this.autoReconnect) this.forceReconnect();
+    }, this.stallMs);
+  }
+
+  private finishClose(openedUrl: string) {
+    const shouldRetire = !this.sawMessage && (this.handshakeSent || !this.connected);
     this.clear();
-    if(frontDied) noteFrontFailed();
+    if(shouldRetire) this.retireFront(openedUrl);
     const replaced = !!this.connection;
 
     let needTimeout: number, retryAt: number;
@@ -127,7 +162,9 @@ export default class TcpObfuscated implements MTTransport {
       retryAt = time + needTimeout;
     }
 
-    if(this.networker) {
+    // The replacement socket is already connecting. Marking this one Closed
+    // on top of that sticks the chat on "Reconnecting" until the next open.
+    if(this.networker && !replaced) {
       this.networker.setConnectionStatus(ConnectionStatus.Closed, retryAt);
       this.pending.length = 0;
     }
@@ -150,6 +187,7 @@ export default class TcpObfuscated implements MTTransport {
     }
 
     this.connected = false;
+    this.clearStall();
 
     if(this.connection) {
       this.connection.removeEventListener('open', this.onOpen);
@@ -221,8 +259,11 @@ export default class TcpObfuscated implements MTTransport {
         connection.addEventListener('close', () => {
           connection.removeEventListener('message', this.onMessage);
         }, {once: true});
-        connection.close();
       }
+      // A socket that has not opened yet must still be closed. Leaving it
+      // in CONNECTING piles up until the browser stops opening new ones,
+      // and the chat then stays on "Reconnecting" for good.
+      connection.close();
     }
   }
 
@@ -234,6 +275,7 @@ export default class TcpObfuscated implements MTTransport {
     this.autoReconnect = enable;
 
     if(!enable) {
+      this.clearStall();
       if(this.reconnectTimeout !== undefined) {
         clearTimeout(this.reconnectTimeout);
         this.reconnectTimeout = undefined;
@@ -245,6 +287,7 @@ export default class TcpObfuscated implements MTTransport {
 
   private connect() {
     this.sawMessage = false;
+    this.handshakeSent = false;
     if(this.connection) {
       this.close();
     }
@@ -263,6 +306,7 @@ export default class TcpObfuscated implements MTTransport {
     this.connection.addEventListener('open', this.onOpen);
     this.connection.addEventListener('close', this.onClose);
     this.connection.addEventListener('message', this.onMessage);
+    this.armStall(generation, openedUrl);
   }
 
   public changeUrl(url: string) {

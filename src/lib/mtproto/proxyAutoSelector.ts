@@ -40,8 +40,9 @@ const FRONTS = [
 
 const CACHE_KEY = 'echogram_front_v4';
 const CACHE_URL = 'https://echogram.local/front';
-const PROBE_MS = 4000;
-const DIRECT_WINDOW_MS = 1300;
+const PROBE_MS = 2200;
+const DIRECT_WINDOW_MS = 350;
+const FIRST_WAVE = 8;
 const RES_PQ = 85337187;
 const REQ_PQ_MULTI = -1099002127;
 
@@ -169,7 +170,8 @@ async function saveCache(front: string) {
 }
 
 function probe(front: string) {
-  return new Promise<Hit | null>((resolve) => {
+  let cancel = () => {};
+  const promise = new Promise<Hit | null>((resolve) => {
     const startedAt = Date.now();
     let socket: WebSocket;
     let settled = false;
@@ -183,6 +185,7 @@ function probe(front: string) {
       }
       resolve(hit);
     };
+    cancel = () => finish(null);
     const timer = setTimeout(() => finish(null), PROBE_MS);
 
     probeFrames().then(({wireInit, wirePacket, decKey, decIv}) => {
@@ -212,6 +215,7 @@ function probe(front: string) {
       };
     }).catch(() => finish(null));
   });
+  return {promise, cancel};
 }
 
 async function probeFromHere() {
@@ -225,6 +229,11 @@ async function probeFromHere() {
   let directSettled = false;
   let waitDirect: number | undefined;
   const probeStarted = Date.now();
+  const jobs: Array<ReturnType<typeof probe>> = [];
+
+  const stopProbes = () => {
+    for(const job of jobs) job.cancel();
+  };
 
   const commit = (front: string) => {
     if(committed) {
@@ -239,6 +248,7 @@ async function probeFromHere() {
     setGatewayChoice({transport: 'websocket', dcId: 2});
     finishGatewayProbe();
     saveCache(front);
+    stopProbes();
     log('front for this network', front);
   };
 
@@ -269,13 +279,27 @@ async function probeFromHere() {
     }, wait);
   };
 
-  await Promise.all(fronts.map(async(front) => {
-    const hit = await probe(front);
-    if(front === DIRECT) directSettled = true;
-    if(hit) consider(hit);
-    else if(front === DIRECT && !committed && found.some((item) => item.front !== DIRECT)) commitFastestFront();
-  }));
+  const run = (front: string) => {
+    const job = probe(front);
+    jobs.push(job);
+    return job.promise.then((hit) => {
+      if(front === DIRECT) directSettled = true;
+      if(hit) consider(hit);
+      else if(front === DIRECT && !committed && found.some((item) => item.front !== DIRECT)) commitFastestFront();
+    });
+  };
 
+  // The first handful run at once. The rest start only if those have not
+  // answered, so the login socket is not competing with twenty handshakes.
+  const first = fronts.slice(0, FIRST_WAVE);
+  const second = fronts.slice(FIRST_WAVE);
+  await Promise.all(first.map(run));
+  // The direct window may still be pending when every probe in this wave has
+  // already finished. Take the front that answered instead of falling through.
+  if(!committed && found.some((item) => item.front !== DIRECT)) commitFastestFront();
+  if(!committed && second.length) await Promise.all(second.map(run));
+
+  if(!committed && found.some((item) => item.front !== DIRECT)) commitFastestFront();
   if(!committed) {
     if(cached && isFrontUsable(cached)) commit(cached);
     else finishGatewayProbe();
