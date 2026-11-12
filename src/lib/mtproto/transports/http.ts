@@ -4,6 +4,7 @@ import {logger, LogTypes} from '@lib/logger';
 import MTTransport from '@lib/mtproto/transports/transport';
 import Modes from '@config/modes';
 import transportController from '@lib/mtproto/transports/controller';
+import {applyHttpsUrl, getActiveFront, noteFrontFailed, whenGatewayReady} from '@lib/mtproto/proxyRoute';
 // import networkStats from '@lib/mtproto/networkStats';
 
 const TEST_DROPPING_REQUESTS: TrueDcId = undefined;
@@ -22,6 +23,10 @@ export default class HTTP implements MTTransport {
   public connected: boolean;
   private destroyed: boolean;
   private debug: boolean;
+  private media: boolean;
+  private testPath: boolean;
+  private proven: boolean;
+  private waitedGate: boolean;
 
   constructor(
     protected dcId: DcId,
@@ -37,17 +42,36 @@ export default class HTTP implements MTTransport {
     this.log('constructor');
 
     this.connected = false;
+    this.media = /:\/\/[a-z0-9]+-1\./i.test(url);
+    this.testPath = url.includes('apiw_test');
+    this.proven = false;
+    this.waitedGate = false;
   }
 
-  public _send(
+  public async _send(
     body: Uint8Array,
     mode?: RequestMode,
-    timeoutMs = 30000
+    timeoutMs?: number
   ) {
     this.debug && this.log.debug('-> body length to send:', body.length);
 
+    if(!mode) {
+      if(!this.waitedGate) {
+        this.waitedGate = true;
+        await whenGatewayReady();
+      }
+
+      const next = applyHttpsUrl(this.dcId, this.media, this.testPath);
+      if(next && next !== this.url) {
+        this.url = next;
+        this.proven = false;
+      }
+    }
+
+    const frontAtSend = getActiveFront();
+    const limit = timeoutMs ?? (this.proven ? 30000 : (frontAtSend ? 4500 : 20000));
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const timeout = setTimeout(() => controller.abort(), limit);
 
     // networkStats.addSent(this.dcId, length);
     return fetch(this.url, {method: 'POST', body: body as BodyInit, mode, signal: controller.signal})
@@ -71,9 +95,12 @@ export default class HTTP implements MTTransport {
 
       const buffer = await response.arrayBuffer();
       // networkStats.addReceived(this.dcId, buffer.byteLength);
+      if(!mode) this.proven = true;
       return new Uint8Array(buffer);
     }).catch((err) => {
       this.setConnected(false);
+      // A no-cors ping must not retire a front that the real probe already kept.
+      if(!mode && !this.destroyed && frontAtSend && getActiveFront() === frontAtSend) noteFrontFailed();
       throw err;
     }).finally(() => {
       clearTimeout(timeout);
@@ -131,7 +158,7 @@ export default class HTTP implements MTTransport {
         this.pending.splice(i, 1);
       } catch(err) {
         this.log.error('Send plain request error:', err);
-        await pause(5000);
+        await pause(getActiveFront() ? 250 : 1500);
       }
 
       --i;

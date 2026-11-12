@@ -1,131 +1,191 @@
 import {logger} from '@lib/logger';
-import {finishGatewayProbe, GatewayChoice, GatewayTransport, setGatewayChoice} from '@lib/mtproto/proxyRoute';
+import {finishGatewayProbe, getActiveFront, isFrontUsable, rememberFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
 
 /**
- * Each browser tests Telegram's own web gateways from the network it is on.
- * All of them are opened together. Only a gateway that answers is kept, and
- * the fastest one that returned data is the one this user keeps using.
- * A saved choice is only a fallback for the next visit on this same device.
+ * Each browser races Telegram's own web API and the Cloudflare fronts from
+ * the network it is on. Only a host that returns a real resPQ is kept.
+ * The direct host wins when it answers. If it is blocked, the fastest front
+ * that answered is used, and a dead one is replaced by the next.
  */
 const log = logger('PROXY');
 
-const HTTPS_HOST = ['pluto', 'venus', 'aurora', 'vesta', 'flora'];
-const CACHE_KEY = 'echogram_gateway_v2';
-const PROBE_MS = 1000;
+const DIRECT = 'web.telegram.org';
+const FRONTS = [
+  DIRECT,
+  'pclead.co.uk',
+  'offshor.co.uk',
+  'cakeisalie.co.uk',
+  'noskomnadzor.co.uk',
+  'lovetrue.co.uk',
+  'sorokdva.co.uk',
+  'pyatdesyatdva.co.uk',
+  'kartoshka.co.uk',
+  'sorokodin.co.uk',
+  'pyatdesyatodin.co.uk',
+  'notelega.co.uk',
+  'ebally.co.uk',
+  'nebally.co.uk',
+  'havegreatday.co.uk',
+  'pomogite.co.uk',
+  'fixtelega.co.uk',
+  'sadnews.co.uk',
+  'onedaychamp.co.uk',
+  'stopblocking.co.uk',
+  'nothingthere.co.uk'
+];
 
-type Hit = {
-  transport: GatewayTransport,
-  dcId: number,
-  ms: number
-};
+const CACHE_KEY = 'echogram_front_v3';
+const CACHE_URL = 'https://echogram.local/front';
+const PROBE_MS = 4000;
+const DIRECT_WINDOW_MS = 1300;
+const RES_PQ = 85337187;
+const REQ_PQ_MULTI = -1099002127;
+
+type Hit = {front: string, ms: number};
 
 let started = false;
+let probing = false;
 
-function storageGet(key: string) {
+function bytesOf(length: number) {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return bytes;
+}
+
+function writeInt32(target: Uint8Array, offset: number, value: number) {
+  new DataView(target.buffer).setInt32(offset, value, true);
+}
+
+/** Same plain HTTP body Telegram's web client posts to /apiw1. */
+function probeBody() {
+  const body = new Uint8Array(40);
+  const now = Date.now();
+  writeInt32(body, 8, now % 1000);
+  writeInt32(body, 12, Math.floor(now / 1000));
+  writeInt32(body, 16, 20);
+  writeInt32(body, 20, REQ_PQ_MULTI);
+  body.set(bytesOf(16), 24);
+  return body;
+}
+
+function isResPq(buffer: ArrayBuffer) {
+  if(buffer.byteLength < 24) return false;
+  return new DataView(buffer).getInt32(20, true) === RES_PQ;
+}
+
+async function loadCache() {
   try {
-    return localStorage.getItem(key) || '';
+    const local = localStorage.getItem(CACHE_KEY) || '';
+    if(FRONTS.includes(local)) return local;
+  } catch{
+  }
+
+  try {
+    const cache = await caches.open('echogram-front');
+    const stored = await cache.match(CACHE_URL);
+    const front = stored ? (await stored.text()).trim() : '';
+    return FRONTS.includes(front) ? front : '';
   } catch{
     return '';
   }
 }
 
-function storageSet(key: string, value: string) {
+async function saveCache(front: string) {
   try {
-    localStorage.setItem(key, value);
+    localStorage.setItem(CACHE_KEY, front);
+  } catch{
+  }
+
+  try {
+    const cache = await caches.open('echogram-front');
+    await cache.put(CACHE_URL, new Response(front));
   } catch{
   }
 }
 
-function loadCache(): GatewayChoice | null {
-  const [transport, dc] = storageGet(CACHE_KEY).split('|');
-  const dcId = +dc;
-  if((transport !== 'https' && transport !== 'websocket') || dcId < 1 || dcId > 5) return null;
-  return {transport, dcId};
-}
-
-function saveCache(choice: GatewayChoice) {
-  storageSet(CACHE_KEY, `${choice.transport}|${choice.dcId}`);
-}
-
-function probeWebSocket(dcId: number) {
+function probe(front: string) {
   return new Promise<Hit | null>((resolve) => {
     const startedAt = Date.now();
-    let done = false;
-    const finish = (hit: Hit | null) => {
-      if(done) return;
-      done = true;
-      clearTimeout(timer);
-      try {
-        socket.close();
-      } catch{
-      }
-      resolve(hit);
-    };
-
-    let socket: WebSocket;
-    try {
-      socket = new WebSocket(`wss://kws${dcId}.web.telegram.org/apiws`, 'binary');
-    } catch{
-      resolve(null);
-      return;
-    }
-
-    const timer = setTimeout(() => finish(null), PROBE_MS);
-    socket.addEventListener('open', () => finish({
-      transport: 'websocket',
-      dcId,
-      ms: Math.max(1, Date.now() - startedAt)
-    }));
-    socket.addEventListener('error', () => finish(null));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PROBE_MS);
+    fetch(`https://kws2.${front}/apiw1`, {
+      method: 'POST',
+      body: probeBody(),
+      signal: controller.signal
+    }).then(async(response) => {
+      if(response.status !== 200) return null;
+      const buffer = await response.arrayBuffer();
+      if(!isResPq(buffer)) return null;
+      return {front, ms: Math.max(1, Date.now() - startedAt)};
+    }).then((hit) => resolve(hit || null), () => resolve(null)).finally(() => clearTimeout(timer));
   });
 }
 
-async function probeHttps(dcId: number): Promise<Hit | null> {
-  const startedAt = Date.now();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PROBE_MS);
-  try {
-    await fetch(`https://${HTTPS_HOST[dcId - 1]}.web.telegram.org/apiw1`, {
-      mode: 'no-cors',
-      signal: controller.signal
-    });
-    return {transport: 'https', dcId, ms: Math.max(1, Date.now() - startedAt)};
-  } catch{
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function choose(hits: Hit[]): GatewayChoice | null {
-  const answered = hits.filter((hit) => hit.transport === 'https').sort((a, b) => a.ms - b.ms);
-  const opened = hits.filter((hit) => hit.transport === 'websocket').sort((a, b) => a.ms - b.ms);
-  // HTTPS completed a request, so the API replies came back. A socket that
-  // only opened is used when no HTTPS gateway answered from this network.
-  const best = answered[0] || opened[0];
-  return best ? {transport: best.transport, dcId: best.dcId} : null;
-}
-
 async function probeFromHere() {
-  const hits = (await Promise.all([1, 2, 3, 4, 5].flatMap((dcId) => [
-    probeWebSocket(dcId),
-    probeHttps(dcId)
-  ]))).filter((hit): hit is Hit => !!hit);
+  if(probing) return;
+  probing = true;
+  const cached = await loadCache();
+  const usable = FRONTS.filter((front) => isFrontUsable(front));
+  const fronts = usable.length ? usable : FRONTS;
+  const found: Hit[] = [];
+  let committed = false;
+  let waitDirect: number | undefined;
+  const probeStarted = Date.now();
 
-  const choice = choose(hits) || loadCache();
-  if(choice) {
-    setGatewayChoice(choice);
-    if(hits.length) saveCache(choice);
-    log('gateway for this network', choice.transport, 'dc', choice.dcId, 'working', hits.length);
-  } else {
-    log('no gateway answered from this network');
+  const commit = (front: string) => {
+    if(committed) {
+      rememberFront(front);
+      return;
+    }
+
+    committed = true;
+    if(waitDirect) clearTimeout(waitDirect);
+    const rest = found.map((hit) => hit.front).filter((name) => name !== front);
+    setFrontOrder([front, ...rest]);
+    setGatewayChoice({transport: 'https', dcId: 2});
+    finishGatewayProbe();
+    saveCache(front);
+    log('front for this network', front);
+  };
+
+  const consider = (hit: Hit) => {
+    found.push(hit);
+    rememberFront(hit.front);
+    if(hit.front === DIRECT) {
+      commit(DIRECT);
+      return;
+    }
+
+    if(committed || waitDirect) return;
+    // Direct still has a short chance to win. A blocked network does not sit
+    // through the whole timeout: the fastest front is taken once that window ends.
+    const wait = Math.max(0, DIRECT_WINDOW_MS - (Date.now() - probeStarted));
+    waitDirect = setTimeout(() => {
+      if(getActiveFront() === DIRECT) return;
+      const fastest = found.filter((item) => item.front !== DIRECT).sort((a, b) => a.ms - b.ms)[0];
+      if(fastest) commit(fastest.front);
+    }, wait);
+  };
+
+  await Promise.all(fronts.map(async(front) => {
+    const hit = await probe(front);
+    if(hit) consider(hit);
+  }));
+
+  if(!committed) {
+    if(cached && isFrontUsable(cached)) commit(cached);
+    else finishGatewayProbe();
+    if(!getActiveFront()) log('no front returned resPQ from this network');
   }
 
-  finishGatewayProbe();
+  probing = false;
 }
 
 export function startProxyAutoSelector() {
   if(started) return;
   started = true;
+  setFrontExhaustedHandler(() => {
+    setTimeout(() => probeFromHere(), 2000);
+  });
   probeFromHere();
 }

@@ -636,7 +636,7 @@ export class Authorizer {
         });
         return await Promise.race([
           attempt,
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('GATEWAY_TIMEOUT')), 4000))
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('GATEWAY_TIMEOUT')), 9000))
         ]);
       } catch(err) {
         error = err as ApiError;
