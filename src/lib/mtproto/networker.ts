@@ -128,11 +128,11 @@ const delays: {
   }
 } = {
   client: {
-    disconnectDelayMin: 7,
-    disconnectDelayMax: 20,
+    disconnectDelayMin: 20,
+    disconnectDelayMax: 35,
     pingInterval: 2000,
     pingMaxTime: 5,
-    connectionTimeout: 5000
+    connectionTimeout: 15000
   },
   file: {
     disconnectDelayMin: 10,
@@ -766,7 +766,7 @@ export default class MTPNetworker {
       }
 
       log.error('catch, closing connection', this.lastPingTime, options.messageId);
-      transport.dropAndReconnect();
+      transport.closeOrReplace();
     };
 
     const onFinally = () => {
@@ -894,9 +894,9 @@ export default class MTPNetworker {
     }
 
     const giveUp = ctx.setTimeout(() => {
-      log('ping stalled, dropping the socket');
-      (this.transport as TcpObfuscated).dropAndReconnect?.();
-    }, 5000);
+      log('ping stalled, replacing the socket');
+      (this.transport as TcpObfuscated).closeOrReplace?.();
+    }, 20000);
 
     this.sendEncryptedRequest(pingMessage).then(() => {
       clearTimeout(giveUp);

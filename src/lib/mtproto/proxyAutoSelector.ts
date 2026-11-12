@@ -40,10 +40,9 @@ const FRONTS = [
 
 const CACHE_KEY = 'echogram_front_v4';
 const CACHE_URL = 'https://echogram.local/front';
-const PROBE_MS = 3500;
+const PROBE_MS = 7000;
 const DIRECT_WINDOW_MS = 450;
-const BATCH = 4;
-const BATCH_GAP_MS = 180;
+const BATCH = 3;
 const RES_PQ = 85337187;
 const REQ_PQ_MULTI = -1099002127;
 
@@ -53,9 +52,12 @@ let started = false;
 let probing = false;
 let probeQueued = false;
 
-/** Ask for a fresh race. A search that is already running will run once more when it finishes. */
+/**
+ * Search again only when nothing is selected. A second race must not replace
+ * the front that already answers: that reconnects a live chat.
+ */
 export function wakeProxySearch() {
-  if(!started) return;
+  if(!started || getActiveFront()) return;
   if(probing) {
     probeQueued = true;
     return;
@@ -232,7 +234,7 @@ function probe(front: string) {
 }
 
 async function probeFromHere() {
-  if(probing) return;
+  if(probing || getActiveFront()) return;
   probing = true;
   const cached = await loadCache();
   const usable = FRONTS.filter((front) => isFrontUsable(front));
@@ -261,9 +263,9 @@ async function probeFromHere() {
     setGatewayChoice({transport: 'websocket', dcId: 2});
     finishGatewayProbe();
     saveCache(front);
-    // Keep the race going briefly so a later answer from another operator's
-    // open address is remembered as a backup, then close the spare sockets.
-    setTimeout(stopProbes, 2200);
+    // One answer is enough. Further sockets only crowd a mobile radio and
+    // the chat then drops while it is still connecting.
+    stopProbes();
     log('front for this network', front);
   };
 
@@ -304,16 +306,13 @@ async function probeFromHere() {
     });
   };
 
-  const rest = fronts.filter((front) => front !== DIRECT).sort(() => Math.random() - 0.5);
-  const ordered = fronts.includes(DIRECT) ? [DIRECT, ...rest] : rest;
-  const tasks: Array<Promise<void>> = [];
+  const head = [cached, DIRECT].filter((front, index, list) => front && fronts.includes(front) && list.indexOf(front) === index);
+  const rest = fronts.filter((front) => !head.includes(front)).sort(() => Math.random() - 0.5);
+  const ordered = [...head, ...rest];
   for(let index = 0; index < ordered.length; index += BATCH) {
-    ordered.slice(index, index + BATCH).forEach((front) => tasks.push(run(front)));
-    if(index + BATCH < ordered.length) {
-      await new Promise((resolve) => setTimeout(resolve, BATCH_GAP_MS));
-    }
+    if(committed || getActiveFront()) break;
+    await Promise.all(ordered.slice(index, index + BATCH).map(run));
   }
-  await Promise.all(tasks);
   stopProbes();
 
   if(!committed && found.some((item) => item.front !== DIRECT)) commitFastestFront();
@@ -324,9 +323,11 @@ async function probeFromHere() {
   }
 
   probing = false;
-  if(probeQueued) {
+  if(probeQueued && !getActiveFront()) {
     probeQueued = false;
     probeFromHere();
+  } else {
+    probeQueued = false;
   }
 }
 

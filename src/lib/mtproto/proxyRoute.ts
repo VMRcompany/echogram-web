@@ -95,11 +95,16 @@ export function rememberFront(front: string) {
   rankedFronts.push(front);
 }
 
-/** First entry is the one requests use. Later entries are the failover list. */
+/**
+ * First entry is the one requests use. Later entries are the failover list.
+ * A front that is already carrying the chat stays: a later race must not
+ * tear it down and put the screen back on "Reconnecting...".
+ */
 export function setFrontOrder(fronts: string[]) {
   const usable = fronts.filter((front, index) => front && isFrontUsable(front) && fronts.indexOf(front) === index);
-  rankedFronts = usable;
-  const next = usable[0] || null;
+  const keep = activeFront && usable.includes(activeFront) ? activeFront : null;
+  rankedFronts = keep ? [keep, ...usable.filter((front) => front !== keep)] : usable;
+  const next = rankedFronts[0] || null;
   if(next === activeFront) return;
   activeFront = next;
   if(!next) onFrontsExhausted();
@@ -122,7 +127,7 @@ export function applyHttpsUrl(dcId: number, media: boolean, test: boolean) {
 /** The front that just failed to answer stops being used. The next one is immediate. */
 export function noteFrontFailed() {
   if(!activeFront) return;
-  deadUntil.set(activeFront, Date.now() + 20_000);
+  deadUntil.set(activeFront, Date.now() + 60_000);
   setFrontOrder(rankedFronts.filter((front) => front !== activeFront));
 }
 

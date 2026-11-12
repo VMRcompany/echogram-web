@@ -41,7 +41,8 @@ export default class TcpObfuscated implements MTTransport {
   private connectionGeneration = 0;
   private stallTimer: number;
   private onClose: () => void = () => {};
-  private readonly stallMs = 3000;
+  private readonly stallMs = 18000;
+  private readonly silenceMs = 25000;
 
   // private debugPayloads: MTPNetworker['debugRequests'] = [];
 
@@ -68,6 +69,7 @@ export default class TcpObfuscated implements MTTransport {
   private onOpen = async() => {
     const generation = this.connectionGeneration;
     this.connected = true;
+    this.clearStall();
 
     if(import.meta.env.VITE_MTPROTO_AUTO && Modes.multipleTransports) {
       transportController.setTransportOpened('websocket');
@@ -89,6 +91,7 @@ export default class TcpObfuscated implements MTTransport {
     setTimeout(() => {
       this.releasePending();
     }, 0);
+    if(!this.logSuffix) this.armSilence(generation, this.url);
   };
 
   private onMessage = async(buffer: ArrayBuffer) => {
@@ -134,20 +137,32 @@ export default class TcpObfuscated implements MTTransport {
   }
 
   /**
-   * A socket that never delivers a reply leaves the chat on "Reconnecting" /
-   * "Waiting for network" forever: the open timeout is cancelled once the
-   * socket opens, and a host that accepts the connection then stays silent.
+   * Only a socket that never opens is failed over, and not quickly: a mobile
+   * radio often needs more than a few seconds. An open socket is left alone
+   * until it has been silent for a long time.
    */
   private armStall(generation: number, openedUrl: string) {
     this.clearStall();
     this.stallTimer = ctx.setTimeout(() => {
       this.stallTimer = undefined;
+      if(generation !== this.connectionGeneration || this.sawMessage || this.connected) return;
+      if(!this.autoReconnect) return;
+      this.retireFront(openedUrl);
       if(generation !== this.connectionGeneration || this.sawMessage) return;
-      if(!this.logSuffix) wakeProxySearch();
-      if(this.handshakeSent || !this.connected) this.retireFront(openedUrl);
-      if(generation !== this.connectionGeneration || this.sawMessage) return;
-      if(this.autoReconnect) this.forceReconnect();
+      this.forceReconnect();
     }, this.stallMs);
+  }
+
+  private armSilence(generation: number, openedUrl: string) {
+    this.clearStall();
+    this.stallTimer = ctx.setTimeout(() => {
+      this.stallTimer = undefined;
+      if(generation !== this.connectionGeneration || this.sawMessage) return;
+      if(!this.autoReconnect) return;
+      this.retireFront(openedUrl);
+      if(generation !== this.connectionGeneration) return;
+      this.forceReconnect();
+    }, this.silenceMs);
   }
 
   private finishClose(openedUrl: string) {
@@ -162,7 +177,6 @@ export default class TcpObfuscated implements MTTransport {
       const time = Date.now();
       const diff = time - this.lastCloseTime;
       needTimeout = !isNaN(diff) && diff < this.retryTimeout ? this.retryTimeout - diff : 0;
-      if(shouldRetire) needTimeout = 0;
       retryAt = time + needTimeout;
     }
 
@@ -231,10 +245,10 @@ export default class TcpObfuscated implements MTTransport {
   }
 
   /**
-   * Close this socket. If the browser never reports the close, open another
-   * one anyway: otherwise the chat stays on "Reconnecting..." for good.
+   * Ask the browser to close. If it never reports the close, open the same
+   * front again. A new search is not started: that was replacing a live chat.
    */
-  public dropAndReconnect() {
+  public closeOrReplace() {
     const generation = this.connectionGeneration;
     try {
       this.connection?.close();
@@ -242,9 +256,8 @@ export default class TcpObfuscated implements MTTransport {
 
     ctx.setTimeout(() => {
       if(generation !== this.connectionGeneration) return;
-      if(!this.logSuffix) wakeProxySearch();
       this.forceReconnect();
-    }, 2000);
+    }, 10000);
   }
 
   public forceReconnect() {

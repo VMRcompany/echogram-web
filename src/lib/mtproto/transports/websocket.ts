@@ -57,7 +57,7 @@ export default class Socket extends EventListenerBase<{
 
     this.connectionTimeout = ctx.setTimeout(() => {
       this.handleError(new Error('CONNECTION_TIMEOUT'));
-    }, 7500);
+    }, 20000);
 
     // if(Date.now() < closeSocketBefore) {
     // if(Date.now() >= closeSocketAfter) {
