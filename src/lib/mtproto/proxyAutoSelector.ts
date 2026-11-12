@@ -40,9 +40,10 @@ const FRONTS = [
 
 const CACHE_KEY = 'echogram_front_v4';
 const CACHE_URL = 'https://echogram.local/front';
-const PROBE_MS = 2200;
-const DIRECT_WINDOW_MS = 350;
-const FIRST_WAVE = 8;
+const PROBE_MS = 3500;
+const DIRECT_WINDOW_MS = 450;
+const BATCH = 4;
+const BATCH_GAP_MS = 180;
 const RES_PQ = 85337187;
 const REQ_PQ_MULTI = -1099002127;
 
@@ -50,6 +51,18 @@ type Hit = {front: string, ms: number};
 
 let started = false;
 let probing = false;
+let probeQueued = false;
+
+/** Ask for a fresh race. A search that is already running will run once more when it finishes. */
+export function wakeProxySearch() {
+  if(!started) return;
+  if(probing) {
+    probeQueued = true;
+    return;
+  }
+
+  probeFromHere();
+}
 
 function bytesOf(length: number) {
   const bytes = new Uint8Array(length);
@@ -248,7 +261,9 @@ async function probeFromHere() {
     setGatewayChoice({transport: 'websocket', dcId: 2});
     finishGatewayProbe();
     saveCache(front);
-    stopProbes();
+    // Keep the race going briefly so a later answer from another operator's
+    // open address is remembered as a backup, then close the spare sockets.
+    setTimeout(stopProbes, 2200);
     log('front for this network', front);
   };
 
@@ -289,15 +304,17 @@ async function probeFromHere() {
     });
   };
 
-  // The first handful run at once. The rest start only if those have not
-  // answered, so the login socket is not competing with twenty handshakes.
-  const first = fronts.slice(0, FIRST_WAVE);
-  const second = fronts.slice(FIRST_WAVE);
-  await Promise.all(first.map(run));
-  // The direct window may still be pending when every probe in this wave has
-  // already finished. Take the front that answered instead of falling through.
-  if(!committed && found.some((item) => item.front !== DIRECT)) commitFastestFront();
-  if(!committed && second.length) await Promise.all(second.map(run));
+  const rest = fronts.filter((front) => front !== DIRECT).sort(() => Math.random() - 0.5);
+  const ordered = fronts.includes(DIRECT) ? [DIRECT, ...rest] : rest;
+  const tasks: Array<Promise<void>> = [];
+  for(let index = 0; index < ordered.length; index += BATCH) {
+    ordered.slice(index, index + BATCH).forEach((front) => tasks.push(run(front)));
+    if(index + BATCH < ordered.length) {
+      await new Promise((resolve) => setTimeout(resolve, BATCH_GAP_MS));
+    }
+  }
+  await Promise.all(tasks);
+  stopProbes();
 
   if(!committed && found.some((item) => item.front !== DIRECT)) commitFastestFront();
   if(!committed) {
@@ -307,13 +324,17 @@ async function probeFromHere() {
   }
 
   probing = false;
+  if(probeQueued) {
+    probeQueued = false;
+    probeFromHere();
+  }
 }
 
 export function startProxyAutoSelector() {
   if(started) return;
   started = true;
   setFrontExhaustedHandler(() => {
-    setTimeout(() => probeFromHere(), 2000);
+    setTimeout(() => wakeProxySearch(), 400);
   });
   probeFromHere();
 }

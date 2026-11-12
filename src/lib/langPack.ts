@@ -320,6 +320,22 @@ namespace I18n {
     }
   })();
 
+  function authStringsFor(langCode: string): Record<string, string> {
+    if((langCode || '').toLowerCase().startsWith('ru')) {
+      return {
+        'Login.QR.Subtitle': 'Сканировать QR-код можно не только в Echogram, но и в Telegram.',
+        'Login.QR.Help1': 'Откройте Echogram или Telegram на телефоне',
+        'Login.Code.SentInApp': 'Код пришёл в Echogram или в Telegram — посмотрите его в любом из этих приложений.'
+      };
+    }
+
+    return {
+      'Login.QR.Subtitle': 'You can scan this QR code in Echogram or in Telegram.',
+      'Login.QR.Help1': 'Open Echogram or Telegram on your phone',
+      'Login.Code.SentInApp': 'The code arrived in Echogram or in Telegram. Open either app to see it.'
+    };
+  }
+
   export function applyLangPack(langPack: LangPackDifference) {
     const currentLangCode = lastRequestedLangCode;
     if(langPack.lang_code !== currentLangCode) {
@@ -371,6 +387,10 @@ namespace I18n {
     }
 
     applyDirection(currentLangCode, rtl);
+
+    for(const [key, value] of Object.entries(authStringsFor(currentLangCode))) {
+      strings.set(key as LangPackKey, {_: 'langPackString', key, value});
+    }
 
     if(lastAppliedLangCode !== currentLangCode) {
       if(lastAppliedLangCode && rootScope.myId) {

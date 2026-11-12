@@ -122,7 +122,7 @@ export function applyHttpsUrl(dcId: number, media: boolean, test: boolean) {
 /** The front that just failed to answer stops being used. The next one is immediate. */
 export function noteFrontFailed() {
   if(!activeFront) return;
-  deadUntil.set(activeFront, Date.now() + 90_000);
+  deadUntil.set(activeFront, Date.now() + 20_000);
   setFrontOrder(rankedFronts.filter((front) => front !== activeFront));
 }
 

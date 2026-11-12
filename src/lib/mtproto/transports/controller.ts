@@ -1,7 +1,6 @@
 import App from '@config/app';
 import deferredPromise from '@helpers/cancellablePromise';
 import EventListenerBase from '@helpers/eventListenerBase';
-import pause from '@helpers/schedulers/pause';
 import {TransportType, DcConfigurator} from '@lib/mtproto/dcConfigurator';
 import type HTTP from '@lib/mtproto/transports/http';
 import type TcpObfuscated from '@lib/mtproto/transports/tcpObfuscated';
@@ -97,32 +96,10 @@ export class MTTransportController extends EventListenerBase<{
     if(this.pinging) return;
     this.pinging = true;
 
-    while(true) {
-      const choice = getGatewayChoice();
-      if(choice) {
-        this.dispatchEvent('transport', choice.transport);
-        break;
-      }
-
-      const {https, websocket} = await this.pingTransports();
-      const chosen = getGatewayChoice();
-      if(chosen) {
-        this.dispatchEvent('transport', chosen.transport);
-        break;
-      }
-
-      if(https || websocket) {
-        // The browser's HTTP POST to /apiw1 is a 404 even when the socket works,
-        // so an open WebSocket wins over an HTTP ping.
-        this.dispatchEvent('transport', websocket ? 'websocket' : 'https');
-      }
-
-      if(websocket) {
-        break;
-      }
-
-      await pause(10000);
-    }
+    const choice = getGatewayChoice();
+    // The browser's POST to /apiw1 is a 404, so HTTPS must not be selected.
+    // The socket host is chosen by the probe; this only picks the transport.
+    this.dispatchEvent('transport', choice?.transport || 'websocket');
 
     this.pinging = false;
   }

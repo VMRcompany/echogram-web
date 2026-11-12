@@ -4,8 +4,17 @@
  */
 const PROTECTED = /(?:[a-z][a-z0-9+.-]*:\/\/[^\s)\]'"<>]*)|(?:(?:[\w-]+\.)*(?:telegram\.(?:org|me|dog)|t\.me)(?:\/[^\s)\]'"<>]*)?)|(?:@[A-Za-z0-9_]*[Tt]elegram[A-Za-z0-9_]*)|(?<![A-Za-z0-9_])Telegram Premium(?![A-Za-z0-9_])/gi;
 
+const KEEP_BOTH_APPS = new Set([
+  'You can scan this QR code in Echogram or in Telegram.',
+  'Open Echogram or Telegram on your phone',
+  'The code arrived in Echogram or in Telegram. Open either app to see it.',
+  'Сканировать QR-код можно не только в Echogram, но и в Telegram.',
+  'Откройте Echogram или Telegram на телефоне',
+  'Код пришёл в Echogram или в Telegram — посмотрите его в любом из этих приложений.'
+]);
+
 export function rebrandVisibleText(input: string): string {
-  if(!input || !/telegram/i.test(input)) return input;
+  if(!input || !/telegram/i.test(input) || KEEP_BOTH_APPS.has(input)) return input;
 
   const saved: string[] = [];
   const masked = input.replace(PROTECTED, (part) => {

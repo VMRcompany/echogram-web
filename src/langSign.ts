@@ -4,7 +4,7 @@ const lang = {
   'Login.PhoneLabelInvalid': 'Phone Number Invalid',
   'Login.StartText': 'Please confirm your country code\nand enter your phone number.',
   'Login.Code.SentSms': 'We have sent you an SMS\nwith the code.',
-  'Login.Code.SentInApp': 'We have sent you a message in Echogram\nwith the code.',
+  'Login.Code.SentInApp': 'The code arrived in Echogram or in Telegram. Open either app to see it.',
   'Login.Code.SentCall': 'We will call you and dictate\nthe code.',
   'Login.Code.SentEmail': 'Please check your email **%s** (don\'t forget the spam folder) and enter the code we just sent you.',
   'Login.Code.SentUnknown': 'Please check everything\nfor a code (type: %s)',
@@ -68,12 +68,12 @@ const lang = {
   'Login.Next': 'Next',
   'Login.ContinueOnLanguage': 'Continue in English',
   'Login.QR.Title': 'Log in by QR Code',
-  'Login.QR.Help1': 'Open Echogram on your phone',
+  'Login.QR.Help1': 'Open Echogram or Telegram on your phone',
   'Login.QR.Help2': 'Go to **Settings** > **Devices** > **Add Device**',
   'Login.QR.Help3': 'Point your phone at this screen to confirm login',
   'Login.QR.Cancel': 'Log in by phone number >',
   'Login.QR.Login': 'Log in by QR Code >',
-  'Login.QR.Subtitle': 'Scan with Echogram app on your phone',
+  'Login.QR.Subtitle': 'You can scan this QR code in Echogram or in Telegram.',
   // the link target stays empty on purpose: tweb's formatter takes the anchor from the arguments
   // for `[]()`, while a `%1$@` inside the target makes it start looking at argument 1 and crash
   // on the missing one (the macOS string this came from substitutes the url into the target)

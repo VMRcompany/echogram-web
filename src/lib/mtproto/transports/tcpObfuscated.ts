@@ -12,6 +12,7 @@ import bytesToHex from '@helpers/bytes/bytesToHex';
 // import networkStats from '@lib/mtproto/networkStats';
 import ctx from '@environment/ctx';
 import {applySocketUrl, getActiveFront, noteFrontFailed, subscribeProxyRoute} from '@lib/mtproto/proxyRoute';
+import {wakeProxySearch} from '@lib/mtproto/proxyAutoSelector';
 
 export default class TcpObfuscated implements MTTransport {
   private codec = abridgedPacketCodec;
@@ -40,7 +41,7 @@ export default class TcpObfuscated implements MTTransport {
   private connectionGeneration = 0;
   private stallTimer: number;
   private onClose: () => void = () => {};
-  private readonly stallMs = 4000;
+  private readonly stallMs = 3000;
 
   // private debugPayloads: MTPNetworker['debugRequests'] = [];
 
@@ -142,6 +143,7 @@ export default class TcpObfuscated implements MTTransport {
     this.stallTimer = ctx.setTimeout(() => {
       this.stallTimer = undefined;
       if(generation !== this.connectionGeneration || this.sawMessage) return;
+      if(!this.logSuffix) wakeProxySearch();
       if(this.handshakeSent || !this.connected) this.retireFront(openedUrl);
       if(generation !== this.connectionGeneration || this.sawMessage) return;
       if(this.autoReconnect) this.forceReconnect();
@@ -152,6 +154,7 @@ export default class TcpObfuscated implements MTTransport {
     const shouldRetire = !this.sawMessage && (this.handshakeSent || !this.connected);
     this.clear();
     if(shouldRetire) this.retireFront(openedUrl);
+    if(!this.logSuffix && !getActiveFront()) wakeProxySearch();
     const replaced = !!this.connection;
 
     let needTimeout: number, retryAt: number;
@@ -159,6 +162,7 @@ export default class TcpObfuscated implements MTTransport {
       const time = Date.now();
       const diff = time - this.lastCloseTime;
       needTimeout = !isNaN(diff) && diff < this.retryTimeout ? this.retryTimeout - diff : 0;
+      if(shouldRetire) needTimeout = 0;
       retryAt = time + needTimeout;
     }
 
@@ -224,6 +228,23 @@ export default class TcpObfuscated implements MTTransport {
     }
 
     this.connect();
+  }
+
+  /**
+   * Close this socket. If the browser never reports the close, open another
+   * one anyway: otherwise the chat stays on "Reconnecting..." for good.
+   */
+  public dropAndReconnect() {
+    const generation = this.connectionGeneration;
+    try {
+      this.connection?.close();
+    } catch{ /* already gone */ }
+
+    ctx.setTimeout(() => {
+      if(generation !== this.connectionGeneration) return;
+      if(!this.logSuffix) wakeProxySearch();
+      this.forceReconnect();
+    }, 2000);
   }
 
   public forceReconnect() {

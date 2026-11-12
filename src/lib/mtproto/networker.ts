@@ -766,7 +766,7 @@ export default class MTPNetworker {
       }
 
       log.error('catch, closing connection', this.lastPingTime, options.messageId);
-      transport.connection.close();
+      transport.dropAndReconnect();
     };
 
     const onFinally = () => {
@@ -893,10 +893,17 @@ export default class MTPNetworker {
       this.setConnectionStatus(ConnectionStatus.Connecting);
     }
 
+    const giveUp = ctx.setTimeout(() => {
+      log('ping stalled, dropping the socket');
+      (this.transport as TcpObfuscated).dropAndReconnect?.();
+    }, 5000);
+
     this.sendEncryptedRequest(pingMessage).then(() => {
+      clearTimeout(giveUp);
       log('got ping');
       this.toggleOffline(false);
     }, () => {
+      clearTimeout(giveUp);
       log('still error, delay', this.checkConnectionPeriod * 1000);
       this.checkConnectionTimeout = ctx.setTimeout(() => this.checkConnection('from failed checkConnection request'), this.checkConnectionPeriod * 1000 | 0);
       this.checkConnectionPeriod = Math.min(CHECK_CONNECTION_MAX_PERIOD, this.checkConnectionPeriod * 1.5);
