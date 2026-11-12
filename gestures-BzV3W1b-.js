@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{u as e}from"./langPack-Bkt7ZOKI.js";import"./gesture-policy-B8tGBPTD.js";var t=`data-widget-block`,n=new WeakMap;function r(e,t){n.set(e,t)}function i(e){return!!e?.closest?.(`[${t}]`)}function a(e){let r=e?.closest?.(`[${t}]`);return r&&n.get(r)}function o(r,i){let a=r?.closest?.(`[${t}]`);if(!a)return!1;if(n.get(a)?.x)return!0;let o=a.getBoundingClientRect();return(e.getIsRTL()?o.right-i:i-o.left)<20}export{r as a,i,a as n,o as r,t};
-//# sourceMappingURL=gestures-BzV3W1b-.js.map

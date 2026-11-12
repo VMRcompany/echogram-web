@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{t as e}from"./confirmationPopup-BQu_ZIA-.js";import{t}from"./safeWindowOpen-Dk2p3lTF.js";import{t as n}from"./makeGoogleMapsUrl-CRv64m4j.js";function r(){return e({descriptionLangKey:`Popup.OpenInGoogleMaps`,button:{langKey:`Open`}}).then(()=>!0,()=>!1)}async function i(e){await r()&&t(n(e))}export{i as t};
-//# sourceMappingURL=confirmOpenGoogleMaps-DDXJ7aZN.js.map
