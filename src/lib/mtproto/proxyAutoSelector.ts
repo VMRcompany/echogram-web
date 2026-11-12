@@ -263,9 +263,6 @@ async function probeFromHere() {
     setGatewayChoice({transport: 'websocket', dcId: 2});
     finishGatewayProbe();
     saveCache(front);
-    // One answer is enough. Further sockets only crowd a mobile radio and
-    // the chat then drops while it is still connecting.
-    stopProbes();
     log('front for this network', front);
   };
 

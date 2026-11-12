@@ -37,10 +37,13 @@ export default class TcpObfuscated implements MTTransport {
   private releasingPending: boolean;
   private unsubscribeRoute: () => void;
   private sawMessage = false;
+  private proven = false;
+  private reopenMisses = 0;
   private handshakeSent = false;
   private connectionGeneration = 0;
   private stallTimer: number;
   private onClose: () => void = () => {};
+  private readyInit: Promise<Uint8Array>;
   private readonly stallMs = 18000;
   private readonly silenceMs = 25000;
 
@@ -75,7 +78,7 @@ export default class TcpObfuscated implements MTTransport {
       transportController.setTransportOpened('websocket');
     }
 
-    const initPayload = await this.obfuscation.init(this.codec);
+    const initPayload = await (this.readyInit || this.obfuscation.init(this.codec));
     if(generation !== this.connectionGeneration || !this.connected) {
       return;
     }
@@ -97,6 +100,10 @@ export default class TcpObfuscated implements MTTransport {
   private onMessage = async(buffer: ArrayBuffer) => {
     // networkStats.addReceived(this.dcId, buffer.byteLength);
     this.sawMessage = true;
+    if(!this.logSuffix) {
+      this.proven = true;
+      this.reopenMisses = 0;
+    }
     this.clearStall();
 
     const time = Date.now();
@@ -143,14 +150,13 @@ export default class TcpObfuscated implements MTTransport {
    */
   private armStall(generation: number, openedUrl: string) {
     this.clearStall();
+    const wait = this.proven && !this.logSuffix ? 4000 : this.stallMs;
     this.stallTimer = ctx.setTimeout(() => {
       this.stallTimer = undefined;
       if(generation !== this.connectionGeneration || this.sawMessage || this.connected) return;
       if(!this.autoReconnect) return;
-      this.retireFront(openedUrl);
-      if(generation !== this.connectionGeneration || this.sawMessage) return;
-      this.forceReconnect();
-    }, this.stallMs);
+      this.failOrRetry(generation, openedUrl);
+    }, wait);
   }
 
   private armSilence(generation: number, openedUrl: string) {
@@ -159,42 +165,61 @@ export default class TcpObfuscated implements MTTransport {
       this.stallTimer = undefined;
       if(generation !== this.connectionGeneration || this.sawMessage) return;
       if(!this.autoReconnect) return;
-      this.retireFront(openedUrl);
-      if(generation !== this.connectionGeneration) return;
-      this.forceReconnect();
+      this.failOrRetry(generation, openedUrl);
     }, this.silenceMs);
   }
 
+  /** A front that already worked is opened again at once. Only a second miss gives it up. */
+  private failOrRetry(generation: number, openedUrl: string) {
+    if(this.proven && !this.logSuffix && this.reopenMisses < 1) {
+      this.reopenMisses++;
+      this.forceReconnect();
+      return;
+    }
+
+    this.retireFront(openedUrl);
+    if(generation !== this.connectionGeneration || this.sawMessage) return;
+    this.forceReconnect();
+  }
+
   private finishClose(openedUrl: string) {
-    const shouldRetire = !this.sawMessage && (this.handshakeSent || !this.connected);
+    const shouldRetire = !this.proven && !this.sawMessage && (this.handshakeSent || !this.connected);
     this.clear();
     if(shouldRetire) this.retireFront(openedUrl);
     if(!this.logSuffix && !getActiveFront()) wakeProxySearch();
     const replaced = !!this.connection;
 
-    let needTimeout: number, retryAt: number;
+    let needTimeout = 0;
+    let retryAt: number | undefined;
     if(this.autoReconnect) {
       const time = Date.now();
       const diff = time - this.lastCloseTime;
       needTimeout = !isNaN(diff) && diff < this.retryTimeout ? this.retryTimeout - diff : 0;
+      if(this.proven && !this.logSuffix) needTimeout = 0;
       retryAt = time + needTimeout;
     }
 
-    // The replacement socket is already connecting. Marking this one Closed
-    // on top of that sticks the chat on "Reconnecting" until the next open.
-    if(this.networker && !replaced) {
+    // An immediate reopen is already starting. A Closed status with a timer
+    // would sit on screen until that timer, on top of the new socket.
+    if(this.networker && !replaced && !(this.autoReconnect && needTimeout === 0)) {
       this.networker.setConnectionStatus(ConnectionStatus.Closed, retryAt);
       this.pending.length = 0;
     }
 
     if(replaced) return;
 
-    if(this.autoReconnect) {
+    if(!this.autoReconnect) {
+      this.log('reconnect isn\'t needed');
+      return;
+    }
+
+    if(needTimeout) {
       this.log('will try to reconnect after timeout:', needTimeout / 1000);
       this.reconnectTimeout = ctx.setTimeout(this.reconnect, needTimeout);
-    } else {
-      this.log('reconnect isn\'t needed');
+      return;
     }
+
+    this.reconnect();
   }
 
   public clear() {
@@ -257,7 +282,7 @@ export default class TcpObfuscated implements MTTransport {
     ctx.setTimeout(() => {
       if(generation !== this.connectionGeneration) return;
       this.forceReconnect();
-    }, 10000);
+    }, this.proven && !this.logSuffix ? 2000 : 10000);
   }
 
   public forceReconnect() {
@@ -331,6 +356,7 @@ export default class TcpObfuscated implements MTTransport {
 
     const generation = ++this.connectionGeneration;
     const openedUrl = this.url;
+    this.readyInit = this.obfuscation.init(this.codec);
     this.onClose = () => {
       if(generation !== this.connectionGeneration) return;
       this.finishClose(openedUrl);
