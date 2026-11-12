@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{t as e}from"./privacyTab-CA-EAp8m.js";import{t}from"./privacySection-2AoI8Iwu.js";var n=`PrivacySettingsController.PhoneCallDescription`,r=`PrivacySettingsController.P2p.Desc`,i=e(`privacy-calls`,e=>{new t({tab:e,title:`WhoCanCallMe`,inputKey:`inputPrivacyKeyPhoneCall`,captions:[n,n,n],exceptionTexts:[`PrivacySettingsController.NeverAllow`,`PrivacySettingsController.AlwaysAllow`],appendTo:e.scrollable,managers:e.managers}),new t({tab:e,title:`PrivacyP2PHeader`,inputKey:`inputPrivacyKeyPhoneP2P`,captions:[r,r,r],exceptionTexts:[`PrivacySettingsController.NeverAllow`,`PrivacySettingsController.AlwaysAllow`],appendTo:e.scrollable,managers:e.managers})});export{i as default};
+//# sourceMappingURL=calls-D73bbyKz.js.map
