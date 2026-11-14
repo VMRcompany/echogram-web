@@ -44,7 +44,7 @@ export default class TcpObfuscated implements MTTransport {
   private stallTimer: number;
   private onClose: () => void = () => {};
   private readyInit: Promise<Uint8Array>;
-  private readonly stallMs = 18000;
+  private readonly stallMs = 8000;
   private readonly silenceMs = 25000;
 
   // private debugPayloads: MTPNetworker['debugRequests'] = [];

@@ -40,9 +40,9 @@ const FRONTS = [
 
 const CACHE_KEY = 'echogram_front_v4';
 const CACHE_URL = 'https://echogram.local/front';
-const PROBE_MS = 7000;
-const DIRECT_WINDOW_MS = 450;
-const BATCH = 3;
+const PROBE_MS = 2000;
+const DIRECT_WINDOW_MS = 400;
+const BATCH = 8;
 const RES_PQ = 85337187;
 const REQ_PQ_MULTI = -1099002127;
 
@@ -234,9 +234,16 @@ function probe(front: string) {
 }
 
 async function probeFromHere() {
-  if(probing || getActiveFront()) return;
+  if(probing) return;
   probing = true;
   const cached = await loadCache();
+  // A front this browser already used opens the chat at once. The race below
+  // only adds a spare, it does not tear the open connection down.
+  if(cached && cached !== DIRECT && !getActiveFront() && isFrontUsable(cached)) {
+    setFrontOrder([cached]);
+    setGatewayChoice({transport: 'websocket', dcId: 2});
+    finishGatewayProbe();
+  }
   const usable = FRONTS.filter((front) => isFrontUsable(front));
   const fronts = usable.length ? usable : FRONTS;
   const found: Hit[] = [];
@@ -259,10 +266,19 @@ async function probeFromHere() {
     committed = true;
     if(waitDirect) clearTimeout(waitDirect);
     const rest = found.map((hit) => hit.front).filter((name) => name !== front);
-    setFrontOrder([front, ...rest]);
-    setGatewayChoice({transport: 'websocket', dcId: 2});
-    finishGatewayProbe();
-    saveCache(front);
+    const current = getActiveFront();
+    if(current && current !== front && isFrontUsable(current)) {
+      rememberFront(front);
+      for(const name of rest) rememberFront(name);
+    } else {
+      setFrontOrder([front, ...rest]);
+      setGatewayChoice({transport: 'websocket', dcId: 2});
+      finishGatewayProbe();
+      saveCache(front);
+    }
+    // Drop the spare sockets quickly. Waiting out every batch is what left
+    // the chat on the loading screen for minutes.
+    setTimeout(stopProbes, 300);
     log('front for this network', front);
   };
 
@@ -307,7 +323,7 @@ async function probeFromHere() {
   const rest = fronts.filter((front) => !head.includes(front)).sort(() => Math.random() - 0.5);
   const ordered = [...head, ...rest];
   for(let index = 0; index < ordered.length; index += BATCH) {
-    if(committed || getActiveFront()) break;
+    if(committed) break;
     await Promise.all(ordered.slice(index, index + BATCH).map(run));
   }
   stopProbes();

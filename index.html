@@ -2,6 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <script>
+      (function() {
+        var host = location.hostname;
+        var primary = 'web.echogram.pw';
+        var legacy = 'web-echogram.mineholde.pro';
+        var path = location.pathname + location.search + location.hash;
+        if(host === legacy || host === 'www.' + primary) {
+          location.replace('https://' + primary + path);
+          return;
+        }
+        if(location.protocol === 'http:' && host && host !== 'localhost' && host !== '127.0.0.1') {
+          location.replace('https://' + host + path);
+        }
+      })();
+    </script>
     <!-- What the page itself may load besides its own files: no remote images, media, fonts or style sheets, no form
     submissions, no plugins. Interactive widgets draw their DOM into this page (a shadow root per widget, their code
     never runs here); this keeps a markup that got past their validator from reaching the network. Frames stay open

@@ -71,8 +71,8 @@ const handlebarsPlugin = handlebars({
   context: {
     title: 'Echogram Web',
     description: 'Echogram is a cloud-based mobile and desktop messaging app with a focus on security and speed.',
-    url: 'https://web.telegram.org/k/',
-    origin: 'https://web.telegram.org/'
+    url: 'https://web.echogram.pw/',
+    origin: 'https://web.echogram.pw/'
   }
 });
 

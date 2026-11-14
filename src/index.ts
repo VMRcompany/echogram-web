@@ -37,7 +37,7 @@ import Modes from '@config/modes';
 import {AuthState} from '@types';
 import DEBUG, {IS_BETA, IS_POPUP_SANDBOX, IS_WIDGET_SANDBOX} from '@config/debug';
 import IS_INSTALL_PROMPT_SUPPORTED from '@environment/installPrompt';
-import cacheInstallPrompt from '@helpers/dom/installPrompt';
+import cacheInstallPrompt, {showDesktopInstallHint} from '@helpers/dom/installPrompt';
 import {fillLocalizedDates} from '@helpers/date';
 import {nextRandomUint} from '@helpers/random';
 import {createEffect} from 'solid-js';
@@ -481,6 +481,7 @@ if(import.meta.env.DEV || import.meta.env.VITE_PREVIEW) {
   if(IS_INSTALL_PROMPT_SUPPORTED) {
     cacheInstallPrompt();
   }
+  showDesktopInstallHint();
 
   // Make sure this is before checking if the app is locked.
   // If this value is cached, and a different tab locks/unlocks, we'll see the wrong state of the app.
