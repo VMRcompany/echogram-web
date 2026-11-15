@@ -356,7 +356,11 @@ export default defineConfig({
     exclude: ['@telegram/widget-sandbox-quickjs']
   },
   build: {
-    target: 'es2020',
+    // iPhone 6 is stuck on iOS 12 and iPhone 7 on iOS 15. es2020 output
+    // (optional chaining, and lookbehind in our own regexes) is a syntax
+    // error there, so the document stays white. CSS stays on the versions
+    // that understand logical properties; lowering that rewrites the layout.
+    target: ['es2018', 'safari12', 'ios12'],
     // `es2020` says nothing about browsers, so lightningcss falls back to a target old enough to
     // lower every logical property into a pair of `:lang()` rules — 13680 of them, emitted after
     // the block they came from and with a higher specificity, so a physical `left`/`margin-left`

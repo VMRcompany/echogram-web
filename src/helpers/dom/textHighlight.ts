@@ -126,7 +126,6 @@ const NARROW_DURATION = 400;
 const DEFAULT_SKIP = `.tgico, .${OVERLAY_CLASS}`;
 
 const WORD_CHARACTER = '\\p{L}\\p{N}\\p{M}';
-const WORD_START = `(?<![${WORD_CHARACTER}])`;
 
 /** what `extractText` passes by: icons, and `skip` on top of them */
 export function getTextSkip(skip?: string) {
@@ -190,16 +189,19 @@ export function extractText(root: HTMLElement, skip = DEFAULT_SKIP, {sourceText}
   return {text, segments};
 }
 
-function execAll(regExp: RegExp, text: string) {
+function wordSpans(text: string, pattern: string) {
+  const regExp = new RegExp(`(?:^|[^${WORD_CHARACTER}])(${pattern})`, 'giu');
   const spans: TextSpan[] = [];
   let match: RegExpExecArray;
   while((match = regExp.exec(text)) !== null) {
-    if(!match[0].length) { // * safety against zero-length loops
+    const word = match[1];
+    if(!word) {
       ++regExp.lastIndex;
       continue;
     }
 
-    spans.push([match.index, match.index + match[0].length]);
+    const start = match.index + match[0].length - word.length;
+    spans.push([start, start + word.length]);
   }
 
   return spans;
@@ -231,7 +233,7 @@ export function findSearchSpans(text: string, query: string): TextSpan[] {
     return [];
   }
 
-  const phrase = execAll(new RegExp(`${WORD_START}${escapeRegExp(query)}(?![${WORD_CHARACTER}])`, 'giu'), text);
+  const phrase = wordSpans(text, `${escapeRegExp(query)}(?![${WORD_CHARACTER}])`);
   if(phrase.length) {
     return mergeSpans(phrase);
   }
@@ -242,7 +244,7 @@ export function findSearchSpans(text: string, query: string): TextSpan[] {
     const minLength = Math.ceil(word.length / 2);
     for(let length = word.length; length >= minLength; --length) {
       const prefix = escapeRegExp(word.slice(0, length));
-      const found = execAll(new RegExp(`${WORD_START}${prefix}[${WORD_CHARACTER}]*`, 'giu'), text);
+      const found = wordSpans(text, `${prefix}[${WORD_CHARACTER}]*`);
       if(found.length) {
         spans.push(...found);
         break;

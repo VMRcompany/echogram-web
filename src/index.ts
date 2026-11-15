@@ -6,6 +6,7 @@
 // a non-painting tab still boots
 import '@helpers/dom/previewUnfreeze';
 import '@helpers/dom/previewRaf';
+import '@lib/polyfill';
 import App from '@config/app';
 import blurActiveElement from '@helpers/dom/blurActiveElement';
 import {IS_STICKY_INPUT_BUGGED} from '@helpers/dom/fixSafariStickyInputFocusing';
@@ -21,7 +22,6 @@ import rootScope from '@lib/rootScope';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import I18n, {checkLangPackForUpdates} from '@lib/langPack';
 import '@helpers/peerIdPolyfill';
-import '@lib/polyfill';
 import '@lib/debug/mountLogExport'; // main-thread-only: wires window.downloadLogs / collectLogs
 import '@lib/debug/memoryReport'; // main-thread-only: wires window.memoryReport
 import '@lib/debug/memoryWatch'; // main-thread-only: wires window.memoryWatch (crash-proof memory series)

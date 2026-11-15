@@ -35,6 +35,21 @@ export type VcardItem = {type: VcardItemType, value: string};
 // * account, not something the person wrote down — and it leads nowhere here
 const IOS_APP_PROFILE_URL = /^(?:https?:\/\/)?t\.me\/@id\d+\/?$/i;
 
+function splitUnescaped(value: string, separator: string) {
+  const parts: string[] = [];
+  let current = '';
+  for(let i = 0; i < value.length; ++i) {
+    if(value[i] === separator && value[i - 1] !== '\\') {
+      parts.push(current);
+      current = '';
+    } else {
+      current += value[i];
+    }
+  }
+  parts.push(current);
+  return parts;
+}
+
 // * what a structured value's components are joined with
 const STRUCTURED_SEPARATORS: Partial<Record<VcardItemType, string>> = {
   organization: ' ',
@@ -118,7 +133,7 @@ export default function parseVcard(data: string): VcardItem[] {
     const separator = STRUCTURED_SEPARATORS[type];
     value = separator === undefined ?
       unescapeValue(value) :
-      value.split(/(?<!\\);/).map(unescapeValue).filter(Boolean).join(separator);
+      splitUnescaped(value, ';').map(unescapeValue).filter(Boolean).join(separator);
 
     if(
       value &&

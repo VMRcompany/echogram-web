@@ -97,7 +97,7 @@ function preprocess(raw: string, refs?: Map<string, string>, footnoteNumbers?: M
 
   // Inline math $X$ → a base64-protected marker carried verbatim to the IV, which renders it with
   // Temml. Encoding it here (before the escape / emphasis passes) keeps the raw LaTeX source intact.
-  s = s.replace(/(?<!\\|\$)\$(?!\s|\$)([^$\n]+?)(?<!\s)\$(?!\$)/g, (_full, src) => encodeInlineMath(src));
+  s = s.replace(/(^|[^\\$])\$(?!\s|\$)([^$\n]*?[^\s$\n])\$(?!\$)/g, (_full, prefix, src) => prefix + encodeInlineMath(src));
 
   s = s.replace(/\\([\\*_`\[\]<>~|()#+\-=!.])/g, (_full, ch) => String.fromCharCode(ESC_PUA_BASE + ESCAPABLE.indexOf(ch)));
 
@@ -112,10 +112,10 @@ function preprocess(raw: string, refs?: Map<string, string>, footnoteNumbers?: M
   s = s.replace(/__([^\n_\x00\x01]+?)__/g, `${SOH}**$1**${SOH}`);
 
   // CommonMark *X* (italic) → parseMarkdown's __X__ (italic).
-  s = s.replace(/(?<![*\\\x00\x01])\*(?![\s*\x00\x01])([^\n*\x00\x01]+?)(?<![\s\x00\x01])\*(?![*\x00\x01])/g, `${SOH}__$1__${SOH}`);
+  s = s.replace(/(^|[^*\\\x00\x01])\*(?![\s*\x00\x01])([^\n*\x00\x01]*?[^\s\n*\x00\x01])\*(?![*\x00\x01])/g, (_full, prefix, src) => `${prefix}${SOH}__${src}__${SOH}`);
 
   // CommonMark _X_ (italic) → parseMarkdown's __X__. Skip when adjacent to word chars (snake_case).
-  s = s.replace(/(?<![_\\\w\x00\x01])_(?![_\s\x00\x01])([^\n_\x00\x01]+?)(?<![\s\x00\x01])_(?![_\w\x00\x01])/g, `${SOH}__$1__${SOH}`);
+  s = s.replace(/(^|[^_\\\w\x00\x01])_(?![_\s\x00\x01])([^\n_\x00\x01]*?[^\s\n_\x00\x01])_(?![_\w\x00\x01])/g, (_full, prefix, src) => `${prefix}${SOH}__${src}__${SOH}`);
 
   // Safe inline formatting HTML → parseMarkdown markers, SOH-wrapped so they parse in any position.
   // Runs after the emphasis passes so any `*` / `_` content inside is already converted and nests.
