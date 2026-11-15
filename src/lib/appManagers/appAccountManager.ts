@@ -36,6 +36,17 @@ const isSameAuthorization = (a: UnconfirmedAuthorization, b: UnconfirmedAuthoriz
     a.location === b.location;
 };
 
+// Login methods carry this app's api_id. A silent retry, or two at once, is
+// what gets that id limited. The proxy sockets do not use these methods.
+const LOGIN_GAP_MS = 2500;
+let loginNotBefore = 0;
+
+function loginCall<T>(run: () => Promise<T>) {
+  const wait = Math.max(0, loginNotBefore - Date.now());
+  loginNotBefore = Date.now() + wait + LOGIN_GAP_MS;
+  return new Promise<void>((resolve) => ctx.setTimeout(resolve, wait)).then(run);
+}
+
 const areSameAuthorizations = (a: UnconfirmedAuthorization[], b: UnconfirmedAuthorization[]) => {
   return a.length === b.length && a.every((authorization, index) => {
     return isSameAuthorization(authorization, b[index]);
@@ -400,10 +411,10 @@ export default class AppAccountManager extends AppManager {
   }
 
   public initPasskeyLogin() {
-    return this.apiManager.invokeApi('auth.initPasskeyLogin', {
+    return loginCall(() => this.apiManager.invokeApi('auth.initPasskeyLogin', {
       api_hash: App.hash,
       api_id: App.id
-    });
+    }, {floodMaxTimeout: 0}));
   }
 
   public async finishPasskeyLogin(credential: InputPasskeyCredential, fromDcId?: TrueDcId) {
@@ -462,7 +473,7 @@ export default class AppAccountManager extends AppManager {
   // * comes next stays theirs
 
   public sendCode(phoneNumber: string) {
-    return this.apiManager.invokeApi('auth.sendCode', {
+    return loginCall(() => this.apiManager.invokeApi('auth.sendCode', {
       phone_number: phoneNumber,
       api_id: App.id,
       api_hash: App.hash,
@@ -470,14 +481,14 @@ export default class AppAccountManager extends AppManager {
         _: 'codeSettings',
         pFlags: {}
       }
-    });
+    }, {floodMaxTimeout: 0}));
   }
 
   public resendCode(phoneNumber: string, phoneCodeHash: string) {
-    return this.apiManager.invokeApi('auth.resendCode', {
+    return loginCall(() => this.apiManager.invokeApi('auth.resendCode', {
       phone_number: phoneNumber,
       phone_code_hash: phoneCodeHash
-    });
+    }, {floodMaxTimeout: 0}));
   }
 
   public resetLoginEmail(phoneNumber: string, phoneCodeHash: string) {
@@ -500,19 +511,19 @@ export default class AppAccountManager extends AppManager {
   }
 
   public signIn(params: AuthSignIn) {
-    return this.apiManager.invokeApi('auth.signIn', params, {ignoreErrors: true});
+    return loginCall(() => this.apiManager.invokeApi('auth.signIn', params, {ignoreErrors: true, floodMaxTimeout: 0}));
   }
 
   public signUp(params: AuthSignUp) {
-    return this.apiManager.invokeApi('auth.signUp', params);
+    return loginCall(() => this.apiManager.invokeApi('auth.signUp', params, {floodMaxTimeout: 0}));
   }
 
   public exportLoginToken(exceptIds: UserId[]) {
-    return this.apiManager.invokeApi('auth.exportLoginToken', {
+    return loginCall(() => this.apiManager.invokeApi('auth.exportLoginToken', {
       api_id: App.id,
       api_hash: App.hash,
       except_ids: exceptIds
-    }, {ignoreErrors: true});
+    }, {ignoreErrors: true, floodMaxTimeout: 0}));
   }
 
   /** The token of a QR login whose account lives on another DC, asked on that DC */

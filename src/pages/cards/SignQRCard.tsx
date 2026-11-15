@@ -16,6 +16,7 @@ import {AuthAuthorization, AuthLoginToken} from '@layer';
 import {LangPackKey, i18n} from '@lib/langPack';
 import AccountController from '@lib/accounts/accountController';
 import rootScope from '@lib/rootScope';
+import {whenGatewayReady} from '@lib/mtproto/proxyRoute';
 
 import AuthCard from '@/pages/AuthCard';
 import {CardSpec, useAuthFlow} from '@/pages/authFlow';
@@ -130,6 +131,7 @@ export default function SignQRCard(_props: {spec: Spec}) {
   // * the DC the account behind the QR lives on, once the server has said so
   let migratedDcId: DcId | undefined;
   let prevToken: Uint8Array | number[] | undefined;
+  let transportMisses = 0;
 
   async function iterate(QRCodeStyling: any, isLoop: boolean): Promise<boolean> {
     try {
@@ -158,6 +160,8 @@ export default function SignQRCard(_props: {spec: Spec}) {
         await paintQR(loginToken.token);
       }
 
+      transportMisses = 0;
+
       if(isLoop) {
         const timestamp = Date.now() / 1000;
         const diff = loginToken.expires - timestamp - await managers.timeManager.getServerTimeOffset();
@@ -182,7 +186,8 @@ export default function SignQRCard(_props: {spec: Spec}) {
           console.error('SignQRCard: default error:', err);
           // A front that is still connecting is not a dead login. Keep asking.
           if(!type || /GATEWAY|NETWORK|TIMEOUT|TRANSPORT/i.test(String(type))) {
-            await pause(1000);
+            transportMisses++;
+            await pause(Math.min(30_000, 4000 * transportMisses));
             return false;
           }
           stopped = true;
@@ -202,6 +207,8 @@ export default function SignQRCard(_props: {spec: Spec}) {
     managers.appStateManager.pushToState('authState', {_: 'authStateSignQr'});
 
     preloader = putPreloader(stickerHost, true);
+    await whenGatewayReady();
+    if(stopped) return;
 
     const [{default: QRCodeStyling}] = await Promise.all([
       import('qr-code-styling' as any)

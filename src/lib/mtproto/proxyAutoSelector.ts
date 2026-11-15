@@ -322,9 +322,13 @@ async function probeFromHere() {
   const head = [cached, DIRECT].filter((front, index, list) => front && fronts.includes(front) && list.indexOf(front) === index);
   const rest = fronts.filter((front) => !head.includes(front)).sort(() => Math.random() - 0.5);
   const ordered = [...head, ...rest];
-  for(let index = 0; index < ordered.length; index += BATCH) {
-    if(committed) break;
-    await Promise.all(ordered.slice(index, index + BATCH).map(run));
+  const haveFront = !!getActiveFront();
+  const queue = haveFront ? ordered.filter((front) => front !== getActiveFront()).slice(0, 2) : ordered;
+  const batchSize = haveFront ? 2 : BATCH;
+  for(let index = 0; index < queue.length; index += batchSize) {
+    if(!haveFront && committed) break;
+    await Promise.all(queue.slice(index, index + batchSize).map(run));
+    if(haveFront) break;
   }
   stopProbes();
 
