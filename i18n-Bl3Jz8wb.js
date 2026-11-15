@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{u as e}from"./langPack-DGTXEu6_.js";import{g as t,j as n}from"./solid-BU1FCZ06.js";import{t as r}from"./classname-B5bU2JAF.js";import{n as i}from"./dist-BNGCa8re.js";function a(a){let o=i(()=>a.args,e=>e instanceof Node||typeof e==`string`),s=()=>o.toArray(),c=new e.IntlElement({key:a.key,args:s()});return r(c.element,()=>a.class),t(n(()=>[a.key,s()],([e,t],n)=>{c.update({key:e,args:t})},{defer:!0})),c.element}export{a as t};
+//# sourceMappingURL=i18n-Bl3Jz8wb.js.map
