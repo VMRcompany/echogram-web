@@ -177,10 +177,17 @@ export default function SignQRCard(_props: {spec: Spec}) {
         case 'AUTH_TOKEN_EXPIRED':
           console.warn('SignQRCard: AUTH_TOKEN_EXPIRED');
           return false;
-        default:
+        default: {
+          const type = (err as ApiError)?.type || (err as Error)?.message || '';
           console.error('SignQRCard: default error:', err);
+          // A front that is still connecting is not a dead login. Keep asking.
+          if(!type || /GATEWAY|NETWORK|TIMEOUT|TRANSPORT/i.test(String(type))) {
+            await pause(1000);
+            return false;
+          }
           stopped = true;
           break;
+        }
       }
 
       return true;

@@ -15,10 +15,8 @@ import formatDuration from '@helpers/formatDuration';
 import {HelpCountry, HelpCountryCode} from '@layer';
 import {getFloodWaitTime} from '@appManagers/utils/getFloodWaitTime';
 import I18n, {i18n} from '@lib/langPack';
-import AccountController from '@lib/accounts/accountController';
 import commonStateStorage from '@lib/commonStateStorage';
 import {wrapFormattedDuration} from '@components/wrappers/wrapDuration';
-import {TrueDcId} from '@types';
 
 import AuthCard from '@/pages/AuthCard';
 import AuthCardError from '@/pages/AuthCardError';
@@ -35,7 +33,7 @@ type Spec = Extract<CardSpec, {name: 'signIn'}>;
  * Card variant of `pageSignIn`. Country picker + tel input → `auth.sendCode` →
  * branches to authCode (default), pageIm (rare authorization-on-send case),
  * password (passkey path). Also exposes a QR-login button and the passkey
- * button. On mount kicks off `tryAgain()` — a DC pre-warming cascade — that's
+ * button. On mount kicks off `tryAgain()` — nearest DC for the country — that's
  * cancelled on unmount via a local `cancelled` flag.
  */
 export default function SignInCard(_props: {spec: Spec}) {
@@ -162,8 +160,10 @@ export default function SignInCard(_props: {spec: Spec}) {
   /* ---------- DC pre-warm cascade ---------- */
 
   function tryAgain() {
+    // Only the home DC. Opening the other four here stacked handshakes on the
+    // same front and the code request never got through without a VPN.
     managers.apiManager.getNearestDc().then((nearestDcResult) => {
-      if(cancelled) return nearestDcResult;
+      if(cancelled) return;
 
       const langPack = commonStateStorage.getFromCache('langPack');
       if(langPack && !langPack.countries?.hash) {
@@ -172,45 +172,6 @@ export default function SignInCard(_props: {spec: Spec}) {
         });
       }
 
-      const dcs = new Set([1, 2, 3, 4, 5]);
-      const done: number[] = [nearestDcResult.this_dc];
-
-      let promise: Promise<any>;
-      if(nearestDcResult.nearest_dc !== nearestDcResult.this_dc) {
-        promise = managers.apiManager.getNetworkerVoid(nearestDcResult.nearest_dc).then(() => {
-          done.push(nearestDcResult.nearest_dc);
-        });
-      }
-
-      (promise || Promise.resolve()).then(() => {
-        if(cancelled) return;
-
-        done.forEach((dcId) => dcs.delete(dcId));
-
-        const _dcs = [...dcs];
-        const g = async(): Promise<void> => {
-          if(cancelled) return;
-          const dcId = _dcs.shift();
-          if(!dcId) return;
-
-          const accountData = await AccountController.get(accountNumber);
-          const key = accountData[`dc${dcId as TrueDcId}_auth_key`];
-
-          if(key) return g();
-
-          // ! если одновременно запросить все нетворкеры, не будет проходить запрос на код
-          setTimeout(() => {
-            if(cancelled) return;
-            managers.apiManager.getNetworkerVoid(dcId).finally(g);
-          }, 3000);
-        };
-
-        g();
-      });
-
-      return nearestDcResult;
-    }).then((nearestDcResult) => {
-      if(cancelled) return;
       if(!countryInputField.value.length && !telInputField.value.length) {
         countryInputField.selectCountryByIso2(nearestDcResult.country);
       }

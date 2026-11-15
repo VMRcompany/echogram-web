@@ -133,7 +133,7 @@
   --disabled-opacity: .3;
   --round-video-size: 280px;
   --menu-box-shadow: 0px 0px 10px var(--menu-box-shadow-color);
-  --menu-backdrop-filter: blur(50px);
+  --menu-backdrop-filter: blur(28px) saturate(1.6);
   --section-box-shadow: 0px 1px 4px 0px var(--section-box-shadow-color);
   --section-box-shadow-big: 0px 1px 8px 0px var(--section-box-shadow-big-color);
   --column-box-shadow: 0px 0px 4px 0px var(--column-box-shadow-color);
@@ -273,7 +273,7 @@
   --poll-circle-color: var(--border-color);
   --spoiler-background-color: #e3e5e8;
   --monospace-text-color: var(--danger-color);
-  --backdrop-opacity: .85;
+  --backdrop-opacity: .72;
   --menu-background-color: rgba(var(--surface-color-rgb), var(--backdrop-opacity));
   --lottie-vector-fill: rgba(0, 0, 0, #{$hover-alpha});
   --limit-line-empty-background: #F1F3F5;

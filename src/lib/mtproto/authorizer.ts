@@ -9,7 +9,7 @@ import type MTTransport from '@lib/mtproto/transports/transport';
 import type {TimeManager} from '@lib/mtproto/timeManager';
 import type {DcConfigurator, TransportType} from '@lib/mtproto/dcConfigurator';
 import transportController from '@lib/mtproto/transports/controller';
-import {getGatewayChoice, whenGatewayReady} from '@lib/mtproto/proxyRoute';
+import {getActiveFront, getGatewayChoice, subscribeProxyRoute, whenGatewayReady} from '@lib/mtproto/proxyRoute';
 import {TLSerialization, TLDeserialization} from '@lib/mtproto/tl_utils';
 import rsaKeysManager from '@lib/mtproto/rsaKeysManager';
 import CryptoWorker from '@lib/crypto/cryptoMessagePort';
@@ -619,28 +619,68 @@ export class Authorizer {
     });
   };
 
+  /**
+   * A new login has no saved key, so this handshake is the whole registration.
+   * The direct host is blocked until a front is chosen; starting earlier fails
+   * the key exchange and used to fall through to HTTPS, which never logs in.
+   */
+  private waitForLoginFront() {
+    if(!Modes.multipleTransports || getActiveFront()) return;
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        unsubscribe();
+        clearTimeout(timer);
+        resolve();
+      };
+      const unsubscribe = subscribeProxyRoute(() => {
+        if(getActiveFront()) done();
+      });
+      const timer = setTimeout(done, 2500);
+      if(getActiveFront()) done();
+    });
+  }
+
   private async _auth(dcId: DcId) {
     await this.getTransportType();
+    await this.waitForLoginFront();
 
+    // The browser's POST /apiw1 is a 404. Login stays on the socket and gets
+    // a second try: the first can die while the front is still being chosen.
+    const transportType: TransportType = (Modes.multipleTransports || this.transportType === 'websocket') ?
+      'websocket' : (this.transportType || 'https');
+    this.transportType = transportType;
+
+    const attempts = transportType === 'websocket' ? 2 : 1;
+    const timeoutMs = transportType === 'websocket' ? 25000 : 9000;
     let error: ApiError;
-    const first = this.transportType || 'https';
-    const order: TransportType[] = [first, first === 'https' ? 'websocket' : 'https'];
-    for(const transportType of order) {
-      this.transportType = transportType;
+    for(let attempt = 0; attempt < attempts; attempt++) {
+      const transport = this.dcConfigurator.chooseServer(dcId, 'client', transportType, false);
+      if(!transport) {
+        error = {code: 406, type: 'NETWORK_BAD_RESPONSE'} as ApiError;
+        continue;
+      }
+
+      let timer: number | undefined;
       try {
         const attempt = this.sendReqPQ({
           dcId,
           temp: false,
-          transport: this.dcConfigurator.chooseServer(dcId, 'client', transportType, false),
+          transport,
           media: false
         });
+        attempt.catch(() => {});
         return await Promise.race([
           attempt,
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('GATEWAY_TIMEOUT')), 9000))
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('GATEWAY_TIMEOUT')), timeoutMs);
+          })
         ]);
       } catch(err) {
         error = err as ApiError;
-        this.log('auth transport failed, trying the other', transportType, err);
+        this.log('auth transport failed', transportType, attempt, err);
+      } finally {
+        clearTimeout(timer);
+        transport.destroy();
       }
     }
 
