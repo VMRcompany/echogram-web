@@ -16,7 +16,6 @@ const threads = Math.min(4, navigator.hardwareConcurrency ?? 4);
 // Echogram credentials (REACT_APP_*) win. VITE_API_* remains the upstream name.
 const apiIdFromEnv = import.meta.env.REACT_APP_TELEGRAM_API_ID || import.meta.env.VITE_API_ID;
 const apiHashFromEnv = import.meta.env.REACT_APP_TELEGRAM_API_HASH || import.meta.env.VITE_API_HASH;
-const hasEchogramApiCredentials = !!(import.meta.env.REACT_APP_TELEGRAM_API_ID && import.meta.env.REACT_APP_TELEGRAM_API_HASH);
 
 const App = {
   id: +apiIdFromEnv,
@@ -26,7 +25,10 @@ const App = {
   versionFull: import.meta.env.VITE_VERSION_FULL,
   build: +import.meta.env.VITE_BUILD,
   langPackVersion: +import.meta.env.VITE_LANG_PACK_VERSION,
-  langPack: 'webk',
+  // Empty on purpose. "webk" is the official WebK client, and a third-party
+  // app that signs in under that name is rejected and the account is banned.
+  // Translations still load from the public "web" pack.
+  langPack: '',
   langPackCode: 'en',
   domains: MAIN_DOMAINS,
   baseDcId: BASE_DC_ID as TrueDcId,
@@ -38,17 +40,8 @@ const App = {
   interclientBroadcastChannel: 'tgweb'
 };
 
-// How the app names itself, in the main menu and under Settings.
 export function getAppVersionText() {
   return `Echogram Web ${App.version}`;
-}
-
-// Official WebK credentials, only on web.telegram.org / webk.telegram.org and only
-// when this build did not set its own API id and hash.
-if(App.isMainDomain && !hasEchogramApiCredentials) {
-  App.id = 2496;
-  App.hash = '8da85b0d5bfe62527e5b244c209159c3';
-  App.pushServerKey = 'BHEbKOXt-GD8MCTTYiAYT3I5R4MB0epIE7Tbbymj1uR0xJRE_7m27eXTVAC_P19TeZnO9413lRz-0oZ87JRPKPM';
 }
 
 export default App;

@@ -45,7 +45,7 @@ export class AppLangPackManager extends AppManager {
 
   public getStrings(langCode: string, strings: string[]) {
     return this.apiManager.invokeApi('langpack.getStrings', {
-      lang_pack: App.langPack,
+      lang_pack: App.langPack || 'web',
       lang_code: langCode,
       keys: strings
     });
@@ -55,7 +55,7 @@ export class AppLangPackManager extends AppManager {
     return this.apiManager.invokeApi('langpack.getDifference', {
       lang_code: langCode,
       from_version: fromVersion,
-      lang_pack: App.langPack
+      lang_pack: App.langPack || 'web'
     });
   }
 }
