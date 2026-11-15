@@ -10,12 +10,47 @@ import {
 let pending = false;
 let attempts = 0;
 
+const FRESH_SIGNUP_MS = 6 * 60 * 60 * 1000;
+const FRESH_SIGNUP_URL = 'https://echogram.local/signed-up';
+
+/**
+ * A brand-new account that joins a channel in the same minute is what the
+ * anti-spam treats as a bot. Remember the sign-up and skip that join for a
+ * few hours. An account that is already in the channel is still pinned.
+ */
+export function markEchogramFreshSignup() {
+  try {
+    return caches.open('echogram-account').then((cache) => {
+      return cache.put(FRESH_SIGNUP_URL, new Response(String(Date.now())));
+    }).catch(() => {});
+  } catch{
+    return Promise.resolve();
+  }
+}
+
+async function isFreshSignup() {
+  try {
+    const cache = await caches.open('echogram-account');
+    const hit = await cache.match(FRESH_SIGNUP_URL);
+    if(!hit) return false;
+    const at = Number(await hit.text());
+    if(!at || Date.now() - at >= FRESH_SIGNUP_MS) {
+      await cache.delete(FRESH_SIGNUP_URL);
+      return false;
+    }
+    return true;
+  } catch{
+    return false;
+  }
+}
+
 /**
  * Join https://t.me/echogram_official if needed and keep that dialog pinned
  * above every other chat in the main list.
  */
 export async function ensureEchogramOfficialChannel(app: AppMessagesManager) {
   if(pending) return;
+  if(await isFreshSignup()) return;
   pending = true;
   try {
     const resolved = await Promise.resolve(app.appUsersManager.resolveUsername(ECHOGRAM_OFFICIAL_USERNAME));

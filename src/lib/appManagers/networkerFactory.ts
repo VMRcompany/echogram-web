@@ -11,7 +11,7 @@ import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import {AppManager} from '@appManagers/manager';
 import AccountController from '@lib/accounts/accountController';
 import bytesToHex from '@helpers/bytes/bytesToHex';
-import {getEnvironment} from '@environment/utils';
+import toJSONValue from '@appManagers/utils/toJSONValue';
 
 export class NetworkerFactory extends AppManager {
   private networkers: MTPNetworker[] = [];
@@ -52,12 +52,16 @@ export class NetworkerFactory extends AppManager {
       timeManager: this.timeManager,
       getInitConnectionParams: () => ({
         id: App.id,
-        deviceModel: this.customDeviceModel || getEnvironment().USER_AGENT || 'Unknown UserAgent',
+        // A browser user-agent here is how the official web client introduces
+        // itself. This app is Echogram, so the session name says so. The
+        // platform stays the real one.
+        deviceModel: this.customDeviceModel || 'Echogram Web',
         systemVersion: navigator.platform || 'Unknown Platform',
         version: App.version + (App.isMainDomain ? ' ' + App.suffix : ''),
         systemLangCode: navigator.language || 'en',
         langPack: App.langPack,
-        langCode: this.language
+        langCode: this.language,
+        params: toJSONValue({tz_offset: -new Date().getTimezoneOffset() * 60})
       }),
       getBaseDcId: () => this.apiManager.getBaseDcId(),
       createLogger: this.createLogger.bind(this)

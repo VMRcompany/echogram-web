@@ -14,6 +14,7 @@ import {
   DEFAULT_AUTHORIZATION_AUTOCONFIRM_PERIOD,
   normalizeAuthorizationAutoconfirmPeriod
 } from '@appManagers/utils/authorizationAutoconfirmPeriod';
+import {markEchogramFreshSignup} from '@lib/echogramOfficialChannel';
 
 export {DEFAULT_AUTHORIZATION_AUTOCONFIRM_PERIOD} from '@appManagers/utils/authorizationAutoconfirmPeriod';
 
@@ -515,7 +516,10 @@ export default class AppAccountManager extends AppManager {
   }
 
   public signUp(params: AuthSignUp) {
-    return loginCall(() => this.apiManager.invokeApi('auth.signUp', params, {floodMaxTimeout: 0}));
+    return loginCall(() => this.apiManager.invokeApi('auth.signUp', params, {floodMaxTimeout: 0}).then(async(authorization) => {
+      if(authorization?._ === 'auth.authorization') await markEchogramFreshSignup();
+      return authorization;
+    }));
   }
 
   public exportLoginToken(exceptIds: UserId[]) {

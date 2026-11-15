@@ -95,7 +95,8 @@ type InitConnectionParams = {
   version?: string,
   systemLangCode?: string,
   langPack?: string,
-  langCode?: string
+  langCode?: string,
+  params?: any
 };
 
 /**
@@ -435,6 +436,7 @@ export default class MTPNetworker {
             system_lang_code: initConnectionParams.systemLangCode,
             lang_pack: initConnectionParams.langPack,
             lang_code: initConnectionParams.langCode,
+            params: initConnectionParams.params,
             query: (serializer: TLSerialization) => {
               this.storeApiCall(serializer, method, params, options, log);
             }
