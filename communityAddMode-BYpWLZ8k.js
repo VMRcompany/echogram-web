@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+function e(e){return e!=null&&e.pFlags.manage_linked_peers?`admins`:`all`}function t(e,t){var n;let r={...t==null?void 0:t.pFlags};return e===`admins`?r.manage_linked_peers=!0:delete r.manage_linked_peers,{...t,_:`chatBannedRights`,pFlags:r,until_date:(n=t==null?void 0:t.until_date)==null?2147483647:n}}export{t as n,e as t};
+//# sourceMappingURL=communityAddMode-BYpWLZ8k.js.map

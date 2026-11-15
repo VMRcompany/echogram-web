@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{i as e,n as t}from"./appWindow-D1rjBq29.js";function n(n,r){let i=new Set,a,o=()=>{let e=t().IntersectionObserver;a=new e(n,r),i.forEach(e=>a.observe(e))};o();let s=e(()=>{a.disconnect(),o()});return{observe:e=>{i.add(e),a.observe(e)},unobserve:e=>{i.delete(e),a.unobserve(e)},disconnect:()=>{i.clear(),a.disconnect(),s()}}}export{n as t};
+//# sourceMappingURL=observe-U6dDD4fr.js.map

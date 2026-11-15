@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import"./constants-DoixZWXX.js";import{r as e}from"./bindManagersToAccount-dOC7Llmo.js";function t(e){return e=parseInt((e||`1`)+``),e<=4&&e>=1?e:1}function n(e){let n=new URL(e).searchParams;return t(n.get(`account`)||``)}var r,i,a=()=>{var e;return(e=r)==null?r=n(window.location.href):e};function o(){var e;return(e=i)==null?i={accountNumber:a(),ended:!1}:e}function s(t){var n;return(n=e(t))==null?o():n}function c(e){i&&(i.ended=!0,i=void 0),r=e}var l;function u(e){return e.ended||l!==void 0&&l!==e.accountNumber}function d(){return l}function f(e){l=e}export{u as a,n as c,s as i,t as l,d as n,f as o,a as r,c as s,o as t};
+//# sourceMappingURL=getCurrentAccount-B4BQRy12.js.map

@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+var e=new Set;function t(t){var r,i,a;let o=n(t),s=(i=(r=t.data).effects)==null?r.effects={token:o,hot:t,cleanups:[]}:i;return e.add(s),s.hot=t,s.token!==o&&(s.cleanups.splice(0).forEach(e=>e()),s.token=o),(a=t.prune)==null||a.call(t,()=>{s.cleanups.splice(0).forEach(e=>e()),e.delete(s)}),s.cleanups}function n(e){var t,n;let{hmrClient:r,ownerPath:i}=e;return(t=r==null||(n=r.ctxToListenersMap)==null?void 0:n.get(i))==null?e:t}function r(e,n){let r=e!=null&&e.data?t(e):void 0,i=n();r==null||r.push(i)}function i(e,t,n,i){r(e,()=>(t.addEventListener(n,i),()=>t.removeEventListener(n,i)))}export{i as n,r as t};
+//# sourceMappingURL=hotModule-B_6zV1cq.js.map

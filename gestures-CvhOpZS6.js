@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{u as e}from"./langPack-Xg-POPO3.js";import"./gesture-policy-BuvipYmj.js";var t=`data-widget-block`,n=new WeakMap;function r(e,t){n.set(e,t)}function i(e){var n;return!!(e!=null&&(n=e.closest)!=null&&n.call(e,`[${t}]`))}function a(e){var r;let i=e==null||(r=e.closest)==null?void 0:r.call(e,`[${t}]`);return i&&n.get(i)}function o(r,i){var a,o;let s=r==null||(a=r.closest)==null?void 0:a.call(r,`[${t}]`);if(!s)return!1;if((o=n.get(s))!=null&&o.x)return!0;let c=s.getBoundingClientRect();return(e.getIsRTL()?c.right-i:i-c.left)<20}export{r as a,i,a as n,o as r,t};
+//# sourceMappingURL=gestures-CvhOpZS6.js.map

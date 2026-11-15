@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{x as e}from"./solid-BU1FCZ06.js";function t(e){for(;typeof e==`function`;)e=e();return e}function n(n,r){let i,a=e(e=>(i=e,t(n())));return r.onClean(i),a}function r(e,t){let r=t.create(),i=r.get(),a=!1,o=()=>{a||(a=!0,r.destroy())};try{return{element:n(()=>e(i),i),dispose:o,middleware:i}}catch(e){throw o(),e}}export{t as n,n as r,r as t};
+//# sourceMappingURL=wrapSolidComponent-C1X0gjPQ.js.map
