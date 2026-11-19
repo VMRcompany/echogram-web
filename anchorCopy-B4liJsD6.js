@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{t as e}from"./cancelEvent-Ce45uTdn.js";import{n as t}from"./clickEvent-CS_TyupI.js";import{a as n,i as r,t as i}from"./copyContact-BWrlLNor.js";function a(a={}){let o=document.createElement(`a`);o.classList.add(`anchor-copy`),o.dir=`ltr`;let s;return a.mePath&&(o.href=o.innerText=i+a.mePath,s=()=>r(a.mePath)),a.username&&(o.href=i+a.username,o.innerText=`@`+a.username,s=()=>n(a.username)),t(o,t=>{e(t),a.onClick?a.onClick(s):s()}),o}export{a as t};
-//# sourceMappingURL=anchorCopy-B4liJsD6.js.map

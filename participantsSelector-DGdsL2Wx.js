@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{x as e}from"./solid-BU1FCZ06.js";import{n as t}from"./cancellablePromise-y-RsHxed.js";import{t as n}from"./appSelectPeers-CJ6hE0Jt.js";function r(r){let i=t(),a;return e(e=>{r.middleware.onClean(()=>{e(),i.resolve()}),a=new n({...r,multiSelect:!1,headerSearch:!0,placeholder:`SearchPlaceholder`,meAsSaved:!1,onFirstRender:()=>{i.resolve()}})}),{selector:a,loadPromise:i}}function i(e){return r({...e,peerType:[`channelParticipants`]})}export{r as n,i as t};
+//# sourceMappingURL=participantsSelector-DGdsL2Wx.js.map

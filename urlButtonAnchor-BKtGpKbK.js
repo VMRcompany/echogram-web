@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{u as e}from"./renderer-CT2Sgan7.js";import{r as t}from"./preloaderRing-CjX5oJZb.js";var n=`rich-button-link`;function r(r){let i=e(` `,{entities:[{_:`messageEntityTextUrl`,length:1,offset:0,url:r}]}),a=t(i).firstElementChild;return a.classList.add(n),a}var i=new WeakMap;function a(e,t){var n;let r=e.getAttributeNames().filter(e=>e!==`class`);(n=i.get(t))==null||n.forEach(e=>{r.includes(e)||t.removeAttribute(e)}),r.forEach(n=>t.setAttribute(n,e.getAttribute(n))),i.set(t,r)}export{a as n,r,n as t};
-//# sourceMappingURL=urlButtonAnchor-BKtGpKbK.js.map
