@@ -66,11 +66,11 @@ export function finishGatewayProbe() {
   markReady();
 }
 
-/** Resolves when this browser has a working front, or after a short wait. */
+/** Resolves when this browser has a working front, or just before the five-second search ends. */
 export function whenGatewayReady() {
   return Promise.race([
     ready,
-    new Promise<void>((resolve) => setTimeout(resolve, 1200))
+    new Promise<void>((resolve) => setTimeout(resolve, 4500))
   ]);
 }
 

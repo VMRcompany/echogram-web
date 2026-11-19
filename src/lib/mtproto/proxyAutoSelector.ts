@@ -38,11 +38,15 @@ const FRONTS = [
   'nothingthere.co.uk'
 ];
 
-const CACHE_KEY = 'echogram_front_v4';
+const CACHE_KEY = 'echogram_front_v5';
 const CACHE_URL = 'https://echogram.local/front';
-const PROBE_MS = 2000;
-const DIRECT_WINDOW_MS = 400;
-const BATCH = 8;
+// The whole search has to finish inside five seconds. One wave, not batches.
+const SEARCH_MS = 4500;
+const PROBE_MS = SEARCH_MS;
+// A front that answers in under 70ms is the one we keep. The settle is only
+// long enough to see whether an even quicker one is already on the way.
+const FAST_MS = 70;
+const SETTLE_MS = 400;
 const RES_PQ = 85337187;
 const REQ_PQ_MULTI = -1099002127;
 
@@ -237,20 +241,11 @@ async function probeFromHere() {
   if(probing) return;
   probing = true;
   const cached = await loadCache();
-  // A front this browser already used opens the chat at once. The race below
-  // only adds a spare, it does not tear the open connection down.
-  if(cached && cached !== DIRECT && !getActiveFront() && isFrontUsable(cached)) {
-    setFrontOrder([cached]);
-    setGatewayChoice({transport: 'websocket', dcId: 2});
-    finishGatewayProbe();
-  }
   const usable = FRONTS.filter((front) => isFrontUsable(front));
   const fronts = usable.length ? usable : FRONTS;
   const found: Hit[] = [];
   let committed = false;
-  let directSettled = false;
-  let waitDirect: number | undefined;
-  const probeStarted = Date.now();
+  let waitSettle: number | undefined;
   const jobs: Array<ReturnType<typeof probe>> = [];
 
   const stopProbes = () => {
@@ -264,7 +259,7 @@ async function probeFromHere() {
     }
 
     committed = true;
-    if(waitDirect) clearTimeout(waitDirect);
+    if(waitSettle) clearTimeout(waitSettle);
     const rest = found.map((hit) => hit.front).filter((name) => name !== front);
     const current = getActiveFront();
     if(current && current !== front && isFrontUsable(current)) {
@@ -276,66 +271,49 @@ async function probeFromHere() {
       finishGatewayProbe();
       saveCache(front);
     }
-    // Drop the spare sockets quickly. Waiting out every batch is what left
-    // the chat on the loading screen for minutes.
     setTimeout(stopProbes, 300);
     log('front for this network', front);
   };
 
-  const commitFastestFront = () => {
-    const fastest = found.filter((item) => item.front !== DIRECT).sort((a, b) => a.ms - b.ms)[0];
-    if(fastest) commit(fastest.front);
+  const commitBest = () => {
+    if(committed || !found.length) return;
+    const ranked = found.slice().sort((a, b) => a.ms - b.ms);
+    const fast = ranked.filter((hit) => hit.ms < FAST_MS);
+    commit((fast[0] || ranked[0]).front);
   };
 
   const consider = (hit: Hit) => {
     found.push(hit);
     rememberFront(hit.front);
-    if(hit.front === DIRECT) {
-      commit(DIRECT);
-      return;
-    }
-
     if(committed) return;
-    if(directSettled) {
-      commitFastestFront();
-      return;
-    }
-
-    if(waitDirect) return;
-    const wait = Math.max(0, DIRECT_WINDOW_MS - (Date.now() - probeStarted));
-    waitDirect = setTimeout(() => {
-      if(committed || getActiveFront() === DIRECT) return;
-      commitFastestFront();
-    }, wait);
+    if(waitSettle) clearTimeout(waitSettle);
+    // Under 70ms: keep the quickest of the ones already in. Otherwise take
+    // the quickest answer without waiting out the slow tail.
+    waitSettle = setTimeout(commitBest, hit.ms < FAST_MS ? 200 : SETTLE_MS);
   };
 
   const run = (front: string) => {
     const job = probe(front);
     jobs.push(job);
     return job.promise.then((hit) => {
-      if(front === DIRECT) directSettled = true;
       if(hit) consider(hit);
-      else if(front === DIRECT && !committed && found.some((item) => item.front !== DIRECT)) commitFastestFront();
     });
   };
 
   const head = [cached, DIRECT].filter((front, index, list) => front && fronts.includes(front) && list.indexOf(front) === index);
   const rest = fronts.filter((front) => !head.includes(front)).sort(() => Math.random() - 0.5);
   const ordered = [...head, ...rest];
-  const haveFront = !!getActiveFront();
-  const queue = haveFront ? ordered.filter((front) => front !== getActiveFront()).slice(0, 2) : ordered;
-  const batchSize = haveFront ? 2 : BATCH;
-  for(let index = 0; index < queue.length; index += batchSize) {
-    if(!haveFront && committed) break;
-    await Promise.all(queue.slice(index, index + batchSize).map(run));
-    if(haveFront) break;
-  }
+  let release = () => {};
+  const deadline = new Promise<void>((resolve) => {
+    release = resolve;
+    setTimeout(resolve, SEARCH_MS);
+  });
+  await Promise.race([Promise.all(ordered.map(run)).then(() => release()), deadline]);
   stopProbes();
-
-  if(!committed && found.some((item) => item.front !== DIRECT)) commitFastestFront();
+  if(waitSettle) clearTimeout(waitSettle);
+  if(!committed) commitBest();
   if(!committed) {
-    if(cached && isFrontUsable(cached)) commit(cached);
-    else finishGatewayProbe();
+    finishGatewayProbe();
     if(!getActiveFront()) log('no front returned resPQ from this network');
   }
 
