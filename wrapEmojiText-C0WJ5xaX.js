@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{g as e}from"./solid-BU1FCZ06.js";import{u as t}from"./renderer-DhPdGNXO.js";import{t as n}from"./parseEntities-DWipXhgG.js";function r(e,r=!1,i){return e?(i!=null||(i=n(e).filter(e=>e._===`messageEntityEmoji`)),t(e,{entities:i,wrappingDraft:r})):t(``)}function i(e,t=!1){return r(e.text,t,e.entities)}function a(t){let n=document.createElement(`span`);return e(()=>{n.replaceChildren(r(t.text,t.isDraft,t.entities))}),n}export{r as n,i as r,a as t};
+//# sourceMappingURL=wrapEmojiText-C0WJ5xaX.js.map

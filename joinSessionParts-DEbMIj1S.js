@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{c as e,u as t}from"./langPack-BGwshPf8.js";import{y as n}from"./solid-BU1FCZ06.js";import{c as r,f as i,g as a}from"./web-d3sJT-Ds.js";var o=a(`<span>`);function s(a,s){return(()=>{var c=o();return r(c,()=>e(a.filter(e=>typeof e==`string`?e:e==null?void 0:e.ltr).map(e=>{let t=typeof e!=`string`,n=t?e.ltr:e;return(()=>{var e=o();return i(e,`dir`,t?`ltr`:`auto`),r(e,n),e})()}),s)),n(()=>i(c,`dir`,t.isRTL()?`rtl`:`ltr`)),c})()}export{s as t};
+//# sourceMappingURL=joinSessionParts-DEbMIj1S.js.map
