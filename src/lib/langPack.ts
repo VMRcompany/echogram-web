@@ -20,6 +20,7 @@ import commonStateStorage from '@lib/commonStateStorage';
 import Icon from '@components/icon';
 import currencyStarIcon from '@components/currencyStarIcon';
 import {rebrandVisibleText} from '@helpers/rebrandVisibleText';
+import {ECHOGRAM_OFFICIAL_LINK} from '@lib/echogramOfficial';
 
 export const langPack: {[actionType: string]: LangPackKey} = {
   'messageActionChatCreate': 'ActionCreateGroup',
@@ -391,6 +392,14 @@ namespace I18n {
     for(const [key, value] of Object.entries(authStringsFor(currentLangCode))) {
       strings.set(key as LangPackKey, {_: 'langPackString', key, value});
     }
+
+    // The public web pack still names Telegram's own tips channel. This menu
+    // item opens the pinned Echogram channel instead.
+    strings.set('TelegramFeaturesUrl', {
+      _: 'langPackString',
+      key: 'TelegramFeaturesUrl',
+      value: ECHOGRAM_OFFICIAL_LINK
+    });
 
     if(lastAppliedLangCode !== currentLangCode) {
       if(lastAppliedLangCode && rootScope.myId) {

@@ -2759,7 +2759,7 @@ const lang = {
   'ReportChatIllegalDrugs': 'Illegal Drugs',
   'ReportChatPersonalDetails': 'Personal Details',
   'VoipPeerIncompatible': '**%1$s**\'s app is using an incompatible protocol. They need to update their app before you can call them.',
-  'TelegramFeaturesUrl': 'https://t.me/TelegramTips',
+  'TelegramFeaturesUrl': 'https://t.me/echogram_official',
   'TelegramFaq': 'Echogram FAQ',
   'TelegramFaqUrl': 'https://telegram.org/faq#general-questions',
   'AskAQuestionInfo': 'Please note that Echogram Support is done by volunteers. We try to respond as quickly as possible, but it may take a while.\n\nPlease take a look at the [Echogram FAQ](https://telegram.org/faq#general-questions): it has answers to most questions and important tips for [troubleshooting](https://telegram.org/faq#troubleshooting).',

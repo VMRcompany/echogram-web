@@ -77,6 +77,7 @@ import setBlankToAnchor from '@lib/richTextProcessor/setBlankToAnchor';
 import AccountController from '@lib/accounts/accountController';
 import {MAX_ACCOUNTS, MAX_ACCOUNTS_FREE} from '@lib/accounts/constants';
 import {getCurrentAccount} from '@lib/accounts/getCurrentAccount';
+import {ECHOGRAM_OFFICIAL_LINK} from '@lib/echogramOfficial';
 import {createProxiedManagersForAccount} from '@lib/getProxiedManagers';
 import limitSymbols from '@helpers/string/limitSymbols';
 import filterAsync from '@helpers/array/filterAsync';
@@ -1020,8 +1021,7 @@ export class AppSidebarLeft extends SidebarSlider {
       icon: 'help',
       text: 'TelegramFeatures',
       onClick: () => {
-        const url = I18n.format('TelegramFeaturesUrl', true);
-        appImManager.openUrl(url);
+        appImManager.openUrl(ECHOGRAM_OFFICIAL_LINK);
       },
       separator: !App.isMainDomain
     }, {
