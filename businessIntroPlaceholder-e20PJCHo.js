@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{a as e,m as t}from"./langPack-BGwshPf8.js";import{n}from"./wrapEmojiText-DqI8z2t2.js";var r=`empty-bubble-placeholder`;function i(r){let i=e=>{let r=document.createElement(`span`);return t(r,n(e)),r},a=r!=null&&r.title?i(r.title):e(`NoMessages`),o=r!=null&&r.description?i(r.description):e(`NoMessagesGreetingsDescription`);return a.classList.add(`center`,`empty-bubble-placeholder-title`),o.classList.add(`center`,`empty-bubble-placeholder-subtitle`),{title:a,subtitle:o}}export{i as n,r as t};
-//# sourceMappingURL=businessIntroPlaceholder-e20PJCHo.js.map
