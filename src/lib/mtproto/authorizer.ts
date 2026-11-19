@@ -635,7 +635,7 @@ export class Authorizer {
       const unsubscribe = subscribeProxyRoute(() => {
         if(getActiveFront()) done();
       });
-      const timer = setTimeout(done, 8000);
+      const timer = setTimeout(done, 12000);
       if(getActiveFront()) done();
     });
   }

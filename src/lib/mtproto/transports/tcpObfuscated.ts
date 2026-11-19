@@ -63,7 +63,11 @@ export default class TcpObfuscated implements MTTransport {
 
     this.unsubscribeRoute = subscribeProxyRoute(() => {
       const next = applySocketUrl(this.dcId, this.url);
-      if(next && next !== this.url) this.changeUrl(next);
+      if(!next) {
+        if(this.connection) this.close();
+        return;
+      }
+      if(!this.connection || next !== this.url) this.changeUrl(next);
     });
 
     this.connect();
@@ -352,7 +356,13 @@ export default class TcpObfuscated implements MTTransport {
     }
 
     const next = applySocketUrl(this.dcId, this.url);
-    if(next) this.url = next;
+    // No proven front yet. Opening web.telegram.org here stays silent without
+    // a VPN and the chat never leaves it.
+    if(!next) {
+      this.log('waiting for a front');
+      return;
+    }
+    this.url = next;
 
     const generation = ++this.connectionGeneration;
     const openedUrl = this.url;
@@ -370,7 +380,7 @@ export default class TcpObfuscated implements MTTransport {
   }
 
   public changeUrl(url: string) {
-    if(this.url === url) {
+    if(!url || (this.url === url && this.connection)) {
       return;
     }
 

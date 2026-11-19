@@ -1,5 +1,5 @@
 import {logger} from '@lib/logger';
-import {finishGatewayProbe, getActiveFront, isFrontUsable, rememberFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
+import {finishGatewayProbe, getActiveFront, holdDirectHost, isFrontUsable, rememberFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
 
 /**
  * Each browser races Telegram's own web socket and the Cloudflare fronts from
@@ -42,9 +42,16 @@ const CACHE_KEY = 'echogram_front_v5';
 const CACHE_URL = 'https://echogram.local/front';
 // A handful at a time. Opening every front at once stalls them all, and the
 // chat then starts on the direct host, which returns nothing without a VPN.
-const CONCURRENCY = 6;
-const SEARCH_MS = 8000;
-const PROBE_MS = 4000;
+const CONCURRENCY = 4;
+const SEARCH_MS = 9000;
+const PROBE_MS = 6000;
+const SLOW_FRONTS = [
+  'offshor.co.uk',
+  'pyatdesyatdva.co.uk',
+  'nothingthere.co.uk',
+  'noskomnadzor.co.uk',
+  'pomogite.co.uk'
+];
 const RES_PQ = 85337187;
 const REQ_PQ_MULTI = -1099002127;
 
@@ -245,17 +252,13 @@ async function probeFromHere() {
   if(probing) return;
   probing = true;
   const cached = await loadCache();
-  // A front this browser already used opens the chat at once. Without it the
-  // socket starts on web.telegram.org and the API never answers.
-  if(cached && !getActiveFront() && isFrontUsable(cached)) {
-    setFrontOrder([cached]);
-    setGatewayChoice({transport: 'websocket', dcId: 2});
-    finishGatewayProbe();
-  }
-
-  const usable = FRONTS.filter((front) => front !== DIRECT && isFrontUsable(front));
-  const rest = usable.filter((front) => front !== cached).sort(() => Math.random() - 0.5);
-  const queue = [cached, ...rest, DIRECT].filter((front, index, list) => front && list.indexOf(front) === index);
+  const usable = FRONTS.filter((front) => front !== DIRECT && (isFrontUsable(front) || front === cached));
+  const pool = usable.length ? usable : FRONTS.filter((front) => front !== DIRECT);
+  const fresh = pool.filter((front) => front !== cached && !SLOW_FRONTS.includes(front)).sort(() => Math.random() - 0.5);
+  const slow = pool.filter((front) => SLOW_FRONTS.includes(front));
+  // The direct host is last and is used only when it itself returns resPQ.
+  // Opening it before that is what leaves the chat empty without a VPN.
+  const queue = [cached, ...fresh, ...slow, DIRECT].filter((front, index, list) => front && list.indexOf(front) === index);
   const found: Hit[] = [];
   let committed = !!getActiveFront();
   const jobs: Array<ReturnType<typeof probe>> = [];
@@ -267,12 +270,12 @@ async function probeFromHere() {
 
   const commit = (front: string) => {
     if(committed) {
-      rememberFront(front);
+      if(front !== DIRECT) rememberFront(front);
       return;
     }
 
     committed = true;
-    const spare = found.map((hit) => hit.front).filter((name) => name !== front);
+    const spare = found.map((hit) => hit.front).filter((name) => name !== front && name !== DIRECT);
     setFrontOrder([front, ...spare]);
     setGatewayChoice({transport: 'websocket', dcId: 2});
     finishGatewayProbe();
@@ -282,9 +285,7 @@ async function probeFromHere() {
 
   const consider = (hit: Hit) => {
     found.push(hit);
-    rememberFront(hit.front);
-    // The direct host is the fallback only. A working front is what answers
-    // where Telegram itself is blocked.
+    if(hit.front !== DIRECT) rememberFront(hit.front);
     if(getActiveFront() || hit.front === DIRECT) return;
     commit(hit.front);
   };
@@ -318,6 +319,13 @@ async function probeFromHere() {
   }
 
   probing = false;
+  if(!getActiveFront()) {
+    setTimeout(() => {
+      if(!getActiveFront()) probeFromHere();
+    }, 400);
+    return;
+  }
+
   if(probeQueued && !getActiveFront()) {
     probeQueued = false;
     probeFromHere();
@@ -329,6 +337,8 @@ async function probeFromHere() {
 export function startProxyAutoSelector() {
   if(started) return;
   started = true;
+  // Before any chat socket exists. Otherwise it opens the blocked direct host.
+  holdDirectHost(true);
   setFrontExhaustedHandler(() => {
     setTimeout(() => wakeProxySearch(), 400);
   });

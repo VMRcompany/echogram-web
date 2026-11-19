@@ -26,6 +26,9 @@ let activeFront: string | null = null;
 let rankedFronts: string[] = [];
 const deadUntil = new Map<string, number>();
 let onFrontsExhausted = () => {};
+// While this is set, a socket must not open Telegram's own host. That host
+// answers nothing without a VPN, and a socket stuck on it never recovers.
+let holdDirect = false;
 
 function sameRoute(a: EchogramProxyRoute | null, b: EchogramProxyRoute | null) {
   if(a === b) return true;
@@ -76,6 +79,15 @@ export function whenGatewayReady() {
 
 export function isFrontUsable(front: string) {
   return (deadUntil.get(front) || 0) < Date.now();
+}
+
+/** Refuse web.telegram.org until a probe has actually returned resPQ. */
+export function holdDirectHost(hold: boolean) {
+  if(holdDirect === hold) return;
+  holdDirect = hold;
+  if(!hold) {
+    for(const listener of listeners) listener();
+  }
 }
 
 export function getActiveFront() {
@@ -150,6 +162,8 @@ export function applySocketUrl(dcId: number, currentUrl: string) {
     const port = route.port === 443 ? '' : `:${route.port}`;
     return `wss://${route.address}${port}/apiws`;
   }
+
+  if(holdDirect) return null;
 
   if(!currentUrl || currentUrl.includes('.web.telegram.org/')) return currentUrl;
 
