@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{t as e}from"./privacyTab-oM-rSfBt.js";import{t}from"./privacySection-NQAZvMLX.js";var n=`PrivacySettingsController.Forwards.CustomHelp`,r=e(`privacy-forward-messages`,e=>{new t({tab:e,title:`PrivacyForwardsTitle`,inputKey:`inputPrivacyKeyForwards`,captions:[n,n,n],exceptionTexts:[`PrivacySettingsController.NeverAllow`,`PrivacySettingsController.AlwaysAllow`],appendTo:e.scrollable,managers:e.managers})});export{r as default};
-//# sourceMappingURL=forwardMessages-nAmazyUX.js.map
