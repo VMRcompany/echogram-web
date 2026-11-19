@@ -40,13 +40,11 @@ const FRONTS = [
 
 const CACHE_KEY = 'echogram_front_v5';
 const CACHE_URL = 'https://echogram.local/front';
-// The whole search has to finish inside five seconds. One wave, not batches.
-const SEARCH_MS = 4500;
-const PROBE_MS = SEARCH_MS;
-// A front that answers in under 70ms is the one we keep. The settle is only
-// long enough to see whether an even quicker one is already on the way.
-const FAST_MS = 70;
-const SETTLE_MS = 400;
+// A handful at a time. Opening every front at once stalls them all, and the
+// chat then starts on the direct host, which returns nothing without a VPN.
+const CONCURRENCY = 6;
+const SEARCH_MS = 8000;
+const PROBE_MS = 4000;
 const RES_PQ = 85337187;
 const REQ_PQ_MULTI = -1099002127;
 
@@ -158,10 +156,16 @@ async function probeFrames() {
   return {wireInit, wirePacket, decKey, decIv};
 }
 
+function usableCached(front: string) {
+  return FRONTS.includes(front) && front !== DIRECT;
+}
+
 async function loadCache() {
   try {
-    const local = localStorage.getItem(CACHE_KEY) || '';
-    if(FRONTS.includes(local)) return local;
+    for(const key of [CACHE_KEY, 'echogram_front_v4']) {
+      const local = localStorage.getItem(key) || '';
+      if(usableCached(local)) return local;
+    }
   } catch{
   }
 
@@ -169,7 +173,7 @@ async function loadCache() {
     const cache = await caches.open('echogram-front');
     const stored = await cache.match(CACHE_URL);
     const front = stored ? (await stored.text()).trim() : '';
-    return FRONTS.includes(front) ? front : '';
+    return usableCached(front) ? front : '';
   } catch{
     return '';
   }
@@ -241,12 +245,21 @@ async function probeFromHere() {
   if(probing) return;
   probing = true;
   const cached = await loadCache();
-  const usable = FRONTS.filter((front) => isFrontUsable(front));
-  const fronts = usable.length ? usable : FRONTS;
+  // A front this browser already used opens the chat at once. Without it the
+  // socket starts on web.telegram.org and the API never answers.
+  if(cached && !getActiveFront() && isFrontUsable(cached)) {
+    setFrontOrder([cached]);
+    setGatewayChoice({transport: 'websocket', dcId: 2});
+    finishGatewayProbe();
+  }
+
+  const usable = FRONTS.filter((front) => front !== DIRECT && isFrontUsable(front));
+  const rest = usable.filter((front) => front !== cached).sort(() => Math.random() - 0.5);
+  const queue = [cached, ...rest, DIRECT].filter((front, index, list) => front && list.indexOf(front) === index);
   const found: Hit[] = [];
-  let committed = false;
-  let waitSettle: number | undefined;
+  let committed = !!getActiveFront();
   const jobs: Array<ReturnType<typeof probe>> = [];
+  const startedAt = Date.now();
 
   const stopProbes = () => {
     for(const job of jobs) job.cancel();
@@ -259,62 +272,49 @@ async function probeFromHere() {
     }
 
     committed = true;
-    if(waitSettle) clearTimeout(waitSettle);
-    const rest = found.map((hit) => hit.front).filter((name) => name !== front);
-    const current = getActiveFront();
-    if(current && current !== front && isFrontUsable(current)) {
-      rememberFront(front);
-      for(const name of rest) rememberFront(name);
-    } else {
-      setFrontOrder([front, ...rest]);
-      setGatewayChoice({transport: 'websocket', dcId: 2});
-      finishGatewayProbe();
-      saveCache(front);
-    }
-    setTimeout(stopProbes, 300);
+    const spare = found.map((hit) => hit.front).filter((name) => name !== front);
+    setFrontOrder([front, ...spare]);
+    setGatewayChoice({transport: 'websocket', dcId: 2});
+    finishGatewayProbe();
+    if(front !== DIRECT) saveCache(front);
     log('front for this network', front);
-  };
-
-  const commitBest = () => {
-    if(committed || !found.length) return;
-    const ranked = found.slice().sort((a, b) => a.ms - b.ms);
-    const fast = ranked.filter((hit) => hit.ms < FAST_MS);
-    commit((fast[0] || ranked[0]).front);
   };
 
   const consider = (hit: Hit) => {
     found.push(hit);
     rememberFront(hit.front);
-    if(committed) return;
-    if(waitSettle) clearTimeout(waitSettle);
-    // Under 70ms: keep the quickest of the ones already in. Otherwise take
-    // the quickest answer without waiting out the slow tail.
-    waitSettle = setTimeout(commitBest, hit.ms < FAST_MS ? 200 : SETTLE_MS);
+    // The direct host is the fallback only. A working front is what answers
+    // where Telegram itself is blocked.
+    if(getActiveFront() || hit.front === DIRECT) return;
+    commit(hit.front);
   };
 
-  const run = (front: string) => {
-    const job = probe(front);
-    jobs.push(job);
-    return job.promise.then((hit) => {
+  let index = 0;
+  const runNext = async() => {
+    while(index < queue.length && Date.now() - startedAt < SEARCH_MS) {
+      if(getActiveFront() && found.length >= 4) return;
+      const front = queue[index++];
+      const job = probe(front);
+      jobs.push(job);
+      const hit = await job.promise;
       if(hit) consider(hit);
-    });
+    }
   };
 
-  const head = [cached, DIRECT].filter((front, index, list) => front && fronts.includes(front) && list.indexOf(front) === index);
-  const rest = fronts.filter((front) => !head.includes(front)).sort(() => Math.random() - 0.5);
-  const ordered = [...head, ...rest];
-  let release = () => {};
-  const deadline = new Promise<void>((resolve) => {
-    release = resolve;
-    setTimeout(resolve, SEARCH_MS);
-  });
-  await Promise.race([Promise.all(ordered.map(run)).then(() => release()), deadline]);
+  await Promise.race([
+    Promise.all(Array.from({length: CONCURRENCY}, runNext)),
+    new Promise<void>((resolve) => setTimeout(resolve, SEARCH_MS))
+  ]);
   stopProbes();
-  if(waitSettle) clearTimeout(waitSettle);
-  if(!committed) commitBest();
-  if(!committed) {
+
+  if(!getActiveFront()) {
+    const ranked = found.filter((hit) => hit.front !== DIRECT).sort((a, b) => a.ms - b.ms);
+    const best = ranked[0] || found.slice().sort((a, b) => a.ms - b.ms)[0];
+    if(best) commit(best.front);
+  }
+  if(!getActiveFront()) {
     finishGatewayProbe();
-    if(!getActiveFront()) log('no front returned resPQ from this network');
+    log('no front returned resPQ from this network');
   }
 
   probing = false;

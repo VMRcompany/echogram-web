@@ -66,11 +66,11 @@ export function finishGatewayProbe() {
   markReady();
 }
 
-/** Resolves when this browser has a working front, or just before the five-second search ends. */
+/** Resolves when a front is chosen. The direct host is not used before that. */
 export function whenGatewayReady() {
   return Promise.race([
     ready,
-    new Promise<void>((resolve) => setTimeout(resolve, 4500))
+    new Promise<void>((resolve) => setTimeout(resolve, 8000))
   ]);
 }
 
