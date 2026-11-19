@@ -29,6 +29,7 @@ let onFrontsExhausted = () => {};
 // While this is set, a socket must not open Telegram's own host. That host
 // answers nothing without a VPN, and a socket stuck on it never recovers.
 let holdDirect = false;
+let pinned = false;
 
 function sameRoute(a: EchogramProxyRoute | null, b: EchogramProxyRoute | null) {
   if(a === b) return true;
@@ -105,6 +106,24 @@ export function setFrontExhaustedHandler(handler: () => void) {
 export function rememberFront(front: string) {
   if(!front || !isFrontUsable(front) || rankedFronts.includes(front)) return;
   rankedFronts.push(front);
+}
+
+/**
+ * The first front that actually returned resPQ becomes the one the chat uses.
+ * A later result only joins the failover list, so a live socket is not replaced.
+ */
+export function preferFront(front: string) {
+  if(!front || front === 'web.telegram.org') return;
+  if(pinned) {
+    rememberFront(front);
+    return;
+  }
+
+  pinned = true;
+  if(front === activeFront) return;
+  const rest = rankedFronts.filter((name) => name !== front);
+  activeFront = null;
+  setFrontOrder([front, ...rest]);
 }
 
 /**

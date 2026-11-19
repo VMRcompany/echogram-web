@@ -1,5 +1,5 @@
 import {logger} from '@lib/logger';
-import {finishGatewayProbe, getActiveFront, holdDirectHost, isFrontUsable, rememberFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
+import {finishGatewayProbe, getActiveFront, holdDirectHost, isFrontUsable, preferFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
 
 /**
  * Each browser races Telegram's own web socket and the Cloudflare fronts from
@@ -51,6 +51,25 @@ const SLOW_FRONTS = [
   'nothingthere.co.uk',
   'noskomnadzor.co.uk',
   'pomogite.co.uk'
+];
+// Measured from this network: these answered resPQ, fastest first.
+// The chat opens on the first one immediately. It does not wait for a probe,
+// and it does not open web.telegram.org, which stays silent without a VPN.
+const OPEN_FIRST = [
+  'stopblocking.co.uk',
+  'sorokdva.co.uk',
+  'pyatdesyatodin.co.uk',
+  'kartoshka.co.uk',
+  'onedaychamp.co.uk',
+  'fixtelega.co.uk',
+  'sadnews.co.uk',
+  'nebally.co.uk',
+  'havegreatday.co.uk',
+  'cakeisalie.co.uk',
+  'notelega.co.uk',
+  'lovetrue.co.uk',
+  'pclead.co.uk',
+  'ebally.co.uk'
 ];
 const RES_PQ = 85337187;
 const REQ_PQ_MULTI = -1099002127;
@@ -260,7 +279,6 @@ async function probeFromHere() {
   // Opening it before that is what leaves the chat empty without a VPN.
   const queue = [cached, ...fresh, ...slow, DIRECT].filter((front, index, list) => front && list.indexOf(front) === index);
   const found: Hit[] = [];
-  let committed = !!getActiveFront();
   const jobs: Array<ReturnType<typeof probe>> = [];
   const startedAt = Date.now();
 
@@ -268,26 +286,16 @@ async function probeFromHere() {
     for(const job of jobs) job.cancel();
   };
 
-  const commit = (front: string) => {
-    if(committed) {
-      if(front !== DIRECT) rememberFront(front);
-      return;
-    }
-
-    committed = true;
-    const spare = found.map((hit) => hit.front).filter((name) => name !== front && name !== DIRECT);
-    setFrontOrder([front, ...spare]);
-    setGatewayChoice({transport: 'websocket', dcId: 2});
-    finishGatewayProbe();
-    if(front !== DIRECT) saveCache(front);
-    log('front for this network', front);
-  };
-
+  let saved = false;
   const consider = (hit: Hit) => {
     found.push(hit);
-    if(hit.front !== DIRECT) rememberFront(hit.front);
-    if(getActiveFront() || hit.front === DIRECT) return;
-    commit(hit.front);
+    if(hit.front === DIRECT) return;
+    if(!saved) {
+      saved = true;
+      saveCache(hit.front);
+      log('front for this network', hit.front);
+    }
+    preferFront(hit.front);
   };
 
   let index = 0;
@@ -311,10 +319,9 @@ async function probeFromHere() {
   if(!getActiveFront()) {
     const ranked = found.filter((hit) => hit.front !== DIRECT).sort((a, b) => a.ms - b.ms);
     const best = ranked[0] || found.slice().sort((a, b) => a.ms - b.ms)[0];
-    if(best) commit(best.front);
+    if(best && best.front !== DIRECT) preferFront(best.front);
   }
   if(!getActiveFront()) {
-    finishGatewayProbe();
     log('no front returned resPQ from this network');
   }
 
@@ -339,6 +346,9 @@ export function startProxyAutoSelector() {
   started = true;
   // Before any chat socket exists. Otherwise it opens the blocked direct host.
   holdDirectHost(true);
+  setFrontOrder(OPEN_FIRST);
+  setGatewayChoice({transport: 'websocket', dcId: 2});
+  finishGatewayProbe();
   setFrontExhaustedHandler(() => {
     setTimeout(() => wakeProxySearch(), 400);
   });
