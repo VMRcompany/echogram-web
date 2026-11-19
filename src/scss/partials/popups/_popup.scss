@@ -86,7 +86,10 @@
     --translateX: 0;
     position: relative;
     border-radius: var(--popup-border-radius);
-    background-color: var(--popup-background-color);
+    background-color: var(--glass-fill);
+    backdrop-filter: var(--blur-off, var(--glass-blur));
+    -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
+    box-shadow: var(--glass-shadow), var(--glass-highlight), inset 0 0 0 .5px var(--glass-stroke);
     transform: translate3d(var(--translateX), 3rem, 0);
     backface-visibility: hidden;
     transition: transform var(--popup-transition-time) var(--popup-transition-function);

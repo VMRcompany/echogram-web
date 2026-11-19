@@ -133,7 +133,14 @@
   --disabled-opacity: .3;
   --round-video-size: 280px;
   --menu-box-shadow: 0px 0px 10px var(--menu-box-shadow-color);
-  --menu-backdrop-filter: blur(28px) saturate(1.6);
+  // The iOS material: a readable veil, a saturated blur, a hairline and a
+  // light along the top edge. Bars, menus and sheets share it.
+  --glass-blur: blur(40px) saturate(1.8);
+  --glass-fill: rgba(var(--surface-color-rgb), .78);
+  --glass-stroke: rgba(255, 255, 255, .5);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, .7);
+  --glass-shadow: 0 8px 24px rgba(0, 0, 0, .08);
+  --menu-backdrop-filter: var(--glass-blur);
   --section-box-shadow: 0px 1px 4px 0px var(--section-box-shadow-color);
   --section-box-shadow-big: 0px 1px 8px 0px var(--section-box-shadow-big-color);
   --column-box-shadow: 0px 0px 4px 0px var(--column-box-shadow-color);
@@ -273,8 +280,8 @@
   --poll-circle-color: var(--border-color);
   --spoiler-background-color: #e3e5e8;
   --monospace-text-color: var(--danger-color);
-  --backdrop-opacity: .72;
-  --menu-background-color: rgba(var(--surface-color-rgb), var(--backdrop-opacity));
+  --backdrop-opacity: .78;
+  --menu-background-color: var(--glass-fill);
   --lottie-vector-fill: rgba(0, 0, 0, #{$hover-alpha});
   --limit-line-empty-background: #F1F3F5;
   --old-input-background-color: #F1F3F5;
@@ -352,7 +359,11 @@
   --poll-circle-color: #fff;
   --spoiler-background-color: #373e4e;
   --monospace-text-color: var(--primary-text-color);
-  --menu-background-color: rgba(var(--surface-color-rgb), .75);
+  --glass-fill: rgba(var(--surface-color-rgb), .68);
+  --glass-stroke: rgba(255, 255, 255, .14);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, .2);
+  --glass-shadow: 0 10px 28px rgba(0, 0, 0, .4);
+  --menu-background-color: var(--glass-fill);
   --lottie-vector-fill: var(--light-secondary-text-color);
   --limit-line-empty-background: var(--light-filled-secondary-text-color);
   --old-input-background-color: var(--background-color);
@@ -440,7 +451,12 @@ html.is-ios {
   -webkit-touch-callout: none;
 }
 
-html.no-backdrop {
+html.no-backdrop,
+html.no-backdrop .night {
+  --glass-fill: var(--surface-color);
+  --glass-stroke: transparent;
+  --glass-highlight: none;
+  --glass-blur: none;
   --menu-background-color: var(--surface-color);
   --menu-backdrop-filter: none;
   --blur-off: none;

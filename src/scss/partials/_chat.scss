@@ -766,14 +766,16 @@
 	width: 100%;
 	max-width: 100%;
 	justify-content: center;
-  background: var(--chat-input-background);
+  background: var(--glass-fill);
+  backdrop-filter: var(--blur-off, var(--glass-blur));
+  -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
 	border-radius: var(--chat-input-border-radius);
 	min-height: var(--chat-input-height);
 	max-height: 30rem;
 	flex: 0 0 auto;
 	position: relative;
 	z-index: 3;
-  box-shadow: $chat-input-box-shadow;
+  box-shadow: $chat-input-box-shadow, var(--glass-highlight), inset 0 0 0 .5px var(--glass-stroke);
 }
 
 
@@ -1674,7 +1676,9 @@ $bubbles-keyboard-fade: string.unquote("(var(--bubbles-scrollable-fade-bottom) -
 
 .chat-secondary-button {
   position: absolute;
-	background-color: var(--surface-color) !important;
+	background-color: var(--glass-fill) !important;
+  backdrop-filter: var(--blur-off, var(--glass-blur));
+  -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
 	border-radius: 50%;
 	color: var(--primary-text-color);
 	font-size: 1.5rem;
@@ -1682,7 +1686,7 @@ $bubbles-keyboard-fade: string.unquote("(var(--bubbles-scrollable-fade-bottom) -
 	align-items: center;
 	justify-content: center;
 
-  box-shadow: $chat-input-box-shadow !important;
+  box-shadow: $chat-input-box-shadow, var(--glass-highlight), inset 0 0 0 .5px var(--glass-stroke) !important;
 
 	@include animation-level(0) {
 		transition: none !important;

@@ -126,7 +126,7 @@ $btn-menu-z-index: 4;
 
   &,
   &-items {
-    box-shadow: var(--menu-box-shadow);
+    box-shadow: var(--menu-box-shadow), var(--glass-highlight), inset 0 0 0 .5px var(--glass-stroke);
     padding: var(--btn-menu-padding) 0;
     border-radius: $border-radius-medium;
   }
@@ -173,11 +173,12 @@ $btn-menu-z-index: 4;
 
   &-old,
   .is-mobile & {
-    --menu-background-color: var(--surface-color);
-    --menu-backdrop-filter: none;
+    --menu-background-color: var(--glass-fill);
+    --menu-backdrop-filter: var(--blur-off, var(--glass-blur));
     padding: .5rem 0;
-    background-color: var(--surface-color);
-    backdrop-filter: none;
+    background-color: var(--glass-fill);
+    backdrop-filter: var(--blur-off, var(--glass-blur));
+    -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
     min-width: auto;
 
     .btn-menu-reactions-container {

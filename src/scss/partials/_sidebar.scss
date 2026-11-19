@@ -93,9 +93,10 @@
     }
 
     .scrollable-y-bordered:not(.scrolled-start) & {
-      background-color: rgba(var(--surface-color-rgb), .72);
-      backdrop-filter: var(--blur-off, blur(18px) saturate(1.4));
-      -webkit-backdrop-filter: var(--blur-off, blur(18px) saturate(1.4));
+      background-color: var(--glass-fill);
+      backdrop-filter: var(--blur-off, var(--glass-blur));
+      -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
+      box-shadow: var(--glass-highlight);
 
       &:after {
         opacity: 1;
