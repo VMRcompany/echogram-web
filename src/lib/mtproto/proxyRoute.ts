@@ -158,8 +158,27 @@ export function applyHttpsUrl(dcId: number, media: boolean, test: boolean) {
 /** The front that just failed to answer stops being used. The next one is immediate. */
 export function noteFrontFailed() {
   if(!activeFront) return;
-  deadUntil.set(activeFront, Date.now() + 60_000);
-  setFrontOrder(rankedFronts.filter((front) => front !== activeFront));
+  const failed = activeFront;
+  deadUntil.set(failed, Date.now() + 20_000);
+  let rest = rankedFronts.filter((front) => front !== failed && isFrontUsable(front));
+  // An empty list used to leave the socket with nowhere to go, and the screen
+  // stayed on "Waiting for network...". Try the others again instead.
+  if(!rest.length) {
+    pinned = false;
+    for(const front of rankedFronts) deadUntil.delete(front);
+    deadUntil.set(failed, Date.now() + 20_000);
+    rest = rankedFronts.filter((front) => front !== failed);
+  }
+  if(!rest.length) {
+    pinned = false;
+    activeFront = null;
+    rankedFronts = [];
+    for(const listener of listeners) listener();
+    onFrontsExhausted();
+    return;
+  }
+  activeFront = null;
+  setFrontOrder(rest);
 }
 
 /**

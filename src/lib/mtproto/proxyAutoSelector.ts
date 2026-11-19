@@ -1,5 +1,5 @@
 import {logger} from '@lib/logger';
-import {finishGatewayProbe, getActiveFront, holdDirectHost, isFrontUsable, preferFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
+import {finishGatewayProbe, getActiveFront, holdDirectHost, isFrontUsable, rememberFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
 
 /**
  * Each browser races Telegram's own web socket and the Cloudflare fronts from
@@ -290,12 +290,14 @@ async function probeFromHere() {
   const consider = (hit: Hit) => {
     found.push(hit);
     if(hit.front === DIRECT) return;
+    // Remember the spare. Switching here was aborting the socket that had
+    // already started, so the chat never left "Waiting for network...".
+    rememberFront(hit.front);
     if(!saved) {
       saved = true;
       saveCache(hit.front);
       log('front for this network', hit.front);
     }
-    preferFront(hit.front);
   };
 
   let index = 0;
@@ -319,7 +321,7 @@ async function probeFromHere() {
   if(!getActiveFront()) {
     const ranked = found.filter((hit) => hit.front !== DIRECT).sort((a, b) => a.ms - b.ms);
     const best = ranked[0] || found.slice().sort((a, b) => a.ms - b.ms)[0];
-    if(best && best.front !== DIRECT) preferFront(best.front);
+    if(best && best.front !== DIRECT) rememberFront(best.front);
   }
   if(!getActiveFront()) {
     log('no front returned resPQ from this network');
@@ -350,7 +352,8 @@ export function startProxyAutoSelector() {
   setGatewayChoice({transport: 'websocket', dcId: 2});
   finishGatewayProbe();
   setFrontExhaustedHandler(() => {
-    setTimeout(() => wakeProxySearch(), 400);
+    setFrontOrder(OPEN_FIRST);
   });
-  probeFromHere();
+  // The chat socket goes first. Probes opened at the same time were stalling it.
+  setTimeout(() => probeFromHere(), 8000);
 }

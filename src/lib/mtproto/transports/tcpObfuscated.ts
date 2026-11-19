@@ -44,8 +44,9 @@ export default class TcpObfuscated implements MTTransport {
   private stallTimer: number;
   private onClose: () => void = () => {};
   private readyInit: Promise<Uint8Array>;
-  private readonly stallMs = 5000;
+  private readonly stallMs = 4000;
   private readonly silenceMs = 25000;
+  private readonly unprovenSilenceMs = 6000;
 
   // private debugPayloads: MTPNetworker['debugRequests'] = [];
 
@@ -82,12 +83,21 @@ export default class TcpObfuscated implements MTTransport {
       transportController.setTransportOpened('websocket');
     }
 
+    // A front that opens and then stays silent must be replaced. Waiting for
+    // the cipher first used to clear the timer and leave the screen on
+    // "Waiting for network..." for good.
+    if(!this.logSuffix) this.armSilence(generation, this.url);
     const initPayload = await (this.readyInit || this.obfuscation.init(this.codec));
     if(generation !== this.connectionGeneration || !this.connected) {
       return;
     }
 
-    this.connection.send(initPayload);
+    try {
+      this.connection.send(initPayload);
+    } catch{
+      this.failOrRetry(generation, this.url);
+      return;
+    }
     this.handshakeSent = true;
 
     if(this.networker) {
@@ -165,12 +175,13 @@ export default class TcpObfuscated implements MTTransport {
 
   private armSilence(generation: number, openedUrl: string) {
     this.clearStall();
+    const wait = this.proven && !this.logSuffix ? this.silenceMs : this.unprovenSilenceMs;
     this.stallTimer = ctx.setTimeout(() => {
       this.stallTimer = undefined;
       if(generation !== this.connectionGeneration || this.sawMessage) return;
       if(!this.autoReconnect) return;
       this.failOrRetry(generation, openedUrl);
-    }, this.silenceMs);
+    }, wait);
   }
 
   /** A front that already worked is opened again at once. Only a second miss gives it up. */
@@ -360,6 +371,11 @@ export default class TcpObfuscated implements MTTransport {
     // a VPN and the chat never leaves it.
     if(!next) {
       this.log('waiting for a front');
+      this.clearStall();
+      this.stallTimer = ctx.setTimeout(() => {
+        this.stallTimer = undefined;
+        if(!this.connection) this.connect();
+      }, 1000);
       return;
     }
     this.url = next;
