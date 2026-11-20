@@ -138,6 +138,9 @@
     "ws": "^8.21.1"
   },
   "packageManager": "pnpm@11.16.0",
+  "pnpm": {
+    "ignoredBuiltDependencies": ["core-js"]
+  },
   "dependencies": {
     "@ton/wallet-engine": "https://github.com/i582/wallet-engine/releases/download/v0.0.7/ton-wallet-engine-0.0.7.tgz"
   }
