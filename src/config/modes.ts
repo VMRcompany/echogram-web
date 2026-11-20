@@ -29,7 +29,8 @@ export const KEPT_FLAGS = [
   'noPfs',
   'http',
   'noMultipleTransports',
-  'forceHideNonContactLinks'
+  'forceHideNonContactLinks',
+  'lite'
 ] as const;
 
 export type KeptFlag = typeof KEPT_FLAGS[number];
@@ -37,7 +38,7 @@ export type KeptFlag = typeof KEPT_FLAGS[number];
 // * switched while the app runs, and read by the page alone: kept out of the workers' URLs, kept or from the page's
 // * own, where switching one would start a second SharedWorker for the same accounts. 'spoiler2' is read by nothing
 // * now (the dust is everyone's spoiler), but a tab whose address still carries it must share the others' worker
-const PAGE_ONLY_FLAGS: ReadonlySet<string> = new Set(['rtl', 'memoryWatch', 'spoiler2']);
+const PAGE_ONLY_FLAGS: ReadonlySet<string> = new Set(['rtl', 'memoryWatch', 'spoiler2', 'lite']);
 
 export function isPageOnlyFlag(flag: string) {
   return PAGE_ONLY_FLAGS.has(flag);

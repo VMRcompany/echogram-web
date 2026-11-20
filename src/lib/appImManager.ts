@@ -2955,7 +2955,8 @@ export class AppImManager extends EventListenerBase<{
 
   // * every level up to the current one, so `@include animation-level(1)` holds at full too
   private setAnimationLevel = () => {
-    const animationLevel = liteMode.getAnimationLevel();
+    const lightInterface = document.documentElement.classList.contains('is-lite');
+    const animationLevel = lightInterface ? 0 : liteMode.getAnimationLevel();
     document.body.classList.toggle('animation-level-0', animationLevel === 0);
     document.body.classList.toggle('animation-level-1', animationLevel >= 1);
     document.body.classList.toggle('animation-level-2', animationLevel === 2);
@@ -2987,7 +2988,7 @@ export class AppImManager extends EventListenerBase<{
     this.setAnimationLevel();
 
     // Firefox keeps no-backdrop unconditionally — it renders backdrop-filter poorly.
-    document.documentElement.classList.toggle('no-backdrop', !liteMode.isAvailable('blur') || IS_FIREFOX);
+    document.documentElement.classList.toggle('no-backdrop', document.documentElement.classList.contains('is-lite') || !liteMode.isAvailable('blur') || IS_FIREFOX);
 
     this.chatsSelectTabDebounced = debounce(() => {
       const topbar = this.chat.topbar;

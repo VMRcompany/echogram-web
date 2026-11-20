@@ -17,6 +17,33 @@
         }
       })();
     </script>
+    <script>
+      (function() {
+        var ua = navigator.userAgent || '';
+        var lite = false;
+        var ios = ua.match(/(?:iPhone|iPad|iPod).*OS (\d+)[_.]/);
+        if(ios) {
+          var major = parseInt(ios[1], 10);
+          lite = major >= 7 && major <= 10;
+        } else {
+          var android = ua.match(/Android (\d+)(?:\.(\d+))?/);
+          if(android) {
+            var aMajor = parseInt(android[1], 10);
+            var aMinor = parseInt(android[2] || '0', 10);
+            lite = (aMajor === 4 && aMinor >= 4) || aMajor === 5 || aMajor === 6;
+          }
+        }
+        if(!lite) {
+          try {
+            var raw = localStorage.getItem('experimental_flags');
+            lite = !!(raw && raw.indexOf('"lite"') !== -1);
+          } catch(e) {}
+        }
+        if(lite && document.documentElement.className.indexOf('is-lite') === -1) {
+          document.documentElement.className += (document.documentElement.className ? ' ' : '') + 'is-lite';
+        }
+      })();
+    </script>
     <!-- What the page itself may load besides its own files: no remote images, media, fonts or style sheets, no form
     submissions, no plugins. Interactive widgets draw their DOM into this page (a shadow root per widget, their code
     never runs here); this keeps a markup that got past their validator from reaching the network. Frames stay open

@@ -194,11 +194,6 @@ export function noteFrontFailed() {
     deadUntil.set(failed, Date.now() + 20_000);
     rest = rankedFronts.filter((front) => front !== failed);
   }
-  // Only after a probe has seen the official host answer. Promoting it before
-  // that parks a network without a VPN on a host that never opens.
-  if(failed !== 'web.telegram.org' && rankedFronts.includes('web.telegram.org') && isFrontUsable('web.telegram.org')) {
-    rest = ['web.telegram.org', ...rest.filter((front) => front !== 'web.telegram.org')];
-  }
   if(!rest.length) {
     pinned = false;
     activeFront = null;

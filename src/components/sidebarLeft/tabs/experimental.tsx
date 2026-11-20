@@ -17,6 +17,7 @@ import DEBUG from '@config/debug';
 import Modes, {getKeptFlags, getURLWithoutFlags, isFlagInURL, isFlagOn, KEPT_FLAGS, KeptFlag, setKeptFlag, setKeptFlags} from '@config/modes';
 import IS_SHARED_WORKER_SUPPORTED from '@environment/sharedWorkerSupport';
 import {copyTextToClipboard} from '@helpers/clipboard';
+import {isLegacyOperatingSystem} from '@helpers/legacyDevice';
 import liteMode from '@helpers/liteMode';
 import noop from '@helpers/noop';
 import useIsConfirmationNeededOnClose from '@hooks/useIsConfirmationNeededOnClose';
@@ -300,15 +301,16 @@ const ExperimentalTab = () => {
     title: LangPackKey,
     subtitle: LangPackKey,
     // * the switch shows what the flag turns off: on while the flag is not
-    inverted?: boolean
+    inverted?: boolean,
+    forcedOn?: boolean
   }) => {
-    const forced = !!FORCED[props.flag];
+    const forced = !!FORCED[props.flag] || !!props.forcedOn;
     return (
       <Row disabled={forced}>
         <Row.CheckboxFieldToggle>
           <CheckboxFieldTsx
             toggle
-            checked={isSet(props.flag) !== !!props.inverted}
+            checked={!!props.forcedOn || isSet(props.flag) !== !!props.inverted}
             disabled={forced}
             onChange={(checked) => setFlag(props.flag, checked !== !!props.inverted)}
           />
@@ -380,6 +382,12 @@ const ExperimentalTab = () => {
       </Section>
 
       <Section name="Experimental.Interface">
+        <RestartToggle
+          flag="lite"
+          title="Experimental.Lite"
+          subtitle={isLegacyOperatingSystem() ? 'Experimental.Lite.Device' : 'Experimental.Lite.Subtitle'}
+          forcedOn={isLegacyOperatingSystem()}
+        />
         <LiveToggle
           title="Experimental.ShowPeerIds"
           subtitle="Experimental.ShowPeerIds.Subtitle"

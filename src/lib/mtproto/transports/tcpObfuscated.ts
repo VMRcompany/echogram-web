@@ -44,9 +44,9 @@ export default class TcpObfuscated implements MTTransport {
   private stallTimer: number;
   private onClose: () => void = () => {};
   private readyInit: Promise<Uint8Array>;
-  private readonly stallMs = 4000;
+  private readonly stallMs = 12000;
   private readonly silenceMs = 25000;
-  private readonly unprovenSilenceMs = 6000;
+  private readonly unprovenSilenceMs = 20000;
 
   // private debugPayloads: MTPNetworker['debugRequests'] = [];
 
@@ -83,9 +83,9 @@ export default class TcpObfuscated implements MTTransport {
       transportController.setTransportOpened('websocket');
     }
 
-    // A front that opens and then stays silent must be replaced. Waiting for
-    // the cipher first used to clear the timer and leave the screen on
-    // "Waiting for network..." for good.
+    // Twenty seconds covers the cipher and the first reply. Six seconds was
+    // shorter than the cipher, so every open died and the screen stayed on
+    // "Reconnecting...". The timer is started again after the init frame.
     if(!this.logSuffix) this.armSilence(generation, this.url);
     const initPayload = await (this.readyInit || this.obfuscation.init(this.codec));
     if(generation !== this.connectionGeneration || !this.connected) {
@@ -120,9 +120,6 @@ export default class TcpObfuscated implements MTTransport {
       markRouteProved();
     }
     this.clearStall();
-    // A front that answered once and then went quiet used to stay on screen
-    // with a stale chat. Pings reset this. Silence does not.
-    if(!this.logSuffix) this.armQuiet(this.connectionGeneration, this.url);
 
     const time = Date.now();
     let data = await this.obfuscation.decode(new Uint8Array(buffer));
@@ -186,16 +183,6 @@ export default class TcpObfuscated implements MTTransport {
       if(!this.autoReconnect) return;
       this.failOrRetry(generation, openedUrl);
     }, wait);
-  }
-
-  /** No reply at all, including after a chat that had been answering. */
-  private armQuiet(generation: number, openedUrl: string) {
-    this.clearStall();
-    this.stallTimer = ctx.setTimeout(() => {
-      this.stallTimer = undefined;
-      if(generation !== this.connectionGeneration || !this.autoReconnect) return;
-      this.failOrRetry(generation, openedUrl);
-    }, 35000);
   }
 
   /** A front that already worked is opened again at once. Only a second miss gives it up. */

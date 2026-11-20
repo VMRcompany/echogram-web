@@ -34,6 +34,7 @@ import singleInstance, {InstanceDeactivateReason} from '@lib/singleInstance';
 import {parseUriParamsLine} from '@helpers/string/parseUriParams';
 import getWebAuthImport from '@lib/accounts/getWebAuthImport';
 import Modes from '@config/modes';
+import {isLiteInterface} from '@helpers/legacyDevice';
 import {AuthState} from '@types';
 import DEBUG, {IS_BETA, IS_POPUP_SANDBOX, IS_WIDGET_SANDBOX} from '@config/debug';
 import IS_INSTALL_PROMPT_SUPPORTED from '@environment/installPrompt';
@@ -282,6 +283,10 @@ function setRootClasses() {
 
   if(IS_FIREFOX) {
     add.push('is-firefox', 'no-backdrop');
+  }
+
+  if(isLiteInterface()) {
+    add.push('is-lite', 'no-backdrop');
   }
 
   if(IS_MOBILE) {

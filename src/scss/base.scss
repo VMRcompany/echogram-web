@@ -462,6 +462,27 @@ html.no-backdrop .night {
   --blur-off: none;
 }
 
+// The light interface keeps every control where it is and drops the paint
+// old GPUs cannot keep up with. It is on for iOS 7–10 and Android 4.4–6,
+// and on any newer device that turned it on in Experimental.
+html.is-lite,
+html.is-lite.night {
+  --glass-fill: var(--surface-color);
+  --glass-stroke: transparent;
+  --glass-highlight: none;
+  --glass-sheen: none;
+  --glass-blur: none;
+  --glass-shadow: none;
+  --menu-background-color: var(--surface-color);
+  --menu-backdrop-filter: none;
+  --blur-off: none;
+}
+
+html.is-lite * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 // * an element that declares its own direction - a playback control, a phone number, an article -
 // * lays its insides out by it, so the variables the stylesheets mirror with follow it there
 [dir="ltr"] {
