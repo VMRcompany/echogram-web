@@ -118,7 +118,6 @@ $message-out-gradient-phases: 0, 1, 2, 3, 4, 5, 6, 7;
   overflow-anchor: none;
   // * the bubbles' colour under it, as a bubble paints it under its own piece
   background-color: var(--message-out-gradient-under, var(--message-out-background-color));
-  opacity: .78;
   @include message-out-gradient;
 
   &.is-empty {
@@ -574,17 +573,14 @@ $message-out-gradient-phases: 0, 1, 2, 3, 4, 5, 6, 7;
     border-start-end-radius: var(--border-start-end-radius);
     border-end-start-radius: var(--border-end-start-radius);
     border-end-end-radius: var(--border-end-end-radius);
-    box-shadow: var(--glass-highlight), inset 0 0 0 .5px var(--glass-stroke), 0 1px 2px 0 rgba(16, 35, 47, .15);
+    box-shadow: 0 1px 2px 0 rgba(16, 35, 47, .15);
     position: relative;
     // display: flex;
     // flex-direction: column-reverse;
     // align-items: flex-start;
     z-index: 2;
     user-select: none;
-    background-color: color-mix(in srgb, var(--message-background-color) 62%, transparent);
-    background-image: var(--glass-sheen);
-    backdrop-filter: var(--blur-off, var(--glass-blur));
-    -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
+    background-color: var(--message-background-color);
 
     body.animation-level-0 & {
       transition: none;
@@ -2354,7 +2350,7 @@ $message-out-gradient-phases: 0, 1, 2, 3, 4, 5, 6, 7;
         height: 20px;
         z-index: -2;
         display: block;
-        background-color: color-mix(in srgb, var(--message-background-color) 62%, transparent);
+        background-color: var(--message-background-color);
         // * the tail's shape (11×20), cut out of an element so that it can take the gradient of the outgoing bubbles
         clip-path: path("M3 19h6V2c-.193 2.84-.876 5.767-2.05 8.782-.904 2.325-2.446 4.485-4.625 6.48A1 1 0 0 0 3 19z");
         transform: translateY(1px) scaleX(var(--reflect));
@@ -3659,11 +3655,8 @@ $message-out-gradient-phases: 0, 1, 2, 3, 4, 5, 6, 7;
     }
 
     color: #fff;
-    background-color: color-mix(in srgb, var(--message-highlighting-color) 72%, transparent);
-    background-image: var(--glass-sheen);
-    backdrop-filter: var(--blur-off, var(--glass-blur));
-    -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
-    box-shadow: var(--glass-highlight), inset 0 0 0 .5px var(--glass-stroke);
+    //background-color: rgba(0, 0, 0, .24);
+    background-color: var(--message-highlighting-color);
     font-size: var(--messages-service-text-size);
     padding: .28125rem .625rem;
     // padding: .1875rem .5rem;

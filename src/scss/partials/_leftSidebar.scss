@@ -396,11 +396,7 @@
 
   .item-main {
     --offset-top: 0;
-    background-color: var(--glass-fill);
-    background-image: var(--glass-sheen);
-    backdrop-filter: var(--blur-off, var(--glass-blur));
-    -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
-    box-shadow: var(--glass-highlight), inset 0 0 0 .5px var(--glass-stroke);
+    background-color: var(--surface-color);
 
     .input-search {
       .selector-user {
@@ -469,7 +465,7 @@
   #chatlist-container {
     max-height: 100%;
     position: relative;
-    background-color: transparent;
+    background-color: var(--surface-color);
   }
 
   #folders-container {
@@ -737,7 +733,7 @@
 #search-container {
   display: flex;
   top: var(--offset-top) !important;
-  background-color: transparent;
+  background-color: var(--background-color);
   flex-direction: column;
   width: 100%;
   max-height: 100%;
@@ -1553,8 +1549,5 @@
 
 #contacts-container,
 #chats-archived-container {
-  background-color: var(--glass-fill);
-  background-image: var(--glass-sheen);
-  backdrop-filter: var(--blur-off, var(--glass-blur));
-  -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
+  background-color: var(--surface-color);
 }

@@ -3,11 +3,6 @@
 #column-right {
   position: relative;
   overflow: unset;
-  background-color: var(--glass-fill);
-  background-image: var(--glass-sheen);
-  backdrop-filter: var(--blur-off, var(--glass-blur));
-  -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
-  box-shadow: var(--column-box-shadow), var(--glass-highlight), inset 0 0 0 .5px var(--glass-stroke);
 
   @include respond-to(floating-left-sidebar) {
     box-shadow: 0 0.25rem 0.5rem 0.1rem rgba(0, 0, 0, .2);

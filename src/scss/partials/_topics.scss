@@ -11,10 +11,7 @@
   &-container {
     --offset: 0;
     --width: 100%;
-    background-color: var(--glass-fill) !important;
-    background-image: var(--glass-sheen);
-    backdrop-filter: var(--blur-off, var(--glass-blur));
-    -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
+    background-color: var(--surface-color) !important;
     width: var(--width) !important;
     // max-width: unquote("min(100%, 20rem)") !important;
     // display: flex !important;

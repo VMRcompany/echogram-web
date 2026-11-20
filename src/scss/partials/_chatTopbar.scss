@@ -64,7 +64,6 @@ body.is-pinned-audio-shown, body.is-calling.forwards {
   inset-inline: 0;
   transform: translate3d(0, calc(var(--topbar-floating-call-height) + var(--topbar-floating-audio-height)), 0);
   background-color: var(--glass-fill) !important;
-  background-image: var(--glass-sheen);
   backdrop-filter: var(--blur-off, var(--glass-blur));
   -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
   border-radius: $border-radius-big;

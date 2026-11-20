@@ -261,10 +261,7 @@
   justify-content: space-between;
   align-items: center;
   flex: 0 0 auto;
-  background-color: var(--glass-fill) !important;
-  background-image: var(--glass-sheen);
-  backdrop-filter: var(--blur-off, var(--glass-blur));
-  -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
+  background-color: var(--surface-color) !important;
   padding: .25rem;
 
   // &.is-first {
@@ -943,9 +940,7 @@
   cursor: pointer !important;
   padding: 0 !important;
   font-size: var(--font-size-12);
-  background-color: var(--glass-fill) !important;
-  backdrop-filter: var(--blur-off, var(--glass-blur));
-  -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
+  background-color: var(--surface-color) !important;
   border-radius: 12px;
   overflow: hidden;
 
