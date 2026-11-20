@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{C as e,M as t,g as n}from"./solid-D3KXnO0-.js";import{t as r}from"./requestRAF-CDk38O4a.js";function i(i,a=`y`){let[o,s]=e(0),c=!1,l=e=>{c||(c=!0,r(()=>{c=!1,s(a===`y`?e.scrollTop:Math.abs(e.scrollLeft))}))};return n(()=>{let e=i();if(!e){s(0);return}l(e);let n=()=>l(e);e.addEventListener(`scroll`,n,{passive:!0}),t(()=>{e.removeEventListener(`scroll`,n)})}),o}export{i as t};
+//# sourceMappingURL=useScrollPosition-BK4CaHLk.js.map

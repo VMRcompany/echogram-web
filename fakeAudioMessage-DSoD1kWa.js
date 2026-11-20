@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{n as e}from"./rootScope-KwTHmgwu.js";import{n as t,t as n}from"./asyncToGenerator-MiYVMc9E.js";import{t as r}from"./objectSpread2-DBfu3elQ.js";t();function i(e){return a.apply(this,arguments)}function a(){return a=n(function*({doc:t,peerId:n,mid:i,savedMusic:a}){return{_:`message`,id:i,mid:i,peer_id:yield e.managers.appPeersManager.getOutputPeer(n),peerId:n,fromId:n,date:t.date,message:``,pFlags:r({local:!0},a?{fakeForSavedMusic:!0}:{}),media:{_:`messageMediaDocument`,document:t,pFlags:{}}}}),a.apply(this,arguments)}export{i as t};
+//# sourceMappingURL=fakeAudioMessage-DSoD1kWa.js.map

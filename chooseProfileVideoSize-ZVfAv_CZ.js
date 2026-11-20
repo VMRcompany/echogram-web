@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{r as e}from"./rolldown-runtime-zooHFf7h.js";var t=e({default:()=>n});function n(e,t=`preview`){var n;let r=(n=e.video_sizes)==null?void 0:n.filter(e=>e._===`videoSize`);if(r!=null&&r.length)return t===`preview`?r.find(e=>e.type===`p`)||r.reduce((e,t)=>t.size<e.size?t:e,r[0]):r.find(e=>e.type===`u`)||r.reduce((e,t)=>t.size>e.size?t:e,r[0])}export{t as n,n as t};
+//# sourceMappingURL=chooseProfileVideoSize-ZVfAv_CZ.js.map

@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{t as e}from"./objectSpread2-DBfu3elQ.js";function t(e){return e!=null&&e.pFlags.manage_linked_peers?`admins`:`all`}function n(t,n){var r;let i=e({},n==null?void 0:n.pFlags);return t===`admins`?i.manage_linked_peers=!0:delete i.manage_linked_peers,e(e({},n),{},{_:`chatBannedRights`,pFlags:i,until_date:(r=n==null?void 0:n.until_date)==null?2147483647:r})}export{n,t};
+//# sourceMappingURL=communityAddMode-CSwfCoqZ.js.map

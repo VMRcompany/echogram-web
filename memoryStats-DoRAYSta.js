@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{t as e}from"./objectSpread2-DBfu3elQ.js";function t(e,t,n){let r=performance.memory;return{thread:e,jsHeap:r==null?void 0:r.usedJSHeapSize,jsHeapTotal:r==null?void 0:r.totalJSHeapSize,details:t,events:n}}function n(e){return((e==null?void 0:e.width)||0)*((e==null?void 0:e.height)||0)*4}function r(e){return(e/1048576).toFixed(1)+` MB`}function i(t,n,r=3e3){let i;return Promise.race([t.then(t=>e(e({},t),{},{thread:n}),()=>({thread:n,details:{error:1}})),new Promise(e=>{i=setTimeout(()=>e({thread:n+` (no answer)`}),r)})]).finally(()=>clearTimeout(i))}export{i,r as n,t as r,n as t};
+//# sourceMappingURL=memoryStats-DoRAYSta.js.map

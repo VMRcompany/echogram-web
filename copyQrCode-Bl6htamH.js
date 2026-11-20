@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{n as e,t}from"./asyncToGenerator-MiYVMc9E.js";import{i as n,r}from"./clipboard-DO4XNv69.js";e();function i(e){return a.apply(this,arguments)}function a(){return a=t(function*({blob:e,url:t}){if(e)try{return yield n({"image/png":e}),`image`}catch(e){console.error(`QR code image copy failed`,e)}try{return yield r(t),`link`}catch(e){return console.error(`QR code link copy failed`,e),`failed`}}),a.apply(this,arguments)}export{i as t};
+//# sourceMappingURL=copyQrCode-Bl6htamH.js.map

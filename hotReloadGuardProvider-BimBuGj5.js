@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{p as e}from"./solid-BU1FCZ06.js";import{n as t}from"./hotReloadGuard-DMWKqS14.js";var n,r,i=(n=(r=void 0)==null||(r=r.data)==null?void 0:r.value)==null?{}:n,a=!!i.HotReloadGuard;function o(e){var t;Object.assign(i,e,{HotReloadGuard:u}),a=!0,(t=void 0)!=null&&t.data&&((void 0).data.value=i)}var s;function c(e){s=e}async function l(){await(s==null?void 0:s())}function u(n){if(!a)throw Error(`SolidJSHotReloadGuardProvider: nothing registered, import @lib/solidjs/hotReloadGuardValue at startup`);return e(t.Provider,{value:i,get children(){return n.children}})}export{c as a,o as i,i as n,l as r,u as t};
-//# sourceMappingURL=hotReloadGuardProvider-BimBuGj5.js.map
