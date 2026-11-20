@@ -17,6 +17,33 @@
         }
       })();
     </script>
+    <script>
+      (function() {
+        var ua = navigator.userAgent || '';
+        var lite = false;
+        var ios = ua.match(/(?:iPhone|iPad|iPod).*OS (\d+)[_.]/);
+        if(ios) {
+          var major = parseInt(ios[1], 10);
+          lite = major >= 7 && major <= 10;
+        } else {
+          var android = ua.match(/Android (\d+)(?:\.(\d+))?/);
+          if(android) {
+            var aMajor = parseInt(android[1], 10);
+            var aMinor = parseInt(android[2] || '0', 10);
+            lite = (aMajor === 4 && aMinor >= 4) || aMajor === 5 || aMajor === 6;
+          }
+        }
+        if(!lite) {
+          try {
+            var raw = localStorage.getItem('experimental_flags');
+            lite = !!(raw && raw.indexOf('"lite"') !== -1);
+          } catch(e) {}
+        }
+        if(lite && document.documentElement.className.indexOf('is-lite') === -1) {
+          document.documentElement.className += (document.documentElement.className ? ' ' : '') + 'is-lite';
+        }
+      })();
+    </script>
     <!-- What the page itself may load besides its own files: no remote images, media, fonts or style sheets, no form
     submissions, no plugins. Interactive widgets draw their DOM into this page (a shadow root per widget, their code
     never runs here); this keeps a markup that got past their validator from reaching the network. Frames stay open
@@ -57,148 +84,148 @@
     <link rel="canonical" href="https://web.echogram.pw/">
 
     <link rel="manifest" id="manifest">
-    <script type="module" crossorigin src="./index-Ltt7Pf3z.js"></script>
+    <script type="module" crossorigin src="./index-CKXfPH9j.js"></script>
     <link rel="modulepreload" crossorigin href="./rolldown-runtime-CdcDxHOQ.js">
-    <link rel="modulepreload" crossorigin href="./userAgent-eRG1iQnd.js">
+    <link rel="modulepreload" crossorigin href="./userAgent-DN7tmF4j.js">
     <link rel="modulepreload" crossorigin href="./bufferConcats-CgXOM_Qd.js">
-    <link rel="modulepreload" crossorigin href="./app-yYSm9JyU.js">
+    <link rel="modulepreload" crossorigin href="./app-HBAY0osk.js">
     <link rel="modulepreload" crossorigin href="./constants-DoixZWXX.js">
-    <link rel="modulepreload" crossorigin href="./logger-BjNSrJhf.js">
-    <link rel="modulepreload" crossorigin href="./eventListenerBase-DJm7dcwE.js">
-    <link rel="modulepreload" crossorigin href="./makeError-BYob3uTk.js">
-    <link rel="modulepreload" crossorigin href="./superMessagePort-WGdTcA_H.js">
+    <link rel="modulepreload" crossorigin href="./logger-DTuWOrob.js">
+    <link rel="modulepreload" crossorigin href="./eventListenerBase-IBqPN6dJ.js">
+    <link rel="modulepreload" crossorigin href="./makeError-lwm79sxB.js">
+    <link rel="modulepreload" crossorigin href="./superMessagePort-BuML5Dsk.js">
     <link rel="modulepreload" crossorigin href="./appWindow-D1rjBq29.js">
     <link rel="modulepreload" crossorigin href="./bindManagersToAccount-dOC7Llmo.js">
     <link rel="modulepreload" crossorigin href="./getCurrentAccount-B4BQRy12.js">
     <link rel="modulepreload" crossorigin href="./cancelEvent-Ce45uTdn.js">
-    <link rel="modulepreload" crossorigin href="./appNavigationController-C0JYTkGc.js">
+    <link rel="modulepreload" crossorigin href="./appNavigationController-ChyKkAfJ.js">
     <link rel="modulepreload" crossorigin href="./touchSupport-BE13YGjh.js">
     <link rel="modulepreload" crossorigin href="./findUpClassName-SQIKk7wK.js">
     <link rel="modulepreload" crossorigin href="./schedulers-CB45Co01.js">
     <link rel="modulepreload" crossorigin href="./noop-BSG7svdz.js">
     <link rel="modulepreload" crossorigin href="./pause-DLoMQAIJ.js">
-    <link rel="modulepreload" crossorigin href="./mainMessagePort-yT6av3Xn.js">
-    <link rel="modulepreload" crossorigin href="./rootScope-SPPLP1fQ.js">
+    <link rel="modulepreload" crossorigin href="./mainMessagePort-5jNerfNt.js">
+    <link rel="modulepreload" crossorigin href="./rootScope-DdRw0QAb.js">
     <link rel="modulepreload" crossorigin href="./solid-BU1FCZ06.js">
     <link rel="modulepreload" crossorigin href="./clamp-CCzIhYEL.js">
-    <link rel="modulepreload" crossorigin href="./state-CfO5m5tO.js">
+    <link rel="modulepreload" crossorigin href="./state-COzvS35C.js">
     <link rel="modulepreload" crossorigin href="./setDeepProperty-pjNzhLBJ.js">
     <link rel="modulepreload" crossorigin href="./store-DG6S9rYI.js">
-    <link rel="modulepreload" crossorigin href="./liteMode-BTppViNf.js">
+    <link rel="modulepreload" crossorigin href="./liteMode-CpBb6soC.js">
     <link rel="modulepreload" crossorigin href="./crc32-D58IDX4k.js">
     <link rel="modulepreload" crossorigin href="./browser-zUy4-ujU.js">
     <link rel="modulepreload" crossorigin href="./lerp-DntFbA3F.js">
     <link rel="modulepreload" crossorigin href="./accumulate-vWhszkxe.js">
-    <link rel="modulepreload" crossorigin href="./mediaSizes-DidhJRlo.js">
+    <link rel="modulepreload" crossorigin href="./mediaSizes-1hMXULbw.js">
     <link rel="modulepreload" crossorigin href="./cancellablePromise-y-RsHxed.js">
-    <link rel="modulepreload" crossorigin href="./useHeavyAnimationCheck-BWk2FZuc.js">
-    <link rel="modulepreload" crossorigin href="./themeController-Bybsbh1x.js">
+    <link rel="modulepreload" crossorigin href="./useHeavyAnimationCheck-BzNwKZmm.js">
+    <link rel="modulepreload" crossorigin href="./themeController-BUrLT9pU.js">
     <link rel="modulepreload" crossorigin href="./icon-BHUTk2fd.js">
     <link rel="modulepreload" crossorigin href="./emojiSupport-Dfba4njw.js">
-    <link rel="modulepreload" crossorigin href="./idb-D6ypUbpk.js">
-    <link rel="modulepreload" crossorigin href="./cryptoMessagePort-D42jEQzu.js">
-    <link rel="modulepreload" crossorigin href="./encryptedStorageLayer-C2aernu-.js">
+    <link rel="modulepreload" crossorigin href="./idb-BprERT65.js">
+    <link rel="modulepreload" crossorigin href="./cryptoMessagePort-BaqZH92C.js">
+    <link rel="modulepreload" crossorigin href="./encryptedStorageLayer-CmCh1jFv.js">
     <link rel="modulepreload" crossorigin href="./regex-CVarRK5W.js">
-    <link rel="modulepreload" crossorigin href="./echogramOfficial-C2hnXh3Z.js">
-    <link rel="modulepreload" crossorigin href="./tsNow-Aj_3ZH56.js">
-    <link rel="modulepreload" crossorigin href="./bytesToHex-DaJetjR8.js">
+    <link rel="modulepreload" crossorigin href="./echogramOfficial-D3WS43bS.js">
+    <link rel="modulepreload" crossorigin href="./tsNow-C4in3DYh.js">
+    <link rel="modulepreload" crossorigin href="./bytesToHex-BpA0SdbH.js">
     <link rel="modulepreload" crossorigin href="./randomize-KaZ59YBm.js">
     <link rel="modulepreload" crossorigin href="./constants-Ce7To9Xh.js">
-    <link rel="modulepreload" crossorigin href="./objectUrlUtils-vLcjY_PR.js">
+    <link rel="modulepreload" crossorigin href="./objectUrlUtils-J-JsQQt8.js">
     <link rel="modulepreload" crossorigin href="./preload-helper-BtYC27-C.js">
-    <link rel="modulepreload" crossorigin href="./langPack-BGwshPf8.js">
-    <link rel="modulepreload" crossorigin href="./idleController-BF6nHEgo.js">
-    <link rel="modulepreload" crossorigin href="./getServerMessageId-DW6fe4Q0.js">
-    <link rel="modulepreload" crossorigin href="./telegramMeWebManager-Dkdksuxi.js">
+    <link rel="modulepreload" crossorigin href="./langPack-U9VgP35u.js">
+    <link rel="modulepreload" crossorigin href="./idleController-C2tT3dny.js">
+    <link rel="modulepreload" crossorigin href="./getServerMessageId-pvsre1oH.js">
+    <link rel="modulepreload" crossorigin href="./telegramMeWebManager-CgJNbeNt.js">
     <link rel="modulepreload" crossorigin href="./restrictions-Dq_9Cd3p.js">
     <link rel="modulepreload" crossorigin href="./hotModule-B_6zV1cq.js">
-    <link rel="modulepreload" crossorigin href="./contentSettings-Dy5zNcsb.js">
+    <link rel="modulepreload" crossorigin href="./contentSettings-CxNkHy4e.js">
     <link rel="modulepreload" crossorigin href="./hotReloadGuard-DMWKqS14.js">
     <link rel="modulepreload" crossorigin href="./hotReloadGuardProvider-BimBuGj5.js">
     <link rel="modulepreload" crossorigin href="./emoji-DHQXQxDa.js">
-    <link rel="modulepreload" crossorigin href="./apiManagerProxy-BqEXziKJ.js">
+    <link rel="modulepreload" crossorigin href="./apiManagerProxy-Dff-aSUf.js">
     <link rel="modulepreload" crossorigin href="./memoryStats-DRFxavtk.js">
     <link rel="modulepreload" crossorigin href="./createDownloadAnchor-DBFqFY7-.js">
     <link rel="modulepreload" crossorigin href="./web-d3sJT-Ds.js">
-    <link rel="modulepreload" crossorigin href="./overlayCounter-B0j7pI7A.js">
+    <link rel="modulepreload" crossorigin href="./overlayCounter-CvaBzKDj.js">
     <link rel="modulepreload" crossorigin href="./common-2syo52nH.js">
     <link rel="modulepreload" crossorigin href="./resizeObserver-2X5Y-rp_.js">
-    <link rel="modulepreload" crossorigin href="./overlayScrollSupport-Cbv6YBBd.js">
-    <link rel="modulepreload" crossorigin href="./sequentialDom-CBqwaoyK.js">
+    <link rel="modulepreload" crossorigin href="./overlayScrollSupport-BITnlIty.js">
+    <link rel="modulepreload" crossorigin href="./sequentialDom-Cx5l7oCK.js">
     <link rel="modulepreload" crossorigin href="./findUpAsChild-fvhi4L2J.js">
-    <link rel="modulepreload" crossorigin href="./ripple-ClbHS2Qn.js">
-    <link rel="modulepreload" crossorigin href="./middleware-BjRhT6F1.js">
+    <link rel="modulepreload" crossorigin href="./ripple-JQ0bCEx9.js">
+    <link rel="modulepreload" crossorigin href="./middleware-B1vg_FP_.js">
     <link rel="modulepreload" crossorigin href="./safePlay-BMg492N1.js">
     <link rel="modulepreload" crossorigin href="./forEachReverse-By8oLWoz.js">
-    <link rel="modulepreload" crossorigin href="./animationIntersector-jSGn2_ub.js">
+    <link rel="modulepreload" crossorigin href="./animationIntersector-hTu9hgr_.js">
     <link rel="modulepreload" crossorigin href="./dispatchEvent-BUBCpItv.js">
-    <link rel="modulepreload" crossorigin href="./buttonKeyDown-DiElLkmh.js">
-    <link rel="modulepreload" crossorigin href="./clickEvent-CS_TyupI.js">
+    <link rel="modulepreload" crossorigin href="./buttonKeyDown-CQWA_AMt.js">
+    <link rel="modulepreload" crossorigin href="./clickEvent-BZzLSE7B.js">
     <link rel="modulepreload" crossorigin href="./throttle-CiJkvqeV.js">
     <link rel="modulepreload" crossorigin href="./getEmojiUnified-nKY8qCVr.js">
-    <link rel="modulepreload" crossorigin href="./parseEntities-DWipXhgG.js">
+    <link rel="modulepreload" crossorigin href="./parseEntities-DO4k2zlu.js">
     <link rel="modulepreload" crossorigin href="./weakRefSet-D3PuxdgC.js">
     <link rel="modulepreload" crossorigin href="./isDocumentRTL-D2Q0700l.js">
-    <link rel="modulepreload" crossorigin href="./iconButtonLabel-Bk2k2l5Z.js">
-    <link rel="modulepreload" crossorigin href="./button-DU9LjZBg.js">
+    <link rel="modulepreload" crossorigin href="./iconButtonLabel-DL-020Zd.js">
+    <link rel="modulepreload" crossorigin href="./button-B_iykXDL.js">
     <link rel="modulepreload" crossorigin href="./clearMediaElementSource-ClXua_74.js">
-    <link rel="modulepreload" crossorigin href="./blur-BEASQSIk.js">
-    <link rel="modulepreload" crossorigin href="./bytesFromHex-DW6tB7bv.js">
-    <link rel="modulepreload" crossorigin href="./singleTransition-xxu8tcVh.js">
+    <link rel="modulepreload" crossorigin href="./blur-CFD-l5Am.js">
+    <link rel="modulepreload" crossorigin href="./bytesFromHex-MK0jpGH-.js">
+    <link rel="modulepreload" crossorigin href="./singleTransition-DkTvPjZp.js">
     <link rel="modulepreload" crossorigin href="./withTimeout-DaOMtwjJ.js">
     <link rel="modulepreload" crossorigin href="./animation-BvyYeDtX.js">
-    <link rel="modulepreload" crossorigin href="./lottieMessagePort-BTrz1SMn.js">
+    <link rel="modulepreload" crossorigin href="./lottieMessagePort-BN9zn48p.js">
     <link rel="modulepreload" crossorigin href="./imageBitmapSupport-CNVQ3Fpp.js">
     <link rel="modulepreload" crossorigin href="./forgetFailedRequest-Cy4cA2Yn.js">
     <link rel="modulepreload" crossorigin href="./webAssemblyBaselineSupport-DxudPiQc.js">
-    <link rel="modulepreload" crossorigin href="./lottieLoader-BxVyOc5S.js">
+    <link rel="modulepreload" crossorigin href="./lottieLoader-BIrU6_CQ.js">
     <link rel="modulepreload" crossorigin href="./getStickerEffectThumb-DHEiA_42.js">
     <link rel="modulepreload" crossorigin href="./nMap-Cbl_DXEs.js">
     <link rel="modulepreload" crossorigin href="./easings-BWhDqqVj.js">
     <link rel="modulepreload" crossorigin href="./requestRAF-B8ZcKvCM.js">
     <link rel="modulepreload" crossorigin href="./animateValue-BhvUyiLz.js">
     <link rel="modulepreload" crossorigin href="./assumeType-BYaTufSQ.js">
-    <link rel="modulepreload" crossorigin href="./createVideo-OpuJ5_Q_.js">
-    <link rel="modulepreload" crossorigin href="./mimeTypeMap-DlDMdZaQ.js">
-    <link rel="modulepreload" crossorigin href="./appDownloadManager-CePyx_NK.js">
-    <link rel="modulepreload" crossorigin href="./choosePhotoSize-ClQ7BW3b.js">
-    <link rel="modulepreload" crossorigin href="./throttleWithRaf-DA_qa64b.js">
+    <link rel="modulepreload" crossorigin href="./createVideo-z7GDJj8u.js">
+    <link rel="modulepreload" crossorigin href="./mimeTypeMap-6wvBrY4u.js">
+    <link rel="modulepreload" crossorigin href="./appDownloadManager-BK7RCgcF.js">
+    <link rel="modulepreload" crossorigin href="./choosePhotoSize-BtYrMpML.js">
+    <link rel="modulepreload" crossorigin href="./throttleWithRaf-D7Sp-pvC.js">
     <link rel="modulepreload" crossorigin href="./stickerType-5EyD7iZd.js">
-    <link rel="modulepreload" crossorigin href="./sticker-DDbQ0Cd5.js">
+    <link rel="modulepreload" crossorigin href="./sticker-BhT0rTnX.js">
     <link rel="modulepreload" crossorigin href="./replaceContent-CdLa6W1X.js">
     <link rel="modulepreload" crossorigin href="./emojiImage-BeRaeib1.js">
-    <link rel="modulepreload" crossorigin href="./renderer-Z6TiwM-_.js">
+    <link rel="modulepreload" crossorigin href="./renderer-DnPsI2Xv.js">
     <link rel="modulepreload" crossorigin href="./classNames-HGN7N_ne.js">
     <link rel="modulepreload" crossorigin href="./iconTsx-iqQI7FyH.js">
     <link rel="modulepreload" crossorigin href="./fullScreen-ZY2PEhFS.js">
     <link rel="modulepreload" crossorigin href="./listenerSetter-C3cXVZDl.js">
     <link rel="modulepreload" crossorigin href="./tooltipController-CB1CCa63.js">
-    <link rel="modulepreload" crossorigin href="./rippleElement-BqrIvY92.js">
+    <link rel="modulepreload" crossorigin href="./rippleElement-DToW0GYN.js">
     <link rel="modulepreload" crossorigin href="./classname-B5bU2JAF.js">
     <link rel="modulepreload" crossorigin href="./dist-BNGCa8re.js">
-    <link rel="modulepreload" crossorigin href="./i18n-Cjxs82EW.js">
-    <link rel="modulepreload" crossorigin href="./buttonTsx-Cpnk-G9j.js">
-    <link rel="modulepreload" crossorigin href="./putPreloader-CVUmkRVw.js">
-    <link rel="modulepreload" crossorigin href="./scrollable2-B9CG4YNm.js">
-    <link rel="modulepreload" crossorigin href="./focusTrap-B98snddJ.js">
+    <link rel="modulepreload" crossorigin href="./i18n-vTCpfPjZ.js">
+    <link rel="modulepreload" crossorigin href="./buttonTsx-BCIrPArQ.js">
+    <link rel="modulepreload" crossorigin href="./putPreloader-sc8jRwkY.js">
+    <link rel="modulepreload" crossorigin href="./scrollable2-BedF8wOo.js">
+    <link rel="modulepreload" crossorigin href="./focusTrap-3hE_zI0K.js">
     <link rel="modulepreload" crossorigin href="./isKeyboardControl-Cna_1Ssl.js">
     <link rel="modulepreload" crossorigin href="./placeCaretAtEnd-PFyyYwgT.js">
-    <link rel="modulepreload" crossorigin href="./scrollRegion-B-0in-fM.js">
-    <link rel="modulepreload" crossorigin href="./indexTsx-DwTCoAol.js">
+    <link rel="modulepreload" crossorigin href="./scrollRegion-s83mSzpW.js">
+    <link rel="modulepreload" crossorigin href="./indexTsx-CESJDQQw.js">
     <link rel="modulepreload" crossorigin href="./lowerBound-BZw-4_oO.js">
     <link rel="modulepreload" crossorigin href="./labelControl-4-91J8FU.js">
-    <link rel="modulepreload" crossorigin href="./documentFragmentToHTML-C8bCw3rI.js">
+    <link rel="modulepreload" crossorigin href="./documentFragmentToHTML-DsYu-KsK.js">
     <link rel="modulepreload" crossorigin href="./findUpTag-CCXoAgbQ.js">
-    <link rel="modulepreload" crossorigin href="./combineSameEntities-DJ9qsfbL.js">
-    <link rel="modulepreload" crossorigin href="./sortEntities-iGMx-DU9.js">
+    <link rel="modulepreload" crossorigin href="./combineSameEntities-Czw4FtNQ.js">
+    <link rel="modulepreload" crossorigin href="./sortEntities-D0RuxVAw.js">
     <link rel="modulepreload" crossorigin href="./whichChild-DeTuKcD8.js">
-    <link rel="modulepreload" crossorigin href="./inputField-DdbFSVzd.js">
-    <link rel="modulepreload" crossorigin href="./passwordInputField-ChUFDEA_.js">
-    <link rel="modulepreload" crossorigin href="./password-CR5FVZzc.js">
-    <link rel="modulepreload" crossorigin href="./inputFieldTsx-DgtrV0Lm.js">
-    <link rel="modulepreload" crossorigin href="./updateColumnWidths-DMH3oOQR.js">
+    <link rel="modulepreload" crossorigin href="./inputField-BaenQwGX.js">
+    <link rel="modulepreload" crossorigin href="./passwordInputField-B60prRpn.js">
+    <link rel="modulepreload" crossorigin href="./password-jQD8jsYw.js">
+    <link rel="modulepreload" crossorigin href="./inputFieldTsx-CyH280SQ.js">
+    <link rel="modulepreload" crossorigin href="./updateColumnWidths-DppdyXES.js">
     <link rel="modulepreload" crossorigin href="./numberThousandSplitter-C3KOS81M.js">
-    <link rel="stylesheet" crossorigin href="./index-CQLWUeg3.css">
+    <link rel="stylesheet" crossorigin href="./index-Lm-TmATe.css">
   </head>
   <body class="animation-level-1 animation-level-2 has-auth-pages rounded-sections">
     <!--[if IE]>

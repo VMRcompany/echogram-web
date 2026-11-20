@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{n as e}from"./rootScope-DdRw0QAb.js";async function t({doc:t,peerId:n,mid:r,savedMusic:i}){return{_:`message`,id:r,mid:r,peer_id:await e.managers.appPeersManager.getOutputPeer(n),peerId:n,fromId:n,date:t.date,message:``,pFlags:{local:!0,...i?{fakeForSavedMusic:!0}:{}},media:{_:`messageMediaDocument`,document:t,pFlags:{}}}}export{t};
+//# sourceMappingURL=fakeAudioMessage-C-0WvI66.js.map

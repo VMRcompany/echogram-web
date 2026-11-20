@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{h as e}from"./userAgent-eRG1iQnd.js";var t=[`a[href]`,`button:not([disabled])`,`input:not([disabled])`,`select:not([disabled])`,`textarea:not([disabled])`,`[tabindex]:not([tabindex^="-"])`,`[contenteditable]:not([contenteditable="false"])`].join(`,`);function n(n,r){n&&e.a11y&&(n.querySelector(t)?(n.removeAttribute(`tabindex`),n.removeAttribute(`role`),n.removeAttribute(`aria-label`)):(n.tabIndex=0,n.setAttribute(`role`,`region`),r&&n.setAttribute(`aria-label`,r)))}export{n as t};
-//# sourceMappingURL=scrollRegion-B-0in-fM.js.map

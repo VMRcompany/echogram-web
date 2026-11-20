@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{r as e,u as t}from"./apiManagerProxy-Dff-aSUf.js";import{g as n}from"./solid-BU1FCZ06.js";function r(e){let{community:t}=e;return(t==null?void 0:t._)===`communityForbidden`||(t==null?void 0:t._)===`community`&&t.pFlags.left?!0:e.joinedCommunities!==null&&!e.joinedCommunities.some(t=>t.id.toChatId()===e.communityId)}function i(i,a){if(!a)return;let o=e(()=>a),s=t(),c=!1;n(()=>{!c&&r({communityId:a,community:o(),joinedCommunities:s()})&&(c=!0,queueMicrotask(()=>i.close()))})}export{i as t};
+//# sourceMappingURL=useCommunityTabGuard-BAMaKdNs.js.map
