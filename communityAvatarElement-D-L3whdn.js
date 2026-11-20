@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{r as e}from"./apiManagerProxy-B38J2PJf.js";import{p as t}from"./solid-BU1FCZ06.js";import{d as n}from"./web-d3sJT-Ds.js";import{t as r}from"./communityAvatar-faOMvQ3U.js";function i(i,a){let o=document.createElement(`div`);return{dispose:n(()=>{let n=e(()=>i);return t(r,{get community(){return n()},get title(){var e;return(e=n())==null?void 0:e.title},size:a})},o),element:o.firstElementChild}}export{i as t};
-//# sourceMappingURL=communityAvatarElement-D-L3whdn.js.map
