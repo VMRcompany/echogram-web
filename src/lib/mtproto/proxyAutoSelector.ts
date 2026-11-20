@@ -1,5 +1,5 @@
 import {logger} from '@lib/logger';
-import {finishGatewayProbe, getActiveFront, holdDirectHost, isFrontUsable, rememberFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
+import {adoptFront, finishGatewayProbe, getActiveFront, holdDirectHost, isFrontUsable, rememberFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
 
 /**
  * Each browser races Telegram's own web socket and the Cloudflare fronts from
@@ -354,6 +354,13 @@ export function startProxyAutoSelector() {
   setFrontExhaustedHandler(() => {
     setFrontOrder(OPEN_FIRST);
   });
-  // The chat socket goes first. Probes opened at the same time were stalling it.
+  // The chat socket goes first. One probe of Telegram's own host runs beside it:
+  // through a VPN that host answers and is the one that keeps delivering
+  // updates. Where it stays silent, the chat remains on a front.
+  setTimeout(() => {
+    probe(DIRECT).promise.then((hit) => {
+      if(hit) adoptFront(DIRECT);
+    });
+  }, 1200);
   setTimeout(() => probeFromHere(), 8000);
 }

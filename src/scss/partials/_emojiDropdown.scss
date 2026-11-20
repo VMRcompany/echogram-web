@@ -16,9 +16,12 @@ $menu-search-translateY: -#{$menu-height};
 	flex-direction: column;
 	width: var(--width);
 	height: var(--height);
-  // Keep this animation-heavy panel opaque: its large transferred canvases and a backdrop
-  // filter would otherwise be presented as independent compositor surfaces.
-	background: var(--surface-color);
+  // The same lens as the bars. The wallpaper shows through the panel.
+	background-color: var(--glass-fill);
+	background-image: var(--glass-sheen);
+	backdrop-filter: var(--blur-off, var(--glass-blur));
+	-webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
+	box-shadow: var(--glass-shadow), var(--glass-highlight), inset 0 0 0 .5px var(--glass-stroke);
 	overflow: hidden;
 	flex: 1 1 auto;
   position: absolute;
@@ -33,7 +36,7 @@ $menu-search-translateY: -#{$menu-height};
   .chat-input & {
     max-height: min(26.25rem, calc(var(--100vh-inset) - var(--chat-topbar-height, 3rem) - var(--chat-input-height) - 1rem - var(--chat-input-keyboard-height, 0px)));
   }
-  box-shadow: 0px 5px 10px 5px rgba(16, 35, 47, .14);
+  box-shadow: 0px 5px 10px 5px rgba(16, 35, 47, .14), var(--glass-highlight), inset 0 0 0 .5px var(--glass-stroke);
   z-index: 4;
   border-radius: 1.25rem;
   transition: transform var(--esg-transition), opacity var(--esg-transition);

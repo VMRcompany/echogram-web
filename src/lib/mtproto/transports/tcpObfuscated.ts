@@ -11,7 +11,7 @@ import transportController from '@lib/mtproto/transports/controller';
 import bytesToHex from '@helpers/bytes/bytesToHex';
 // import networkStats from '@lib/mtproto/networkStats';
 import ctx from '@environment/ctx';
-import {applySocketUrl, getActiveFront, noteFrontFailed, subscribeProxyRoute} from '@lib/mtproto/proxyRoute';
+import {applySocketUrl, getActiveFront, markRouteProved, noteFrontFailed, subscribeProxyRoute} from '@lib/mtproto/proxyRoute';
 import {wakeProxySearch} from '@lib/mtproto/proxyAutoSelector';
 
 export default class TcpObfuscated implements MTTransport {
@@ -117,8 +117,12 @@ export default class TcpObfuscated implements MTTransport {
     if(!this.logSuffix) {
       this.proven = true;
       this.reopenMisses = 0;
+      markRouteProved();
     }
     this.clearStall();
+    // A front that answered once and then went quiet used to stay on screen
+    // with a stale chat. Pings reset this. Silence does not.
+    if(!this.logSuffix) this.armQuiet(this.connectionGeneration, this.url);
 
     const time = Date.now();
     let data = await this.obfuscation.decode(new Uint8Array(buffer));
@@ -182,6 +186,16 @@ export default class TcpObfuscated implements MTTransport {
       if(!this.autoReconnect) return;
       this.failOrRetry(generation, openedUrl);
     }, wait);
+  }
+
+  /** No reply at all, including after a chat that had been answering. */
+  private armQuiet(generation: number, openedUrl: string) {
+    this.clearStall();
+    this.stallTimer = ctx.setTimeout(() => {
+      this.stallTimer = undefined;
+      if(generation !== this.connectionGeneration || !this.autoReconnect) return;
+      this.failOrRetry(generation, openedUrl);
+    }, 35000);
   }
 
   /** A front that already worked is opened again at once. Only a second miss gives it up. */

@@ -7,9 +7,12 @@
 	$delimiterWidth: 4px;
 	$padding: 4px;
 
-	background: var(--surface-color);
+	background-color: var(--glass-fill);
+	background-image: var(--glass-sheen);
+	backdrop-filter: var(--blur-off, var(--glass-blur));
+	-webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
+	box-shadow: var(--glass-shadow), var(--glass-highlight), inset 0 0 0 .5px var(--glass-stroke);
 	border-radius: $border-radius-big;
-	box-shadow: 0 0 20px 0 rgba(0, 0, 0, .15);
 	transform: translateZ(0);
 	opacity: 0;
 	// reduced: it fades, and moves to a new selection at once

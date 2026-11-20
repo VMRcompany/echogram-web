@@ -87,6 +87,7 @@
     position: relative;
     border-radius: var(--popup-border-radius);
     background-color: var(--glass-fill);
+    background-image: var(--glass-sheen);
     backdrop-filter: var(--blur-off, var(--glass-blur));
     -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
     box-shadow: var(--glass-shadow), var(--glass-highlight), inset 0 0 0 .5px var(--glass-stroke);

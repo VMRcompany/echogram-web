@@ -30,6 +30,9 @@ let onFrontsExhausted = () => {};
 // answers nothing without a VPN, and a socket stuck on it never recovers.
 let holdDirect = false;
 let pinned = false;
+// Set once the chat socket has received a real reply. A later probe must not
+// tear that socket down.
+let routeProved = false;
 
 function sameRoute(a: EchogramProxyRoute | null, b: EchogramProxyRoute | null) {
   if(a === b) return true;
@@ -93,6 +96,28 @@ export function holdDirectHost(hold: boolean) {
 
 export function getActiveFront() {
   return activeFront;
+}
+
+export function markRouteProved() {
+  routeProved = true;
+}
+
+/**
+ * Use this host for the chat. Telegram's own host is allowed: through a VPN it
+ * is the one that keeps delivering updates. A socket that already got a reply
+ * stays where it is.
+ */
+export function adoptFront(front: string) {
+  if(!front) return;
+  if(routeProved) {
+    rememberFront(front);
+    return;
+  }
+  if(front === activeFront) return;
+  pinned = true;
+  const rest = rankedFronts.filter((name) => name !== front);
+  activeFront = null;
+  setFrontOrder([front, ...rest]);
 }
 
 export function hasAnotherFront() {
@@ -168,6 +193,11 @@ export function noteFrontFailed() {
     for(const front of rankedFronts) deadUntil.delete(front);
     deadUntil.set(failed, Date.now() + 20_000);
     rest = rankedFronts.filter((front) => front !== failed);
+  }
+  // Only after a probe has seen the official host answer. Promoting it before
+  // that parks a network without a VPN on a host that never opens.
+  if(failed !== 'web.telegram.org' && rankedFronts.includes('web.telegram.org') && isFrontUsable('web.telegram.org')) {
+    rest = ['web.telegram.org', ...rest.filter((front) => front !== 'web.telegram.org')];
   }
   if(!rest.length) {
     pinned = false;

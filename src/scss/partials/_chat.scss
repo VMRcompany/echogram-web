@@ -685,7 +685,7 @@
   --chat-padding-top: calc(var(--chat-topbar-height) + var(--page-chats-padding) + var(--pinned-floating-height));
   // * without the input's surplus, which whatever reads this adds of its own
   --chat-padding-bottom: calc(var(--chat-input-height) + var(--page-chats-padding));
-  --chat-input-background: var(--surface-color);
+  --chat-input-background: var(--glass-fill);
 	display: flex !important;
 	width: 100%;
 	align-items: center;
@@ -766,7 +766,8 @@
 	width: 100%;
 	max-width: 100%;
 	justify-content: center;
-  background: var(--glass-fill);
+  background-color: var(--glass-fill);
+  background-image: var(--glass-sheen);
   backdrop-filter: var(--blur-off, var(--glass-blur));
   -webkit-backdrop-filter: var(--blur-off, var(--glass-blur));
 	border-radius: var(--chat-input-border-radius);
