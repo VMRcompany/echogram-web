@@ -1,7 +1,6 @@
 /// <reference types="vitest/config" />
 import {defineConfig, searchForWorkspaceRoot} from 'vite';
 import solidPlugin from 'vite-plugin-solid';
-import legacy from '@vitejs/plugin-legacy';
 // @ts-ignore no type declarations
 import handlebars from 'vite-plugin-handlebars';
 import basicSsl from '@vitejs/plugin-basic-ssl';
@@ -280,16 +279,7 @@ export default defineConfig({
     process.env.ANALYZE ? import('rollup-plugin-visualizer').then(({visualizer}) => visualizer({
       gzipSize: true,
       template: 'treemap'
-    })) : undefined,
-    // Old iPad and Android 4.4–6 cannot run the module build, so the page stays
-    // blank. They get a separate script. iOS 12 and every current browser keep
-    // the module build, and the CSS target is unchanged.
-    process.env.VITEST ? undefined : legacy({
-      targets: ['ios >= 9', 'safari >= 9', 'chrome >= 49', 'android >= 4.4'],
-      modernTargets: ['chrome >= 87', 'edge >= 87', 'firefox >= 78', 'safari >= 12', 'ios >= 12'],
-      additionalLegacyPolyfills: ['src/legacyCryptoPolyfill.ts'],
-      renderLegacyChunks: true
-    })
+    })) : undefined
   ].filter(Boolean),
   test: {
     // include: ['**/*.{test,spec}.?(c|m)[jt]s?(x)'],
@@ -366,11 +356,10 @@ export default defineConfig({
     exclude: ['@telegram/widget-sandbox-quickjs']
   },
   build: {
-    // iPhone 6 is stuck on iOS 12 and iPhone 7 on iOS 15. es2020 output
-    // (optional chaining, and lookbehind in our own regexes) is a syntax
-    // error there, so the document stays white. CSS stays on the versions
-    // that understand logical properties; lowering that rewrites the layout.
-    target: ['es2018', 'safari12', 'ios12'],
+    // iOS 10 can parse this. es2018 output is a syntax error there, so an old
+    // iPad stays on a blank screen. CSS stays on the versions that understand
+    // logical properties; lowering that rewrites the layout.
+    target: ['es2015', 'safari10.1', 'ios10'],
     // `es2020` says nothing about browsers, so lightningcss falls back to a target old enough to
     // lower every logical property into a pair of `:lang()` rules — 13680 of them, emitted after
     // the block they came from and with a higher specificity, so a physical `left`/`margin-left`

@@ -50,6 +50,7 @@ function mobileInstallCopy(ua: string) {
 
 /** Windows, macOS, iPhone and Android get a suggestion to install the site as an app. */
 export function showDesktopInstallHint() {
+  if(document.getElementById('echogram-install-hint')) return;
   const ua = navigator.userAgent || '';
   const mobile = mobileInstallCopy(ua);
   const macDesktop = !mobile && /Macintosh|Mac OS X/.test(ua) && navigator.maxTouchPoints < 2;

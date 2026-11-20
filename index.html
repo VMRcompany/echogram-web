@@ -44,6 +44,56 @@
         }
       })();
     </script>
+    <style>
+      html.is-lite #page-chats { display: block !important; }
+    </style>
+    <script nomodule>
+      (function() {
+        var ua = navigator.userAgent || '';
+        var ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh|Mac OS X/.test(ua) && navigator.maxTouchPoints > 1);
+        var android = /Android/.test(ua);
+        if(!ios && !android) return;
+        if(window.matchMedia && matchMedia('(display-mode: standalone)').matches) return;
+        if(navigator.standalone) return;
+        var ru = (navigator.language || '').toLowerCase().indexOf('ru') === 0;
+        var root = document.createElement('aside');
+        root.id = 'echogram-install-hint';
+        root.setAttribute('role', 'dialog');
+        root.style.cssText = 'position:fixed;z-index:10000;left:50%;top:16px;transform:translateX(-50%);width:min(440px,calc(100% - 24px));box-sizing:border-box;padding:14px 16px;border-radius:16px;background:#fff;color:#222;box-shadow:0 8px 28px rgba(0,0,0,.18);font:14px/1.4 system-ui,sans-serif';
+        var text = document.createElement('p');
+        text.style.margin = '0 0 10px';
+        text.textContent = ru ?
+          'Установите Echogram Web на экран «Домой». Откроется отдельное приложение, без рамок и окон Safari или Chrome.' :
+          'Install Echogram Web on the Home Screen. It opens as its own app, with no Safari or Chrome frame.';
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+        var later = document.createElement('button');
+        later.type = 'button';
+        later.textContent = ru ? 'Не сейчас' : 'Not now';
+        later.style.cssText = 'border:0;background:transparent;color:inherit;padding:8px 10px;border-radius:10px';
+        later.onclick = function() {
+          try { localStorage.setItem('echogram_desktop_install_hint', '1'); } catch(e) {}
+          root.parentNode.removeChild(root);
+        };
+        var install = document.createElement('button');
+        install.type = 'button';
+        install.textContent = ru ? 'Как установить' : 'How to install';
+        install.style.cssText = 'border:0;background:#3390ec;color:#fff;padding:8px 12px;border-radius:10px;font-weight:600';
+        install.onclick = function() {
+          text.textContent = ios ?
+            (ru ? 'Нажмите «Поделиться», затем «На экран Домой».' : 'Tap Share, then Add to Home Screen.') :
+            (ru ? 'В меню Chrome нажмите «Установить приложение» или «Добавить на главный экран».' : 'In the Chrome menu, tap Install app or Add to Home screen.');
+        };
+        row.appendChild(later);
+        row.appendChild(install);
+        root.appendChild(text);
+        root.appendChild(row);
+        document.addEventListener('DOMContentLoaded', function() {
+          if(localStorage.getItem('echogram_desktop_install_hint') === '1') return;
+          document.body.appendChild(root);
+        });
+      })();
+    </script>
     <!-- What the page itself may load besides its own files: no remote images, media, fonts or style sheets, no form
     submissions, no plugins. Interactive widgets draw their DOM into this page (a shadow root per widget, their code
     never runs here); this keeps a markup that got past their validator from reaching the network. Frames stay open
