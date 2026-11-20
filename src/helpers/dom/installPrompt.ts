@@ -27,12 +27,34 @@ export function onInstallPrompt(listener: () => void) {
 
 const HINT_KEY = 'echogram_desktop_install_hint';
 
-/** Windows and macOS get a suggestion to pin the site as an app. The browser's own bar stays. */
+/** A phone or tablet is asked to install the site as its own app, without the browser frame. */
+function mobileInstallCopy(ua: string) {
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh|Mac OS X/.test(ua) && navigator.maxTouchPoints > 1);
+  const android = /Android/.test(ua);
+  if(!ios && !android) return null;
+  const ru = (navigator.language || '').toLowerCase().startsWith('ru');
+  return {
+    ios,
+    text: ru ?
+      'Установите Echogram Web на экран «Домой». Откроется отдельное приложение, без рамок и окон Safari или Chrome.' :
+      'Install Echogram Web on the Home Screen. It opens as its own app, with no Safari or Chrome frame.',
+    steps: ios ?
+      (ru ?
+        'Нажмите «Поделиться», затем «На экран Домой».' :
+        'Tap Share, then Add to Home Screen.') :
+      (ru ?
+        'В меню Chrome или браузера нажмите «Установить приложение» или «Добавить на главный экран».' :
+        'In the Chrome menu, tap Install app or Add to Home screen.')
+  };
+}
+
+/** Windows, macOS, iPhone and Android get a suggestion to install the site as an app. */
 export function showDesktopInstallHint() {
   const ua = navigator.userAgent || '';
-  const macDesktop = /Macintosh|Mac OS X/.test(ua) && navigator.maxTouchPoints < 2;
-  const windows = /Windows/.test(ua);
-  if(!macDesktop && !windows) return;
+  const mobile = mobileInstallCopy(ua);
+  const macDesktop = !mobile && /Macintosh|Mac OS X/.test(ua) && navigator.maxTouchPoints < 2;
+  const windows = !mobile && /Windows/.test(ua);
+  if(!mobile && !macDesktop && !windows) return;
   if(matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone) return;
   try {
     if(localStorage.getItem(HINT_KEY) === '1') return;
@@ -51,9 +73,9 @@ export function showDesktopInstallHint() {
 
   const text = document.createElement('p');
   text.style.cssText = 'margin:0 0 10px';
-  text.textContent = ru ?
+  text.textContent = mobile ? mobile.text : (ru ?
     'Поставьте Echogram Web на панель задач и на рабочий стол. Откроется настоящее приложение, а внутри него — этот сайт.' :
-    'Pin Echogram Web to the taskbar and put it on the desktop. It installs as an app and opens this site.';
+    'Pin Echogram Web to the taskbar and put it on the desktop. It installs as an app and opens this site.');
 
   const row = document.createElement('div');
   row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
@@ -80,6 +102,10 @@ export function showDesktopInstallHint() {
     }
     install.textContent = ru ? 'Как установить' : 'How to install';
     install.onclick = () => {
+      if(mobile) {
+        text.textContent = mobile.steps;
+        return;
+      }
       text.textContent = ru ?
         (macDesktop ?
           'В Safari на Mac: меню «Файл» → «Добавить в Dock». В Chrome и Edge нажмите значок установки в адресной строке.' :

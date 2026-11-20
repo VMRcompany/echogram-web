@@ -23,6 +23,8 @@ interface ImportMetaEnv {
   // injected via `define` by vite.preview.config.ts when start-preview.sh is
   // invoked with --no-worker; Modes.noWorker honours it without ?noWorker=1.
   readonly VITE_NO_WORKER?: boolean;
+  // true only inside the legacy bundle old iPads and old Android load
+  readonly LEGACY?: boolean;
 }
 
 interface ImportMeta {

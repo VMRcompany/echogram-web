@@ -141,7 +141,7 @@ const Modes = {
   // (SharedWorker dedup, auto-lock cross-tab) silently degrade.
   // Triggers: ?noWorker=1 in the URL, or VITE_NO_WORKER injected at build time
   // by `bash scripts/start-preview.sh --no-worker`.
-  noWorker: isFlagOn('noWorker') || !!import.meta.env.VITE_NO_WORKER,
+  noWorker: isFlagOn('noWorker') || !!import.meta.env.VITE_NO_WORKER || !!import.meta.env.LEGACY,
   multipleTransports: !!(import.meta.env.VITE_MTPROTO_AUTO && import.meta.env.VITE_MTPROTO_HAS_HTTP && import.meta.env.VITE_MTPROTO_HAS_WS) && !isFlagOn('noMultipleTransports'),
   // Perfect Forward Secrecy: every networker talks over a temporary auth key
   // bound to the stored permanent one (auth.bindTempAuthKey), replaced once it

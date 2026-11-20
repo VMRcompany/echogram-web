@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import {defineConfig, searchForWorkspaceRoot} from 'vite';
 import solidPlugin from 'vite-plugin-solid';
+import legacy from '@vitejs/plugin-legacy';
 // @ts-ignore no type declarations
 import handlebars from 'vite-plugin-handlebars';
 import basicSsl from '@vitejs/plugin-basic-ssl';
@@ -279,7 +280,16 @@ export default defineConfig({
     process.env.ANALYZE ? import('rollup-plugin-visualizer').then(({visualizer}) => visualizer({
       gzipSize: true,
       template: 'treemap'
-    })) : undefined
+    })) : undefined,
+    // Old iPad and Android 4.4–6 cannot run the module build, so the page stays
+    // blank. They get a separate script. iOS 12 and every current browser keep
+    // the module build, and the CSS target is unchanged.
+    process.env.VITEST ? undefined : legacy({
+      targets: ['ios >= 9', 'safari >= 9', 'chrome >= 49', 'android >= 4.4'],
+      modernTargets: ['chrome >= 87', 'edge >= 87', 'firefox >= 78', 'safari >= 12', 'ios >= 12'],
+      additionalLegacyPolyfills: ['src/legacyCryptoPolyfill.ts'],
+      renderLegacyChunks: true
+    })
   ].filter(Boolean),
   test: {
     // include: ['**/*.{test,spec}.?(c|m)[jt]s?(x)'],
