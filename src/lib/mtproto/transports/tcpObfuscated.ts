@@ -54,7 +54,10 @@ export default class TcpObfuscated implements MTTransport {
   // A front in Russia often answers several seconds after the socket opens.
   // Twenty seconds was cutting that reply off, so the screen stayed on
   // "Reconnecting..." and the next front was opened before this one spoke.
-  private readonly unprovenSilenceMs = 45000;
+  // A mute front used to be kept for 45s and then opened again forever.
+  // The screen stayed on "Reconnecting...". A front that is going to answer
+  // does it in well under this.
+  private readonly unprovenSilenceMs = 12000;
   private ownClose = false;
 
   // private debugPayloads: MTPNetworker['debugRequests'] = [];
@@ -96,10 +99,6 @@ export default class TcpObfuscated implements MTTransport {
       transportController.setTransportOpened('websocket');
     }
 
-    // Started here so a cipher that never finishes is retried. Restarted
-    // after the init frame, so preparing the cipher does not eat the wait
-    // for Telegram's reply.
-    if(!this.logSuffix) this.armSilence(generation, this.url);
     const initPayload = await (this.readyInit || this.obfuscation.init(this.codec));
     if(generation !== this.connectionGeneration || !this.connected) {
       return;
@@ -108,7 +107,7 @@ export default class TcpObfuscated implements MTTransport {
     try {
       this.connection.send(initPayload);
     } catch{
-      this.failOrRetry(generation, this.url);
+      this.failOrRetry(generation, this.url, true);
       return;
     }
     this.handshakeSent = true;
@@ -197,21 +196,21 @@ export default class TcpObfuscated implements MTTransport {
       this.stallTimer = undefined;
       if(generation !== this.connectionGeneration || this.sawMessage) return;
       if(!this.autoReconnect) return;
-      // The socket did open. Leaving it for another hostname would show
-      // Telegram a new address in the middle of this account's session.
       this.failOrRetry(generation, openedUrl, true);
     }, wait);
   }
 
   /**
-   * An open socket is always retried on the same front. Only a socket that
-   * never opens may move the account to the next front, and only after two misses.
+   * A front that has never answered is replaced. Keeping it was an endless
+   * "Reconnecting...". A front that has answered is opened again twice, so a
+   * short gap does not move the account to a new address.
    */
-  private failOrRetry(generation: number, openedUrl: string, opened: boolean) {
-    if(opened || this.reopenMisses < 2) {
-      if(!opened) this.reopenMisses++;
+  private failOrRetry(generation: number, openedUrl: string, _opened: boolean) {
+    const tries = this.proven ? 2 : 0;
+    if(this.reopenMisses < tries) {
+      this.reopenMisses++;
       this.forceReconnect();
-      if(opened || this.reopenMisses < 2) return;
+      return;
     }
 
     this.reopenMisses = 0;

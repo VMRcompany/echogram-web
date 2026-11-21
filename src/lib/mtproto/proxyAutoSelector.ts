@@ -1,5 +1,5 @@
 import {logger} from '@lib/logger';
-import {finishGatewayProbe, getActiveFront, getSessionFront, holdDirectHost, isFrontUsable, loadSessionFront, markSelectionReady, rememberFront, restoreSessionFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
+import {finishGatewayProbe, getActiveFront, getSessionFront, holdDirectHost, isFrontUsable, loadSessionFront, markSelectionReady, rememberFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
 
 /**
  * Each browser races Telegram's own web socket and the Cloudflare fronts from
@@ -361,7 +361,8 @@ export function startProxyAutoSelector() {
   const pending = loadSessionFront();
   const expired = new Promise<string>((resolve) => setTimeout(() => resolve(''), 3000));
   void Promise.race([pending, expired]).then((saved) => {
-    if(saved) restoreSessionFront(saved);
+    // Try the saved front first, but do not lock it until Telegram answers.
+    // Locking a mute front left the chat on "Reconnecting..." for good.
     markSelectionReady();
     const first = saved ? [saved, ...OPEN_FIRST.filter((front) => front !== saved)] : OPEN_FIRST;
     setFrontOrder(first);
