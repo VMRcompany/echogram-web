@@ -7,7 +7,6 @@
 
 import MTTransport, {MTConnectionConstructable} from '@lib/mtproto/transports/transport';
 import Modes from '@config/modes';
-import App from '@config/app';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import HTTP from '@lib/mtproto/transports/http';
 import Socket from '@lib/mtproto/transports/websocket';
@@ -17,7 +16,7 @@ import {DcId} from '@types';
 import {getEnvironment} from '@environment/utils';
 import SocketProxied from '@lib/mtproto/transports/socketProxied';
 import isValidDcId from '@lib/mtproto/isValidDcId';
-import {getActiveProxyRoute} from '@lib/mtproto/proxyRoute';
+import {applySocketUrl} from '@lib/mtproto/proxyRoute';
 
 export type TransportType = 'websocket' | 'https' | 'http';
 export type ConnectionType = 'client' | 'download' | 'upload';
@@ -55,18 +54,11 @@ export function constructTelegramWebSocketUrl(_dcId: DcId, connectionType: Conne
     return;
   }
 
-  const route = getActiveProxyRoute();
-  if(route) {
-    const port = route.port === 443 ? '' : `:${route.port}`;
-    return `wss://${route.address}${port}/apiws`;
-  }
-
   const dcId = assertValidDcId(_dcId);
-  const suffix = getTelegramConnectionSuffix(connectionType);
   const path = connectionType !== 'client' ? 'apiws' + TEST_SUFFIX + (premium ? PREMIUM_SUFFIX : '') : ('apiws' + TEST_SUFFIX);
-  const chosenServer = `wss://${App.suffix.toLowerCase()}ws${dcId}${suffix}.web.telegram.org/${path}`;
-
-  return chosenServer;
+  // The official host is blocked in Russia. applySocketUrl keeps the path and
+  // puts it on a Cloudflare front instead of kws*.web.telegram.org.
+  return applySocketUrl(dcId, `wss://kws${dcId}.web.telegram.org/${path}`);
 }
 
 export class DcConfigurator {

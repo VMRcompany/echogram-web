@@ -34,6 +34,38 @@ let pinned = false;
 // tear that socket down.
 let routeProved = false;
 
+// web.telegram.org does not answer from Russia. The socket must not open it.
+const BLOCKED_HOST = 'web.telegram.org';
+const DEFAULT_FRONTS = [
+  'stopblocking.co.uk',
+  'sorokdva.co.uk',
+  'pyatdesyatodin.co.uk',
+  'kartoshka.co.uk',
+  'onedaychamp.co.uk',
+  'fixtelega.co.uk',
+  'sadnews.co.uk',
+  'nebally.co.uk',
+  'havegreatday.co.uk',
+  'cakeisalie.co.uk',
+  'notelega.co.uk',
+  'lovetrue.co.uk',
+  'pclead.co.uk',
+  'ebally.co.uk'
+];
+
+function usableBridge(front: string) {
+  return !!front && front !== BLOCKED_HOST && isFrontUsable(front);
+}
+
+/** A Cloudflare front. Never web.telegram.org, even before the selector runs. */
+function socketFront() {
+  if(!rankedFronts.length) rankedFronts = DEFAULT_FRONTS.slice();
+  if(activeFront && usableBridge(activeFront)) return activeFront;
+  const next = rankedFronts.find(usableBridge) || DEFAULT_FRONTS[0];
+  activeFront = next;
+  return next;
+}
+
 function sameRoute(a: EchogramProxyRoute | null, b: EchogramProxyRoute | null) {
   if(a === b) return true;
   if(!a || !b) return false;
@@ -157,7 +189,17 @@ export function preferFront(front: string) {
  * tear it down and put the screen back on "Reconnecting...".
  */
 export function setFrontOrder(fronts: string[]) {
-  const usable = fronts.filter((front, index) => front && isFrontUsable(front) && fronts.indexOf(front) === index);
+  const unique = (list: string[]) => list.filter((front, index) => {
+    return front && front !== BLOCKED_HOST && isFrontUsable(front) && list.indexOf(front) === index;
+  });
+  let usable = unique(fronts);
+  // Every front was marked dead. Clearing once lets the list be tried again.
+  // Calling the exhausted handler here used to call setFrontOrder on the same
+  // dead list and overflow the stack, which left the screen on "Reconnecting".
+  if(!usable.length && deadUntil.size) {
+    deadUntil.clear();
+    usable = unique(fronts);
+  }
   const keep = activeFront && usable.includes(activeFront) ? activeFront : null;
   rankedFronts = keep ? [keep, ...usable.filter((front) => front !== keep)] : usable;
   const next = rankedFronts[0] || null;
@@ -172,12 +214,10 @@ export function setFrontOrder(fronts: string[]) {
  * Media on a Cloudflare front stays on `kwsN` (those zones have no `kwsN-1` name).
  * Returns null when this browser has not chosen a front yet.
  */
-export function applyHttpsUrl(dcId: number, media: boolean, test: boolean) {
-  const front = activeFront;
-  if(!front) return null;
+export function applyHttpsUrl(dcId: number, _media: boolean, test: boolean) {
+  const front = socketFront();
   const path = test ? 'apiw_test1' : 'apiw1';
-  const suffix = media && front === 'web.telegram.org' ? '-1' : '';
-  return `https://kws${dcId}${suffix}.${front}/${path}`;
+  return `https://kws${dcId}.${front}/${path}`;
 }
 
 /** The front that just failed to answer stops being used. The next one is immediate. */
@@ -207,30 +247,18 @@ export function noteFrontFailed() {
 }
 
 /**
- * WebSocket the transport should open. A chosen front replaces the direct
- * host. Cloudflare zones have no `kwsN-1` name, so media uses `kwsN` there.
- * Otherwise the official URL is rebuilt.
+ * WebSocket the transport should open. Always a Cloudflare front.
+ * kws*.web.telegram.org does not answer from Russia, so it is never returned.
+ * Those zones have no `kwsN-1` name, so media uses `kwsN` as well.
  */
 export function applySocketUrl(dcId: number, currentUrl: string) {
-  const front = activeFront;
-  if(front) {
-    const media = currentUrl.includes('-1');
-    const suffix = media && front === 'web.telegram.org' ? '-1' : '';
-    const path = currentUrl.match(/\/(apiws[^/?]*)/)?.[1] || 'apiws';
-    return `wss://kws${dcId}${suffix}.${front}/${path}`;
-  }
-
   const route = active;
-  if(route) {
+  if(route && route.address !== BLOCKED_HOST && !route.address.endsWith('.' + BLOCKED_HOST)) {
     const port = route.port === 443 ? '' : `:${route.port}`;
     return `wss://${route.address}${port}/apiws`;
   }
 
-  if(holdDirect) return null;
-
-  if(!currentUrl || currentUrl.includes('.web.telegram.org/')) return currentUrl;
-
-  const suffix = currentUrl.includes('-1') ? '-1' : '';
-  const path = currentUrl.includes('apiws_test') ? 'apiws_test' : 'apiws';
-  return `wss://kws${dcId}${suffix}.web.telegram.org/${path}`;
+  const front = socketFront();
+  const path = currentUrl.match(/\/(apiws[^/?]*)/)?.[1] || 'apiws';
+  return `wss://kws${dcId}.${front}/${path}`;
 }

@@ -275,9 +275,9 @@ async function probeFromHere() {
   const pool = usable.length ? usable : FRONTS.filter((front) => front !== DIRECT);
   const fresh = pool.filter((front) => front !== cached && !SLOW_FRONTS.includes(front)).sort(() => Math.random() - 0.5);
   const slow = pool.filter((front) => SLOW_FRONTS.includes(front));
-  // The direct host is last and is used only when it itself returns resPQ.
-  // Opening it before that is what leaves the chat empty without a VPN.
-  const queue = [cached, ...fresh, ...slow, DIRECT].filter((front, index, list) => front && list.indexOf(front) === index);
+  // web.telegram.org is blocked in Russia. Probing it opens a socket that
+  // never answers and is what the network panel shows as the failed connection.
+  const queue = [cached, ...fresh, ...slow].filter((front, index, list) => front && front !== DIRECT && list.indexOf(front) === index);
   const found: Hit[] = [];
   const jobs: Array<ReturnType<typeof probe>> = [];
   const startedAt = Date.now();
