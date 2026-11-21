@@ -33,6 +33,14 @@ let pinned = false;
 // Set once the chat socket has received a real reply. A later probe must not
 // tear that socket down.
 let routeProved = false;
+// The front that already spoke for this account. Telegram treats a new
+// address as a different client and bans a fresh account. This is a hostname
+// the browser can open from Russia, not the user's own IP and not telegram.org.
+let sessionFront: string | null = null;
+let selectionReady = false;
+
+const SESSION_KEY = 'echogram_session_front';
+const SESSION_URL = 'https://echogram.local/session-front';
 
 // web.telegram.org does not answer from Russia. The socket must not open it.
 const BLOCKED_HOST = 'web.telegram.org';
@@ -130,8 +138,59 @@ export function getActiveFront() {
   return activeFront;
 }
 
+export function getSessionFront() {
+  return sessionFront;
+}
+
+export function markSelectionReady() {
+  selectionReady = true;
+}
+
+export function restoreSessionFront(front: string) {
+  if(!knownFront(front)) return;
+  sessionFront = front;
+}
+
+function knownFront(front: string) {
+  return DEFAULT_FRONTS.includes(front);
+}
+
+function persistSessionFront(front: string) {
+  try {
+    localStorage.setItem(SESSION_KEY, front);
+  } catch{
+  }
+
+  const storage = typeof caches !== 'undefined' ? caches : undefined;
+  storage?.open('echogram-front').then((cache) => {
+    return cache.put(SESSION_URL, new Response(front));
+  }).catch(() => {});
+}
+
+/** The front this account already used. Empty until one has answered. */
+export async function loadSessionFront() {
+  try {
+    const local = localStorage.getItem(SESSION_KEY) || '';
+    if(knownFront(local)) return local;
+  } catch{
+  }
+
+  try {
+    const cache = await caches.open('echogram-front');
+    const stored = await cache.match(SESSION_URL);
+    const front = stored ? (await stored.text()).trim() : '';
+    return knownFront(front) ? front : '';
+  } catch{
+    return '';
+  }
+}
+
 export function markRouteProved() {
   routeProved = true;
+  if(!activeFront || activeFront === BLOCKED_HOST) return;
+  if(sessionFront === activeFront) return;
+  sessionFront = activeFront;
+  persistSessionFront(activeFront);
 }
 
 /**
@@ -141,7 +200,7 @@ export function markRouteProved() {
  */
 export function adoptFront(front: string) {
   if(!front) return;
-  if(routeProved) {
+  if(sessionFront || routeProved) {
     rememberFront(front);
     return;
   }
@@ -171,6 +230,10 @@ export function rememberFront(front: string) {
  */
 export function preferFront(front: string) {
   if(!front || front === 'web.telegram.org') return;
+  if(sessionFront) {
+    rememberFront(front);
+    return;
+  }
   if(pinned) {
     rememberFront(front);
     return;
@@ -200,7 +263,8 @@ export function setFrontOrder(fronts: string[]) {
     deadUntil.clear();
     usable = unique(fronts);
   }
-  const keep = activeFront && usable.includes(activeFront) ? activeFront : null;
+  const pinnedFront = sessionFront && usable.includes(sessionFront) ? sessionFront : null;
+  const keep = pinnedFront || (activeFront && usable.includes(activeFront) ? activeFront : null);
   rankedFronts = keep ? [keep, ...usable.filter((front) => front !== keep)] : usable;
   const next = rankedFronts[0] || null;
   if(next === activeFront) return;
@@ -215,15 +279,23 @@ export function setFrontOrder(fronts: string[]) {
  * Returns null when this browser has not chosen a front yet.
  */
 export function applyHttpsUrl(dcId: number, _media: boolean, test: boolean) {
+  if(!selectionReady) return null;
   const front = socketFront();
   const path = test ? 'apiw_test1' : 'apiw1';
   return `https://kws${dcId}.${front}/${path}`;
 }
 
-/** The front that just failed to answer stops being used. The next one is immediate. */
-export function noteFrontFailed() {
+/**
+ * Give up the current front. A front that already answered for this account
+ * stays: moving the session is a new IP, and a new account gets banned.
+ * `allowHop` is only for a socket that never opened, so a dead hostname can
+ * still be replaced by another one the browser can reach without a VPN.
+ */
+export function noteFrontFailed(allowHop = false) {
   if(!activeFront) return;
+  if(sessionFront && activeFront === sessionFront && !allowHop) return;
   const failed = activeFront;
+  if(sessionFront === failed) sessionFront = null;
   deadUntil.set(failed, Date.now() + 20_000);
   let rest = rankedFronts.filter((front) => front !== failed && isFrontUsable(front));
   // An empty list used to leave the socket with nowhere to go, and the screen
@@ -252,6 +324,9 @@ export function noteFrontFailed() {
  * Those zones have no `kwsN-1` name, so media uses `kwsN` as well.
  */
 export function applySocketUrl(dcId: number, currentUrl: string) {
+  // Wait until the saved front is restored. Opening a different one first
+  // would be a second IP in the same minute the account is signing in.
+  if(!selectionReady) return null;
   const route = active;
   if(route && route.address !== BLOCKED_HOST && !route.address.endsWith('.' + BLOCKED_HOST)) {
     const port = route.port === 443 ? '' : `:${route.port}`;

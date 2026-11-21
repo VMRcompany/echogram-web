@@ -158,13 +158,13 @@ export default class TcpObfuscated implements MTTransport {
     pending.resolve(data);
   };
 
-  private retireFront(openedUrl: string) {
+  private retireFront(openedUrl: string, allowHop: boolean) {
     // File sockets miss on purpose on some fronts. Only the chat socket retires one.
     if(this.logSuffix || !this.autoReconnect) return;
     if(!routeDecider) routeDecider = this;
     if(this !== routeDecider) return;
     const front = getActiveFront();
-    if(front && openedUrl.includes(`.${front}/`)) noteFrontFailed();
+    if(front && openedUrl.includes(`.${front}/`)) noteFrontFailed(allowHop);
   }
 
   private clearStall() {
@@ -186,7 +186,7 @@ export default class TcpObfuscated implements MTTransport {
       this.stallTimer = undefined;
       if(generation !== this.connectionGeneration || this.sawMessage || this.connected) return;
       if(!this.autoReconnect) return;
-      this.failOrRetry(generation, openedUrl);
+      this.failOrRetry(generation, openedUrl, false);
     }, wait);
   }
 
@@ -197,43 +197,37 @@ export default class TcpObfuscated implements MTTransport {
       this.stallTimer = undefined;
       if(generation !== this.connectionGeneration || this.sawMessage) return;
       if(!this.autoReconnect) return;
-      this.failOrRetry(generation, openedUrl);
+      // The socket did open. Leaving it for another hostname would show
+      // Telegram a new address in the middle of this account's session.
+      this.failOrRetry(generation, openedUrl, true);
     }, wait);
   }
 
-  /** The same front is opened again twice. Only a third miss gives it up. */
-  private failOrRetry(generation: number, openedUrl: string) {
-    if(!this.logSuffix && this.reopenMisses < 2) {
-      this.reopenMisses++;
+  /**
+   * An open socket is always retried on the same front. Only a socket that
+   * never opens may move the account to the next front, and only after two misses.
+   */
+  private failOrRetry(generation: number, openedUrl: string, opened: boolean) {
+    if(opened || this.reopenMisses < 2) {
+      if(!opened) this.reopenMisses++;
       this.forceReconnect();
-      return;
+      if(opened || this.reopenMisses < 2) return;
     }
 
     this.reopenMisses = 0;
     this.frontMisses = 0;
-    this.retireFront(openedUrl);
+    this.retireFront(openedUrl, true);
     if(generation !== this.connectionGeneration || this.sawMessage) return;
     const next = applySocketUrl(this.dcId, this.url);
     if(next) this.url = next;
     this.forceReconnect();
   }
 
-  private finishClose(openedUrl: string) {
-    const unexpected = !this.ownClose;
+  private finishClose(_openedUrl: string) {
     this.ownClose = false;
-    if(unexpected && !this.proven && !this.sawMessage && this.handshakeSent) {
-      this.frontMisses++;
-    }
-    // Our own reconnect must not skip the front we just chose. A server close
-    // before any reply is one miss; the same front is tried again before it
-    // is given up.
-    const shouldRetire = unexpected && !this.proven && !this.sawMessage && this.handshakeSent && this.frontMisses >= 2;
-    if(shouldRetire) {
-      this.frontMisses = 0;
-      this.reopenMisses = 0;
-    }
+    // A close is the same front again. Retiring it here was the hop that made
+    // Telegram see a new address and ban the account.
     this.clear();
-    if(shouldRetire) this.retireFront(openedUrl);
     if(!this.logSuffix && !getActiveFront()) wakeProxySearch();
     const replaced = !!this.connection;
 

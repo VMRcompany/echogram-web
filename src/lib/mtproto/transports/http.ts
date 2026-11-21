@@ -4,7 +4,7 @@ import {logger, LogTypes} from '@lib/logger';
 import MTTransport from '@lib/mtproto/transports/transport';
 import Modes from '@config/modes';
 import transportController from '@lib/mtproto/transports/controller';
-import {applyHttpsUrl, getActiveFront, noteFrontFailed, whenGatewayReady} from '@lib/mtproto/proxyRoute';
+import {applyHttpsUrl, getActiveFront, whenGatewayReady} from '@lib/mtproto/proxyRoute';
 // import networkStats from '@lib/mtproto/networkStats';
 
 const TEST_DROPPING_REQUESTS: TrueDcId = undefined;
@@ -62,7 +62,10 @@ export default class HTTP implements MTTransport {
       }
 
       const next = applyHttpsUrl(this.dcId, this.media, this.testPath);
-      if(next && next !== this.url) {
+      if(!next || next.includes('.web.telegram.org/')) {
+        throw new Error('front is not ready');
+      }
+      if(next !== this.url) {
         this.url = next;
         this.proven = false;
       }
@@ -100,7 +103,7 @@ export default class HTTP implements MTTransport {
     }).catch((err) => {
       this.setConnected(false);
       // A no-cors ping must not retire a front that the real probe already kept.
-      if(!mode && !this.destroyed && frontAtSend && getActiveFront() === frontAtSend) noteFrontFailed();
+      // A failed file request must not move the account onto another address.
       throw err;
     }).finally(() => {
       clearTimeout(timeout);

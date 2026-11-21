@@ -1,5 +1,5 @@
 import {logger} from '@lib/logger';
-import {finishGatewayProbe, getActiveFront, holdDirectHost, isFrontUsable, rememberFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
+import {finishGatewayProbe, getActiveFront, getSessionFront, holdDirectHost, isFrontUsable, loadSessionFront, markSelectionReady, rememberFront, restoreSessionFront, setFrontExhaustedHandler, setFrontOrder, setGatewayChoice} from '@lib/mtproto/proxyRoute';
 
 /**
  * Each browser races Telegram's own web socket and the Cloudflare fronts from
@@ -348,13 +348,23 @@ export function startProxyAutoSelector() {
   started = true;
   // Before any chat socket exists. Otherwise it opens the blocked direct host.
   holdDirectHost(true);
-  setFrontOrder(OPEN_FIRST);
   setGatewayChoice({transport: 'websocket', dcId: 2});
-  finishGatewayProbe();
   setFrontExhaustedHandler(() => {
+    // The account already has a front. Recycling the whole list would move
+    // the session onto a new address.
+    if(getSessionFront()) return;
     setFrontOrder(OPEN_FIRST);
   });
-  // One front at a time. A second socket opened beside the chat was aborting
-  // the handshake and leaving the screen on "Reconnecting...". The next front
-  // is used only after this one fails to open or stays silent.
+  // One front for this account. A different hostname is a different address
+  // on Telegram's side. The saved one is restored before the first socket.
+  // Another front is used only when this one never opens.
+  const pending = loadSessionFront();
+  const expired = new Promise<string>((resolve) => setTimeout(() => resolve(''), 3000));
+  void Promise.race([pending, expired]).then((saved) => {
+    if(saved) restoreSessionFront(saved);
+    markSelectionReady();
+    const first = saved ? [saved, ...OPEN_FIRST.filter((front) => front !== saved)] : OPEN_FIRST;
+    setFrontOrder(first);
+    finishGatewayProbe();
+  });
 }
