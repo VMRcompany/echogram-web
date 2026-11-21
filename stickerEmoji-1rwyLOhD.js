@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{n as e}from"./rootScope-KwTHmgwu.js";import{n as t,t as n}from"./asyncToGenerator-MiYVMc9E.js";import{t as r}from"./objectSpread2-DBfu3elQ.js";import{a as i}from"./sticker-CN8n0lup.js";t();function a(e){return o.apply(this,arguments)}function o(){return o=n(function*(t){let{emoji:n,div:a,managers:o=e.managers}=t,s=yield o.appStickersManager.getAnimatedEmojiSticker(n);if(!s)throw a.classList.add(`media-sticker-wrapper`),Error(`no sticker`);return i(r({doc:s,play:!0,loop:!1},t))}),o.apply(this,arguments)}export{a as t};
-//# sourceMappingURL=stickerEmoji-1rwyLOhD.js.map

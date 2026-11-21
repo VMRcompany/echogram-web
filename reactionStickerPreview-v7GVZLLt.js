@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{p as e,s as t}from"./solid-D3KXnO0-.js";import{n}from"./sticker-CN8n0lup.js";import{i as r}from"./confirmationPopup-BTS0JfZe.js";function i(i){return e(r.Media,{size:`small`,get children(){return e(t,{get when(){return i.sticker},children:t=>e(n,{get sticker(){return t()},width:32,height:32})})}})}export{i as t};
-//# sourceMappingURL=reactionStickerPreview-v7GVZLLt.js.map

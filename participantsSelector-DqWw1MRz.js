@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{t as e}from"./objectSpread2-DBfu3elQ.js";import{x as t}from"./solid-D3KXnO0-.js";import{n}from"./cancellablePromise-y-RsHxed.js";import{t as r}from"./appSelectPeers-Dlv8Ltx9.js";function i(i){let a=n(),o;return t(t=>{i.middleware.onClean(()=>{t(),a.resolve()}),o=new r(e(e({},i),{},{multiSelect:!1,headerSearch:!0,placeholder:`SearchPlaceholder`,meAsSaved:!1,onFirstRender:()=>{a.resolve()}}))}),{selector:o,loadPromise:a}}function a(t){return i(e(e({},t),{},{peerType:[`channelParticipants`]}))}export{i as n,a as t};
-//# sourceMappingURL=participantsSelector-DqWw1MRz.js.map
