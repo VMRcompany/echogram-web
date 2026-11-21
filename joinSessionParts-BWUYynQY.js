@@ -1,0 +1,3 @@
+//# allFunctionsCalledOnLoad
+import{c as e,u as t}from"./langPack-D3Jnjxdp.js";import{y as n}from"./solid-D3KXnO0-.js";import{c as r,f as i,g as a}from"./web-C1_W7Pox.js";var o=a(`<span>`);function s(a,s){return(()=>{var c=o();return r(c,()=>e(a.filter(e=>typeof e==`string`?e:e==null?void 0:e.ltr).map(e=>{let t=typeof e!=`string`,n=t?e.ltr:e;return(()=>{var e=o();return i(e,`dir`,t?`ltr`:`auto`),r(e,n),e})()}),s)),n(()=>i(c,`dir`,t.isRTL()?`rtl`:`ltr`)),c})()}export{s as t};
+//# sourceMappingURL=joinSessionParts-BWUYynQY.js.map
