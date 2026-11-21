@@ -190,6 +190,9 @@ export default class TcpObfuscated implements MTTransport {
   }
 
   private armSilence(generation: number, openedUrl: string) {
+    // A socket that already carried this account stays open. Closing it and
+    // opening another is a new address, and the account is banned later.
+    if(this.proven && !this.logSuffix) return;
     this.clearStall();
     const wait = this.proven && !this.logSuffix ? this.silenceMs : this.unprovenSilenceMs;
     this.stallTimer = ctx.setTimeout(() => {
@@ -206,13 +209,7 @@ export default class TcpObfuscated implements MTTransport {
    * short gap does not move the account to a new address.
    */
   private failOrRetry(generation: number, openedUrl: string, _opened: boolean) {
-    const tries = this.proven ? 2 : 0;
-    if(this.reopenMisses < tries) {
-      this.reopenMisses++;
-      this.forceReconnect();
-      return;
-    }
-
+    if(this.proven) return;
     this.reopenMisses = 0;
     this.frontMisses = 0;
     this.retireFront(openedUrl, true);

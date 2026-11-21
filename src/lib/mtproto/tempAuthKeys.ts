@@ -95,6 +95,45 @@ export default class TempAuthKeys {
   }
 
   /**
+   * Make the temporary key on the socket the chat will keep. A second socket
+   * is another address, and Telegram bans the account about half an hour later.
+   */
+  public async prepare(transport: MTTransport) {
+    this.restored = true;
+    if(this.isUsable(this.authKey)) return;
+
+    let error: unknown;
+    for(let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const authKey = await this.makeOne(transport);
+        this.failures = 0;
+        this.adopt(authKey);
+        this.remember(authKey);
+        return;
+      } catch(err) {
+        error = err;
+        this.log.error('can\'t make temporary auth key on the live socket', err);
+        await pause(1000);
+      }
+    }
+
+    throw error;
+  }
+
+  public current() {
+    return this.isUsable(this.authKey) ? this.authKey : undefined;
+  }
+
+  private remember(authKey: MTAuthKey) {
+    this.options.store?.({
+      key: bytesToHex(authKey.key),
+      salt: bytesToHex(authKey.serverSalt),
+      expiresAt: authKey.expiresAt,
+      permKeyId: bytesToHex(this.options.permAuthKey.id)
+    });
+  }
+
+  /**
    * The server knows nothing of `authKey` or of its binding anymore.
    */
   public invalidate(authKey: MTAuthKey) {
@@ -142,28 +181,21 @@ export default class TempAuthKeys {
   }
 
   private async make() {
-    if(!this.restored) {
-      this.restored = true;
-      const authKey = await this.restore();
-      if(authKey) {
-        this.adopt(authKey);
-        return;
-      }
-    }
+    // A key kept from an earlier run was born on another address. Using it
+    // from this one is what gets the account banned.
+    this.restored = true;
 
     for(;;) {
+      const transport = this.liveTransport() || this.options.createTransport();
+      const owned = !this.liveTransport();
       try {
-        const authKey = await this.makeOne();
+        const authKey = await this.makeOne(transport);
         this.failures = 0;
         this.adopt(authKey);
-        this.options.store?.({
-          key: bytesToHex(authKey.key),
-          salt: bytesToHex(authKey.serverSalt),
-          expiresAt: authKey.expiresAt,
-          permKeyId: bytesToHex(this.options.permAuthKey.id)
-        });
+        this.remember(authKey);
         return;
       } catch(err) {
+        if(owned) transport.destroy();
         const delay = Math.min(MAX_RETRY_DELAY, 1000 * 2 ** this.failures++);
         this.log.error('can\'t make temporary auth key, retrying in', delay, err);
         await pause(delay);
@@ -171,23 +203,28 @@ export default class TempAuthKeys {
     }
   }
 
-  private async makeOne() {
+  private liveTransport() {
+    for(const networker of this.networkers) {
+      if(networker.transport) return networker.transport;
+    }
+  }
+
+  private async makeOne(transport: MTTransport) {
     const {options} = this;
-    const transport = options.createTransport();
-    let networker: MTPNetworker;
+    let helper: MTPNetworker;
 
     const make = async() => {
       const {authKey, serverSalt} = await options.authTemp(transport, TEMP_AUTH_KEY_EXPIRES_IN);
       authKey.serverSalt = serverSalt;
-      networker = options.createNetworker({authKey, permAuthKey: options.permAuthKey});
-      networker.changeTransport(transport);
+      helper = options.createNetworker({authKey, permAuthKey: options.permAuthKey});
+      helper.changeTransport(transport);
 
-      if(!(await networker.bindTempAuthKey())) {
+      if(!(await helper.bindTempAuthKey())) {
         throw makeError('BIND_FAILED');
       }
 
       // * the client info has to be given again after every binding
-      await networker.wrapApiCall('help.getNearestDc');
+      await helper.wrapApiCall('help.getNearestDc');
       return authKey;
     };
 
@@ -199,8 +236,12 @@ export default class TempAuthKeys {
 
       return authKey;
     } finally {
-      // * the networker takes its connection down with it
-      (networker ?? transport).destroy();
+      if(helper) {
+        const kept = helper.releaseTransport();
+        const owner = [...this.networkers].find((networker) => networker.transport === kept);
+        if(kept) kept.networker = owner;
+        helper.destroy();
+      }
     }
   }
 }

@@ -128,13 +128,13 @@ const delays: {
     connectionTimeout: number
   }
 } = {
-  client: {
-    disconnectDelayMin: 20,
-    disconnectDelayMax: 35,
-    pingInterval: 2000,
-    pingMaxTime: 5,
-    connectionTimeout: 15000
-  },
+    client: {
+      disconnectDelayMin: 90,
+      disconnectDelayMax: 120,
+      pingInterval: 2000,
+      pingMaxTime: 5,
+      connectionTimeout: 15000
+    },
   file: {
     disconnectDelayMin: 10,
     disconnectDelayMax: 24,
@@ -520,6 +520,12 @@ export default class MTPNetworker {
     };
 
     return this.pushMessage(message, {}) as Promise<any>;
+  }
+
+  public releaseTransport() {
+    const transport = this.transport;
+    this.transport = undefined;
+    return transport;
   }
 
   public changeTransport(transport?: MTTransport) {

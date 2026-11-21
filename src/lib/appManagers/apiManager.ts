@@ -543,14 +543,27 @@ export class ApiManager extends ApiManagerMethods {
         }
       }
 
+      let bornHere = false;
       if(!error) {
         // * with PFS the stored key only binds temporary ones, which do all the talking
         const tempAuthKeys = Modes.pfs ? this.getTempAuthKeys(dcId, connectionType !== 'client', permanent.authKey) : undefined;
+        if(tempAuthKeys) {
+          try {
+            // The key is born on this socket. Opening another one afterwards
+            // is a different address, and the account is banned later.
+            await tempAuthKeys.prepare(transport);
+            bornHere = true;
+          } catch(err) {
+            transport.destroy();
+            throw err;
+          }
+        }
+        const tempKey = tempAuthKeys?.current();
         networker = this.networkerFactory.getNetworker({
           dcId,
           permAuthKey: permanent.authKey,
-          authKey: tempAuthKeys ? undefined : permanent.authKey,
-          serverSalt: tempAuthKeys ? undefined : permanent.serverSalt,
+          authKey: tempKey ?? (tempAuthKeys ? undefined : permanent.authKey),
+          serverSalt: tempKey?.serverSalt ?? (tempAuthKeys ? undefined : permanent.serverSalt),
           tempAuthKeys,
           isFileDownload: connectionType === 'download',
           isFileUpload: connectionType === 'upload'
@@ -559,7 +572,7 @@ export class ApiManager extends ApiManagerMethods {
 
       // ! cannot get it before this promise because simultaneous changeTransport will change nothing
       const newTransportType = this.getTransportType(connectionType);
-      if(newTransportType !== transportType) {
+      if(!bornHere && newTransportType !== transportType) {
         getKey = this.generateNetworkerGetKey(dcId, newTransportType, connectionType);
         transport.destroy();
         DcConfigurator.removeTransport(this.dcConfigurator.chosenServers, transport);
