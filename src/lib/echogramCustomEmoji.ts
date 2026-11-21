@@ -104,11 +104,13 @@ export function prepareOutgoingCustomEmoji(text: string, entities?: MessageEntit
   for(const entity of entities) {
     if(!isCustomEmoji(entity) || entity.length <= 0 || entity.offset < 0) continue;
     const id = BigInt(entity.document_id);
+    const shift32 = BigInt(32);
+    const mask32 = BigInt('4294967295');
     records.push([
       entity.offset,
       entity.length,
-      Number((id >> 32n) & 0xffffffffn),
-      Number(id & 0xffffffffn)
+      Number((id >> shift32) & mask32),
+      Number(id & mask32)
     ]);
   }
   if(!records.length) return {text, entities};
@@ -126,7 +128,7 @@ export function restoreEchogramCustomEmoji(message: Pick<Message.message, 'messa
 
   const entities = message.entities ??= [];
   for(const [offset, length, hi, lo] of records) {
-    const documentId = (BigInt(hi >>> 0) << 32n) | BigInt(lo >>> 0);
+    const documentId = (BigInt(hi >>> 0) << BigInt(32)) | BigInt(lo >>> 0);
     if(offset < 0 || length <= 0 || offset + length > message.message.length) continue;
     if(hasCustomEmoji(entities, offset, documentId)) continue;
     entities.push({

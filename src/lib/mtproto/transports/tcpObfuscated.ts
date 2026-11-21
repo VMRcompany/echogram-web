@@ -14,6 +14,10 @@ import ctx from '@environment/ctx';
 import {applySocketUrl, getActiveFront, markRouteProved, noteFrontFailed, subscribeProxyRoute} from '@lib/mtproto/proxyRoute';
 import {wakeProxySearch} from '@lib/mtproto/proxyAutoSelector';
 
+// Side sockets (another data center, a file) must not retire the front the chat
+// is still opening. Only the first chat socket decides when a front is dead.
+let routeDecider: TcpObfuscated | undefined;
+
 export default class TcpObfuscated implements MTTransport {
   private codec = abridgedPacketCodec;
   private obfuscation = new Obfuscation();
@@ -39,6 +43,7 @@ export default class TcpObfuscated implements MTTransport {
   private sawMessage = false;
   private proven = false;
   private reopenMisses = 0;
+  private frontMisses = 0;
   private handshakeSent = false;
   private connectionGeneration = 0;
   private stallTimer: number;
@@ -46,7 +51,11 @@ export default class TcpObfuscated implements MTTransport {
   private readyInit: Promise<Uint8Array>;
   private readonly stallMs = 12000;
   private readonly silenceMs = 25000;
-  private readonly unprovenSilenceMs = 20000;
+  // A front in Russia often answers several seconds after the socket opens.
+  // Twenty seconds was cutting that reply off, so the screen stayed on
+  // "Reconnecting..." and the next front was opened before this one spoke.
+  private readonly unprovenSilenceMs = 45000;
+  private ownClose = false;
 
   // private debugPayloads: MTPNetworker['debugRequests'] = [];
 
@@ -61,8 +70,12 @@ export default class TcpObfuscated implements MTTransport {
     if(this.debug) logTypes |= LogTypes.Debug;
     this.log = logger(`TCP-${dcId}` + logSuffix, logTypes);
     this.log('constructor');
+    if(!this.logSuffix && !routeDecider) routeDecider = this;
 
     this.unsubscribeRoute = subscribeProxyRoute(() => {
+      // A live chat stays on the front that already answered. Another socket
+      // moving the list must not close it and put "Reconnecting..." back up.
+      if(this.proven && this.sawMessage && this.connected) return;
       const next = applySocketUrl(this.dcId, this.url);
       if(!next) {
         if(this.connection) this.close();
@@ -83,9 +96,9 @@ export default class TcpObfuscated implements MTTransport {
       transportController.setTransportOpened('websocket');
     }
 
-    // Twenty seconds covers the cipher and the first reply. Six seconds was
-    // shorter than the cipher, so every open died and the screen stayed on
-    // "Reconnecting...". The timer is started again after the init frame.
+    // Started here so a cipher that never finishes is retried. Restarted
+    // after the init frame, so preparing the cipher does not eat the wait
+    // for Telegram's reply.
     if(!this.logSuffix) this.armSilence(generation, this.url);
     const initPayload = await (this.readyInit || this.obfuscation.init(this.codec));
     if(generation !== this.connectionGeneration || !this.connected) {
@@ -117,6 +130,7 @@ export default class TcpObfuscated implements MTTransport {
     if(!this.logSuffix) {
       this.proven = true;
       this.reopenMisses = 0;
+      this.frontMisses = 0;
       markRouteProved();
     }
     this.clearStall();
@@ -147,6 +161,8 @@ export default class TcpObfuscated implements MTTransport {
   private retireFront(openedUrl: string) {
     // File sockets miss on purpose on some fronts. Only the chat socket retires one.
     if(this.logSuffix || !this.autoReconnect) return;
+    if(!routeDecider) routeDecider = this;
+    if(this !== routeDecider) return;
     const front = getActiveFront();
     if(front && openedUrl.includes(`.${front}/`)) noteFrontFailed();
   }
@@ -185,21 +201,37 @@ export default class TcpObfuscated implements MTTransport {
     }, wait);
   }
 
-  /** A front that already worked is opened again at once. Only a second miss gives it up. */
+  /** The same front is opened again twice. Only a third miss gives it up. */
   private failOrRetry(generation: number, openedUrl: string) {
-    if(this.proven && !this.logSuffix && this.reopenMisses < 1) {
+    if(!this.logSuffix && this.reopenMisses < 2) {
       this.reopenMisses++;
       this.forceReconnect();
       return;
     }
 
+    this.reopenMisses = 0;
+    this.frontMisses = 0;
     this.retireFront(openedUrl);
     if(generation !== this.connectionGeneration || this.sawMessage) return;
+    const next = applySocketUrl(this.dcId, this.url);
+    if(next) this.url = next;
     this.forceReconnect();
   }
 
   private finishClose(openedUrl: string) {
-    const shouldRetire = !this.proven && !this.sawMessage && (this.handshakeSent || !this.connected);
+    const unexpected = !this.ownClose;
+    this.ownClose = false;
+    if(unexpected && !this.proven && !this.sawMessage && this.handshakeSent) {
+      this.frontMisses++;
+    }
+    // Our own reconnect must not skip the front we just chose. A server close
+    // before any reply is one miss; the same front is tried again before it
+    // is given up.
+    const shouldRetire = unexpected && !this.proven && !this.sawMessage && this.handshakeSent && this.frontMisses >= 2;
+    if(shouldRetire) {
+      this.frontMisses = 0;
+      this.reopenMisses = 0;
+    }
     this.clear();
     if(shouldRetire) this.retireFront(openedUrl);
     if(!this.logSuffix && !getActiveFront()) wakeProxySearch();
@@ -307,6 +339,7 @@ export default class TcpObfuscated implements MTTransport {
   }
 
   public destroy() {
+    if(routeDecider === this) routeDecider = undefined;
     this.unsubscribeRoute?.();
     this.unsubscribeRoute = undefined;
     this.setAutoReconnect(false);
@@ -327,6 +360,7 @@ export default class TcpObfuscated implements MTTransport {
   public close() {
     const connection = this.connection;
     if(connection) {
+      this.ownClose = true;
       const connected = this.connected;
       this.clear();
       if(connected) { // wait for buffered messages if they are there
