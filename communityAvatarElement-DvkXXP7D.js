@@ -1,3 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{r as e}from"./apiManagerProxy-BS8FmQhB.js";import{p as t}from"./solid-D3KXnO0-.js";import{d as n}from"./web-C1_W7Pox.js";import{t as r}from"./communityAvatar-BL7dz5gc.js";function i(i,a){let o=document.createElement(`div`);return{dispose:n(()=>{let n=e(()=>i);return t(r,{get community(){return n()},get title(){var e;return(e=n())==null?void 0:e.title},size:a})},o),element:o.firstElementChild}}export{i as t};
-//# sourceMappingURL=communityAvatarElement-DvkXXP7D.js.map
