@@ -509,7 +509,10 @@ export class ApiManager extends ApiManagerMethods {
       this.dropTempAuthKeys();
     }
 
-    let transport = this.chooseServer(dcId, connectionType, transportType);
+    // The socket is opened only after the permanent key is ready. Opening it
+    // here left it silent through the whole handshake, the 12s timer tore it
+    // down, and then nothing connected with or without a VPN.
+    let transport: MTTransport;
     return this.gettingNetworkers[getKey] = AccountController
     .get(this.getAccountNumber())
     .then((accountData) => [accountData[ak], accountData[ss]] as const)
@@ -545,6 +548,7 @@ export class ApiManager extends ApiManagerMethods {
 
       let bornHere = false;
       if(!error) {
+        transport = this.chooseServer(dcId, connectionType, transportType);
         // * with PFS the stored key only binds temporary ones, which do all the talking
         const tempAuthKeys = Modes.pfs ? this.getTempAuthKeys(dcId, connectionType !== 'client', permanent.authKey) : undefined;
         if(tempAuthKeys) {
@@ -572,7 +576,7 @@ export class ApiManager extends ApiManagerMethods {
 
       // ! cannot get it before this promise because simultaneous changeTransport will change nothing
       const newTransportType = this.getTransportType(connectionType);
-      if(!bornHere && newTransportType !== transportType) {
+      if(transport && !bornHere && newTransportType !== transportType) {
         getKey = this.generateNetworkerGetKey(dcId, newTransportType, connectionType);
         transport.destroy();
         DcConfigurator.removeTransport(this.dcConfigurator.chosenServers, transport);
